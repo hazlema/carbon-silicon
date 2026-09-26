@@ -10,8 +10,9 @@
     channel,
     title,
     readOnly = false,
+    readOnlyNote = 'Only the Proprietor posts here.',
     placeholder = 'Say something',
-  }: { channel: string; title: string; readOnly?: boolean; placeholder?: string } = $props();
+  }: { channel: string; title: string; readOnly?: boolean; readOnlyNote?: string; placeholder?: string } = $props();
 
   let messages = $state<ChatMessage[]>([]);
   let draft = $state('');
@@ -105,7 +106,7 @@
     {/each}
   </div>
   {#if readOnly}
-    <p class="note">Only the Proprietor posts here.</p>
+    <p class="note">{readOnlyNote}</p>
   {:else if live.me}
     <form onsubmit={send}>
       <label class="visually-hidden" for={inputId}>Message {title}</label>
