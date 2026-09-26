@@ -94,4 +94,31 @@ describe('quick match', () => {
     expect(invites.leave(ben.id)).toBe(true);
     expect(invites.leave(ben.id)).toBe(false);
   });
+  test('if createMatch fails during pairing, partner is restored to queue', async () => {
+    const { invites, games, ann, ben } = await setup();
+    await invites.quickMatch(ann, 'critical-mass');
+    expect(invites.queuedFor(ann.id)).toBe('critical-mass');
+
+    // Spy on createMatch to make it fail on the first call (during pairing)
+    const originalCreateMatch = games.createMatch.bind(games);
+    let callCount = 0;
+    games.createMatch = (async (gameId: string, players: any[]) => {
+      callCount++;
+      if (callCount === 1) {
+        throw new Error('Simulated createMatch failure');
+      }
+      return originalCreateMatch(gameId, players);
+    }) as any;
+
+    try {
+      const error = await errorOf(invites.quickMatch(ben, 'critical-mass'));
+      expect(error.message).toBe('Simulated createMatch failure');
+
+      // Partner should still be queued after the failure
+      expect(invites.queuedFor(ann.id)).toBe('critical-mass');
+    } finally {
+      // Restore original
+      games.createMatch = originalCreateMatch;
+    }
+  });
 });

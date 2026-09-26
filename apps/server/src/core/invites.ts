@@ -40,9 +40,16 @@ export class InviteManager {
       (e) => e.gameId === gameId && e.identity.id !== identity.id && this.presence.isReady(e.identity.id),
     );
     if (partner) {
+      const partnerEntry = partner;
       this.leave(partner.identity.id);
       const players = Math.random() < 0.5 ? [partner.identity, identity] : [identity, partner.identity];
-      return { status: 'matched', match: await this.games.createMatch(gameId, players) };
+      try {
+        return { status: 'matched', match: await this.games.createMatch(gameId, players) };
+      } catch (e) {
+        this.queue.set(partnerEntry.identity.id, partnerEntry);
+        this.arm(partnerEntry);
+        throw e;
+      }
     }
     const entry: QueueEntry = { identity, gameId, timer: null };
     this.queue.set(identity.id, entry);
