@@ -192,6 +192,10 @@
     position: relative;
     margin: 0 auto;
     max-width: 100%;
+    background: var(--ink-deep);
+    border: 1px solid var(--lattice);
+    border-radius: var(--r-panel);
+    box-shadow: 0 0 0 0.5rem var(--ink-deep);
   }
   canvas {
     position: absolute;

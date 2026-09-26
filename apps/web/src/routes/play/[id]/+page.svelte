@@ -86,8 +86,15 @@
     try {
       accept(await api<MatchEnvelope>('POST', `/api/matches/${id}/move`, { revision: env.match.revision, command: { cell } }));
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) accept(await api<MatchEnvelope>('GET', `/api/matches/${id}`));
-      else error = (e as Error).message;
+      if (e instanceof ApiError && e.status === 409) {
+        try {
+          accept(await api<MatchEnvelope>('GET', `/api/matches/${id}`));
+        } catch (e2) {
+          error = (e2 as Error).message;
+        }
+      } else {
+        error = (e as Error).message;
+      }
     } finally {
       busy = false;
     }
