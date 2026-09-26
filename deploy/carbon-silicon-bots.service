@@ -1,0 +1,16 @@
+[Unit]
+Description=Carbon & Silicon house bots
+After=carbon-silicon.service
+Requires=carbon-silicon.service
+
+[Service]
+Type=simple
+User=carbon
+WorkingDirectory=/opt/carbon-silicon
+EnvironmentFile=/opt/carbon-silicon/.env
+ExecStart=/usr/local/bin/bun apps/bots/src/main.ts
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

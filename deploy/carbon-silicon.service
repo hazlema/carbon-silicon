@@ -1,0 +1,19 @@
+[Unit]
+Description=Carbon & Silicon game parlor
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=carbon
+WorkingDirectory=/opt/carbon-silicon
+EnvironmentFile=/opt/carbon-silicon/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/local/bin/bun apps/server/src/main.ts
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
