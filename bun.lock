@@ -10,6 +10,12 @@
         "typescript": "6.0.3",
       },
     },
+    "games/critical-mass": {
+      "name": "@cs/critical-mass",
+      "dependencies": {
+        "@cs/game-api": "workspace:*",
+      },
+    },
     "packages/game-api": {
       "name": "@cs/game-api",
     },
@@ -21,6 +27,8 @@
     },
   },
   "packages": {
+    "@cs/critical-mass": ["@cs/critical-mass@workspace:games/critical-mass"],
+
     "@cs/game-api": ["@cs/game-api@workspace:packages/game-api"],
 
     "@cs/shared": ["@cs/shared@workspace:packages/shared"],
