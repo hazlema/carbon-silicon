@@ -1,0 +1,9 @@
+node_modules/
+.data/
+dist/
+build/
+.svelte-kit/
+.env
+*.log
+.playwright-mcp/
+test-results/
