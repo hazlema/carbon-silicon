@@ -1,0 +1,86 @@
+import type { Rng } from './rng';
+
+export type SeatId = string;
+
+export interface GameMeta {
+  id: string;
+  name: string;
+  tagline: string;
+  mode: 'turn' | 'realtime';
+  minPlayers: number;
+  maxPlayers: number;
+  /** Seat names in join order; a match with n players uses the first n. */
+  seats: SeatId[];
+  rulesMarkdown: string;
+}
+
+/** `winners: []` means a draw. `placement` lists seats best-first; ties share an inner array. */
+export interface Outcome {
+  winners: SeatId[];
+  placement: SeatId[][];
+  reason: string;
+}
+
+export interface SetupContext {
+  seats: SeatId[];
+  seed: number;
+  options?: unknown;
+}
+
+export interface GameModule<S = unknown> {
+  meta: GameMeta;
+  setup(ctx: SetupContext): S;
+  /** JSON view for a seat; `null` = spectator. Must hide secrets from other seats. */
+  view(state: S, seat: SeatId | null): unknown;
+  /** `null` while the game is still being played. */
+  outcome(state: S): Outcome | null;
+  /** Remove a seat (resign, timeout, disconnect). Must return a state whose outcome reflects it. */
+  forfeit(state: S, seat: SeatId, reason: string): S;
+  turn?: TurnRules<S>;
+  realtime?: RealtimeRules<S>;
+}
+
+export interface TurnRules<S> {
+  /** Seconds each seat gets per move before the autopilot plays for them. */
+  turnSeconds: number;
+  toMove(state: S): SeatId[];
+  /** Every legal command for the seat, as JSON-serializable values. */
+  legal(state: S, seat: SeatId): unknown[];
+  /** Validate and apply. Throws GameRuleError for illegal input. Must not mutate `state`. */
+  apply(state: S, seat: SeatId, command: unknown): S;
+  /** Short human text for a command, e.g. "c4". */
+  describe?(command: unknown): string;
+}
+
+// ── Doctrine (standing orders for real-time games, rule 11). Runtime arrives in M3. ──
+export type Operand = number | string | boolean | { sense: string };
+export interface Condition {
+  sense: string;
+  op: 'lt' | 'lte' | 'gt' | 'gte' | 'eq' | 'ne';
+  value: Operand;
+}
+export type When = Condition | { all: When[] } | { any: When[] } | { not: When };
+export interface Action {
+  act: string;
+  [param: string]: unknown;
+}
+export interface Rule {
+  when?: When;
+  do: Action;
+  label?: string;
+}
+export interface Doctrine {
+  rules: Rule[];
+}
+export interface DoctrineCatalog {
+  senses: Record<string, { type: 'number' | 'string' | 'boolean'; doc: string; values?: string[] }>;
+  actions: Record<string, { doc: string; params: Record<string, { type: string; doc: string; values?: string[] }> }>;
+}
+
+export interface RealtimeRules<S> {
+  tickHz: number;
+  catalog: DoctrineCatalog;
+  defaultDoctrine: Doctrine;
+  senses(state: S, seat: SeatId): Record<string, number | string | boolean>;
+  step(state: S, actions: Record<SeatId, Action>, rng: Rng): S;
+}

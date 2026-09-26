@@ -1,0 +1,6 @@
+{
+  "name": "@cs/game-api",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" }
+}

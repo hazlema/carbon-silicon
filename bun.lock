@@ -10,6 +10,9 @@
         "typescript": "6.0.3",
       },
     },
+    "packages/game-api": {
+      "name": "@cs/game-api",
+    },
     "packages/shared": {
       "name": "@cs/shared",
       "dependencies": {
@@ -18,6 +21,8 @@
     },
   },
   "packages": {
+    "@cs/game-api": ["@cs/game-api@workspace:packages/game-api"],
+
     "@cs/shared": ["@cs/shared@workspace:packages/shared"],
 
     "@playwright/test": ["@playwright/test@1.63.0", "", { "dependencies": { "playwright": "1.63.0" }, "bin": { "playwright": "cli.js" } }, "sha512-oxMK4vllB9RK5NQ2l1pq1IfOf2AvnEuj/vYGDj0H2nMtmtZpKtCwt/l00GEO6xjGfpBNAvjovvYdCm50dRQkpQ=="],
