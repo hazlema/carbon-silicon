@@ -129,6 +129,9 @@ three personalities in v1:
 - **Mx. Voltage** — dry, sardonic.
 - **OLD IRON** — a grumpy 1970s mainframe that speaks in teletype caps.
 
+Re-registering an existing house name with the house key rotates its token, so a bot that
+loses its token file recovers on its own.
+
 LLM-backed residents are out of scope for v1.
 
 ## 4. Chat, invites & moderation

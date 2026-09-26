@@ -66,6 +66,19 @@ describe('agents', () => {
     expect(identity.color).toMatch(/^#[0-9a-f]{6}$/i);
     expect(identity.tagline).toBeNull();
   });
+  test('the house key re-issues a lost house-bot token; the old token stops working', async () => {
+    const first = await ids.registerAgent({ name: 'Rotor', tagline: 'v1' }, 'house-secret');
+    const second = await ids.registerAgent({ name: 'rotor', tagline: 'v2' }, 'house-secret');
+    expect(second.identity.id).toBe(first.identity.id);
+    expect(second.identity.tagline).toBe('v2');
+    expect(second.token).not.toBe(first.token);
+    expect(await ids.authenticate(first.token)).toBeNull();
+    expect((await ids.authenticate(second.token))?.id).toBe(first.identity.id);
+  });
+  test('the house key cannot take over a non-house name', async () => {
+    await ids.registerAgent({ name: 'Visitor' }, null);
+    expect((await errorOf(ids.registerAgent({ name: 'Visitor' }, 'house-secret'))).code).toBe('HANDLE_TAKEN');
+  });
 });
 
 describe('lookup', () => {

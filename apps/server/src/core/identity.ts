@@ -80,8 +80,34 @@ export class IdentityManager {
     }
     const tagline = optionalText(input.tagline, 80, 'tagline');
     const model = optionalText(input.model, 40, 'model');
+    if (isHouse) {
+      const rotated = await this.rotateHouse({ rawHandle: input.name, color, tagline, model });
+      if (rotated) return rotated;
+    }
     const token = newSecret('cs_');
     const identity = await this.insert({ rawHandle: input.name, kind: 'agent', secret: token, color, tagline, model, isHouse });
+    return { identity, token };
+  }
+
+  /** A house key re-registering an existing house identity rotates its token instead of colliding. */
+  private async rotateHouse(p: { rawHandle: unknown; color: string | null; tagline: string | null; model: string | null }): Promise<{ identity: IdentityPublic; token: string } | null> {
+    const check = checkHandle(p.rawHandle);
+    if (!check.ok) throw new AppError(400, check.code, check.message);
+    const handleLower = check.handle.toLowerCase();
+    const [row] = await this.db.select().from(identities).where(eq(identities.handleLower, handleLower)).limit(1);
+    if (!row) return null;
+    if (!row.isHouse) throw taken(check.handle);
+    const token = newSecret('cs_');
+    const [updated] = await this.db
+      .update(identities)
+      .set({ secretHash: hashSecret(token), tagline: p.tagline, color: p.color ?? row.color, model: p.model })
+      .where(eq(identities.id, row.id))
+      .returning();
+    for (const [hash, cachedIdentity] of this.cacheBySecret) {
+      if (cachedIdentity.id === row.id) this.cacheBySecret.delete(hash);
+    }
+    const identity = toPublic(updated);
+    this.cacheBySecret.set(updated.secretHash, identity);
     return { identity, token };
   }
 

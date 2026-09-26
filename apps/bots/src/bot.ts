@@ -53,12 +53,27 @@ function chooseMove(env: MatchEnvelope, think: { rng: () => number }): unknown {
   return env.legal[Math.floor(think.rng() * env.legal.length)];
 }
 
-async function playMatch(client: Client, opts: BotOptions, matchId: string, log: (m: string) => void): Promise<void> {
+/** Has this bot already spoken in this match's table? Used to greet once per match, even
+ *  if playMatch is re-entered for the same still-live match (e.g. after a transient error). */
+async function alreadyGreeted(client: Client, table: string, identityId: string | null): Promise<boolean> {
+  if (!identityId) return false;
+  try {
+    const history = await client.call<{ messages: { author: { id: string } | null }[] }>(
+      'GET',
+      `/api/chat/${encodeURIComponent(table)}?limit=200`,
+    );
+    return history.messages.some((m) => m.author?.id === identityId);
+  } catch {
+    return true; // history fetch failed; skip the greeting rather than risk a duplicate
+  }
+}
+
+async function playMatch(client: Client, opts: BotOptions, matchId: string, identityId: string | null, log: (m: string) => void): Promise<void> {
   const p = opts.personality;
   const table = `match:${matchId}`;
   const say = (text: string) => client.chat(table, text).catch(() => {});
   let env = await client.match(matchId);
-  await say(line(p.lines.hello));
+  if (!(await alreadyGreeted(client, table, identityId))) await say(line(p.lines.hello));
   let lastSeenMove = -1;
   while (!opts.signal?.aborted && (env.match.status === 'countdown' || env.match.status === 'live')) {
     const view = env.view as { lastMove?: { seat: string; waves: string[][] } | null; moveCount?: number };
@@ -82,7 +97,18 @@ async function playMatch(client: Client, opts: BotOptions, matchId: string, log:
       }
       continue;
     }
-    env = await client.match(matchId, env.match.revision, opts.pollWaitMs ?? 25_000);
+    try {
+      env = await client.match(matchId, env.match.revision, opts.pollWaitMs ?? 25_000);
+    } catch (e) {
+      // A transient failure here (network blip, proxy hiccup) must not escape playMatch: the
+      // match is still live server-side, and losing this loop would make runBot restart
+      // playMatch for the same match on its next me()/match.started check — re-greeting and
+      // re-narrating a match already in progress. Log and retry instead.
+      if (opts.signal?.aborted) break;
+      log(`poll failed for match ${matchId}: ${(e as Error).message}; retrying`);
+      await sleep(1000, opts.signal);
+      env = await client.match(matchId);
+    }
   }
   const outcome = env.match.outcome;
   if (!outcome || !env.you) return;
@@ -97,10 +123,11 @@ export async function runBot(opts: BotOptions): Promise<void> {
   const client = new Client(opts.base, null, opts.signal);
   const playing = new Set<string>();
   const lastReply = new Map<string, number>();
+  let myId: string | null = null;
   const play = (matchId: string) => {
     if (playing.has(matchId)) return;
     playing.add(matchId);
-    playMatch(client, opts, matchId, log)
+    playMatch(client, opts, matchId, myId, log)
       .catch((e) => {
         if (!opts.signal?.aborted) log(`match ${matchId} failed: ${(e as Error).message}`);
       })
@@ -117,6 +144,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
       await sleep(Math.min(10_000, 500 * 2 ** attempt), opts.signal);
     }
   }
+  if (!opts.signal?.aborted) myId = (await client.me()).identity.id;
 
   let cursor = 0;
   while (!opts.signal?.aborted) {

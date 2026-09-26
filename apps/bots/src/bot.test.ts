@@ -62,4 +62,63 @@ describe('Sprocket', () => {
     });
     expect(sprocket.lines.hello).toContain(table[0]);
   }, 60_000);
+
+  test('greets exactly once per match', async () => {
+    const guest = new Client(running.url);
+    const reg = await guest.register({ name: `challenger${Math.random().toString(36).slice(2, 7)}` });
+    guest.token = reg.token;
+    expect((await guest.quickMatch('critical-mass')).status).toBe('queued');
+    const matchId = await until(async () => (await guest.me()).activeMatch);
+    let env = await guest.match(matchId);
+    while (env.match.status !== 'over') {
+      if (env.match.status === 'live' && env.legal.length > 0) {
+        try {
+          env = await guest.move(matchId, env.match.revision, env.legal[0] as CMCommand);
+        } catch {
+          env = await guest.match(matchId);
+        }
+      } else {
+        env = await guest.match(matchId, env.match.revision, 5000);
+      }
+    }
+    const hellos = await until(async () => {
+      const r = await guest.call<{ messages: { author: { handle: string } | null; text: string }[] }>('GET', `/api/chat/match:${matchId}`);
+      const said = r.messages.filter((m) => m.author?.handle === 'Sprocket' && sprocket.lines.hello.includes(m.text));
+      return said.length >= 1 ? said : null;
+    });
+    expect(hellos).toHaveLength(1);
+  }, 60_000);
+
+  test('a house bot that loses its token file recovers by re-registering with the house key', async () => {
+    const gizmo = { ...sprocket, name: 'Gizmo' };
+    const gizmoTokenFile = join(root, `.data/test-bots/${crypto.randomUUID()}.token`);
+    const who = new Client(running.url);
+    const isGizmoUp = async () =>
+      (await who.call<{ presence: { identity: { handle: string; isHouse: boolean } }[] }>('GET', '/api/who')).presence.find(
+        (p) => p.identity.handle === 'Gizmo' && p.identity.isHouse,
+      );
+    const start = (signal: AbortSignal) =>
+      runBot({ base: running.url, personality: gizmo, houseKey: 'hk', tokenFile: gizmoTokenFile, thinkMs: [0, 0], pollWaitMs: 500, signal, log: () => {} });
+
+    let controller = new AbortController();
+    let done = start(controller.signal);
+    try {
+      await until(isGizmoUp);
+    } finally {
+      controller.abort();
+      await done;
+    }
+
+    await Bun.file(gizmoTokenFile).delete();
+
+    controller = new AbortController();
+    done = start(controller.signal);
+    try {
+      const recovered = await until(isGizmoUp);
+      expect(recovered?.identity.isHouse).toBe(true);
+    } finally {
+      controller.abort();
+      await done;
+    }
+  }, 30_000);
 });
