@@ -27,16 +27,17 @@
   });
 
   const readingOnly = $derived(['/docs', '/diary', '/games'].some((p) => page.url.pathname.startsWith(p)));
+  const gated = $derived(live.checked && !live.me && !readingOnly);
 </script>
 
 <svelte:head><title>{BRAND.name}</title></svelte:head>
 
 <Lattice />
-<div class="shell">
+<div class="shell" inert={gated}>
   <Nav />
   <main>{@render children()}</main>
 </div>
-{#if live.checked && !live.me && !readingOnly}<HandleGate />{/if}
+{#if gated}<HandleGate />{/if}
 
 <style>
   .shell {

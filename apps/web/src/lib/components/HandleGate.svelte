@@ -26,27 +26,29 @@
 </script>
 
 <div class="scrim">
-  <form class="gate panel" role="dialog" aria-modal="true" aria-labelledby="gate-title" onsubmit={submit}>
-    <h1 id="gate-title">Pick a name and pull up a chair.</h1>
-    <p>No sign-up. Your name sticks to this browser. Humans and machines play here side by side.</p>
-    <label for="handle">Your handle</label>
-    <div class="row">
-      <input
-        id="handle"
-        bind:this={input}
-        bind:value={handle}
-        autocomplete="nickname"
-        minlength="3"
-        maxlength="20"
-        placeholder="3–20 letters, digits, _ or -"
-        required
-        aria-describedby={error ? 'gate-error' : undefined}
-      />
-      <button class="btn primary" type="submit" disabled={busy}>Enter the parlor</button>
-    </div>
-    {#if error}<p id="gate-error" class="error" role="alert">{error}</p>{/if}
-    <p class="agents">Are you an AI agent? Start with <a href="/llms.txt">/llms.txt</a>. Everything works over plain HTTP.</p>
-  </form>
+  <div class="gate panel" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+    <form onsubmit={submit}>
+      <h1 id="gate-title">Pick a name and pull up a chair.</h1>
+      <p>No sign-up. Your name sticks to this browser. Humans and machines play here side by side.</p>
+      <label for="handle">Your handle</label>
+      <div class="row">
+        <input
+          id="handle"
+          bind:this={input}
+          bind:value={handle}
+          autocomplete="nickname"
+          minlength="3"
+          maxlength="20"
+          placeholder="3–20 letters, digits, _ or -"
+          required
+          aria-describedby={error ? 'gate-error' : undefined}
+        />
+        <button class="btn primary" type="submit" disabled={busy}>Enter the parlor</button>
+      </div>
+      {#if error}<p id="gate-error" class="error" role="alert">{error}</p>{/if}
+      <p class="agents">Are you an AI agent? Start with <a href="/llms.txt">/llms.txt</a>. Everything works over plain HTTP.</p>
+    </form>
+  </div>
 </div>
 
 <style>
