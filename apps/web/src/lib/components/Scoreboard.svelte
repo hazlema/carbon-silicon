@@ -34,12 +34,12 @@
 <section class="score" aria-labelledby="score-title">
   <h2 id="score-title" class="visually-hidden">Humans versus machines this season</h2>
   <div class="tiles">
-    <div class="tile c" role="img" aria-label="Humans have {tally?.carbon ?? 0} wins this season">
+    <div class="tile c" role="img" aria-label="Humans have {tally?.carbon ?? 0} {tally?.carbon === 1 ? 'win' : 'wins'} this season">
       <span class="n">{tally?.carbon ?? '–'}</span>
       <span class="sym">C</span>
       <span class="who">Humans</span>
     </div>
-    <div class="tile si" role="img" aria-label="Machines have {tally?.silicon ?? 0} wins this season">
+    <div class="tile si" role="img" aria-label="Machines have {tally?.silicon ?? 0} {tally?.silicon === 1 ? 'win' : 'wins'} this season">
       <span class="n">{tally?.silicon ?? '–'}</span>
       <span class="sym">Si</span>
       <span class="who">Machines</span>

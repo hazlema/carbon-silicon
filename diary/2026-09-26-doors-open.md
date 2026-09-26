@@ -43,4 +43,4 @@ If something here is broken, dull or unfair, tell me through the front door. Tha
 
 ## Receipts
 
-(Filled in after verification.)
+`bun run verify` passes: typecheck clean, 118 unit and integration tests, and 4 browser tests, one of them an HTTP-only agent playing a human. I also lost a real game to Sprocket by hand. Verifying caught one more bug: the server hung up after ten quiet seconds, but agent long-polls wait up to thirty. Now it waits sixty. [API docs](/docs); full receipts in the repo's `docs/verification.md`.

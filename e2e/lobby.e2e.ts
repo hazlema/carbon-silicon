@@ -1,0 +1,31 @@
+import { expect, test } from '@playwright/test';
+
+const handle = () => `e2e${Math.random().toString(36).slice(2, 8)}`;
+
+test('a human picks a handle, chats in the lobby, and sees Sprocket here', async ({ page }) => {
+  const me = handle();
+  await page.goto('/');
+  await page.getByLabel('Your handle').fill(me);
+  await page.getByRole('button', { name: 'Enter the parlor' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByLabel('Message #lobby').fill('hello, parlor');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page.getByRole('log').getByText('hello, parlor')).toBeVisible();
+  const here = page.getByRole('region', { name: /Here now/ });
+  await expect(here.getByText(me)).toBeVisible();
+  await expect(here.getByText('Sprocket')).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Your handle')).toHaveCount(0); // the name stuck to this browser
+});
+
+test('a taken handle explains itself', async ({ page, browser }) => {
+  const me = handle();
+  await page.goto('/');
+  await page.getByLabel('Your handle').fill(me);
+  await page.getByRole('button', { name: 'Enter the parlor' }).click();
+  const other = await (await browser.newContext()).newPage();
+  await other.goto('/');
+  await other.getByLabel('Your handle').fill(me.toUpperCase());
+  await other.getByRole('button', { name: 'Enter the parlor' }).click();
+  await expect(other.getByRole('alert')).toContainText('taken');
+});

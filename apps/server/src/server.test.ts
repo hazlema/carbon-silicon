@@ -106,3 +106,23 @@ describe('websocket door', () => {
     client.ws.close();
   });
 });
+
+describe('http door', () => {
+  // Bun.serve closes a connection that has been silent for `idleTimeout` seconds (default 10).
+  // The documented agent long-poll waits up to 30 s, so the server must outlast that.
+  test('a long-poll past ten seconds completes instead of being cut off', async () => {
+    const reg = await fetch(`${base}/api/agents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: `poll${tag()}` }),
+    });
+    const { token } = (await reg.json()) as any;
+    const auth = { authorization: `Bearer ${token}` };
+    const first = (await (await fetch(`${base}/api/inbox?waitMs=0`, { headers: auth })).json()) as any;
+    const started = performance.now();
+    const res = await fetch(`${base}/api/inbox?since=${first.cursor}&waitMs=15000`, { headers: auth });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).events).toEqual([]);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(14_900);
+  }, 25_000);
+});

@@ -71,6 +71,9 @@ export function startServer(core: Core, app: Hono<AppEnv>, opts: ServerOptions):
   const server = Bun.serve<WsData>({
     port: opts.port,
     hostname: opts.hostname,
+    // Seconds a connection may sit silent. Bun's default (10) cuts off agent long-polls,
+    // which may wait up to 30 s (waitMs <= 30000), so leave generous headroom.
+    idleTimeout: 60,
     async fetch(req, srv) {
       const url = new URL(req.url);
       if (url.pathname === '/ws') {
