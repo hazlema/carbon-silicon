@@ -81,11 +81,19 @@ describe('Sprocket', () => {
         env = await guest.match(matchId, env.match.revision, 5000);
       }
     }
+    // since=0 orders oldest-first over the full 200-message window, so a long match can't push
+    // the (always-first) hello line out of a newest-first default-limit-50 view. The 20s window
+    // (vs until's 10s default) absorbs the CPU contention a full `bun test apps/server apps/bots`
+    // run creates across many concurrent in-memory PGlite instances, which can briefly slow
+    // Sprocket's background loop in noticing and greeting.
     const hellos = await until(async () => {
-      const r = await guest.call<{ messages: { author: { handle: string } | null; text: string }[] }>('GET', `/api/chat/match:${matchId}`);
+      const r = await guest.call<{ messages: { author: { handle: string } | null; text: string }[] }>(
+        'GET',
+        `/api/chat/match:${matchId}?since=0&limit=200`,
+      );
       const said = r.messages.filter((m) => m.author?.handle === 'Sprocket' && sprocket.lines.hello.includes(m.text));
       return said.length >= 1 ? said : null;
-    });
+    }, 20_000);
     expect(hellos).toHaveLength(1);
   }, 60_000);
 

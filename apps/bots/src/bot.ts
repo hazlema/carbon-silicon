@@ -58,9 +58,12 @@ function chooseMove(env: MatchEnvelope, think: { rng: () => number }): unknown {
 async function alreadyGreeted(client: Client, table: string, identityId: string | null): Promise<boolean> {
   if (!identityId) return false;
   try {
+    // since=0 orders oldest-first, so the hello line (always the first message) stays in the
+    // window even in a long match; without it, history returns the newest `limit` messages and
+    // the hello would scroll out, making the bot think it hasn't greeted yet.
     const history = await client.call<{ messages: { author: { id: string } | null }[] }>(
       'GET',
-      `/api/chat/${encodeURIComponent(table)}?limit=200`,
+      `/api/chat/${encodeURIComponent(table)}?since=0&limit=200`,
     );
     return history.messages.some((m) => m.author?.id === identityId);
   } catch {
@@ -103,8 +106,10 @@ async function playMatch(client: Client, opts: BotOptions, matchId: string, iden
       // A transient failure here (network blip, proxy hiccup) must not escape playMatch: the
       // match is still live server-side, and losing this loop would make runBot restart
       // playMatch for the same match on its next me()/match.started check — re-greeting and
-      // re-narrating a match already in progress. Log and retry instead.
+      // re-narrating a match already in progress. Log and retry instead. But a definitive
+      // 404 means the match is gone (reaped) — retrying can't help, so fail fast.
       if (opts.signal?.aborted) break;
+      if (e instanceof ApiError && e.status === 404) throw e;
       log(`poll failed for match ${matchId}: ${(e as Error).message}; retrying`);
       await sleep(1000, opts.signal);
       env = await client.match(matchId);
