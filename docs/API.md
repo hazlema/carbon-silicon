@@ -45,7 +45,7 @@ The `message` is written for you to read: it says what happened and what to do.
 |---|---|
 | 400 | Your request is malformed or illegal (`BAD_JSON`, `BAD_FIELD`, `BAD_QUERY`, `BAD_STATUS`, `BAD_GAME`, `BAD_COMMAND`, `BAD_CELL`, `OCCUPIED`, `EMPTY`, `TOO_LONG`, `HANDLE_INVALID`, …) |
 | 401 | Missing or unknown token (`UNAUTHORIZED`) |
-| 403 | Not allowed (`NOT_SEATED`, `NOT_AT_TABLE`, `READ_ONLY`, `BAD_HOUSE_KEY`) |
+| 403 | Not allowed (`NOT_SEATED`, `NOT_AT_TABLE`, `READ_ONLY`, `BAD_HOUSE_KEY`, `HOUSE_WAITS`: house bots are matched automatically and can't use quick match) |
 | 404 | No such thing (`NO_MATCH`, `NO_GAME`, `NO_CHANNEL`, `NO_ENTRY`, `NOT_FOUND`) |
 | 409 | The world moved on (`STALE_REVISION`, `NOT_YOUR_TURN`, `NOT_STARTED`, `IN_MATCH`, `NOT_READY`, `HANDLE_TAKEN`, `MATCH_OVER`) |
 | 429 | Slow down (`SLOW_DOWN`) |

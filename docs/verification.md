@@ -2,6 +2,44 @@
 
 Rule 13: a feature exists only when it is tested and verified running. Each run below lists what was run, what it printed, and what broke along the way. Newest first.
 
+## Final review fix wave, 2026-09-26
+
+**Tree:** parent `91ce95b` (`git rev-parse --short HEAD` before this task's commit(s)).
+
+Fixes 11 findings from the whole-branch review: a rate limit on `POST /api/session` (guest-identity squatting/spam), human auto-AFK not firing because GET polling counted as activity, a ghost match left behind when `GameManager.createMatch`'s DB inserts throw, a `goLive` status write that could race past a finished match, wrapping `finish()`'s match/match-player updates in one transaction, an outdated `http2` directive in `deploy/nginx.conf`, a missing `HOUSE_WAITS` entry in `docs/API.md`, `ChatPanel` loading only the last 100 messages instead of the spec's 200, unguarded `JSON.parse` of WS frames in `live.svelte.ts`, chat missing after a WS reconnect until the channel changed, and focus not moving to the verdict heading when a match ends.
+
+### Automated
+
+Final run 2026-09-26 23:52:38Z to 23:53:30Z UTC (an earlier run at 23:50:37Z–23:51:30Z passed identically; this one is after moving one `$effect` below its `$derived` dependencies for readability, no behavior change):
+
+```sh
+bun run verify 2>&1 | tee /tmp/verify.log
+# = bun run typecheck && bun test && bun run build && bun run e2e
+```
+
+| Stage | Result |
+|---|---|
+| `tsc -p tsconfig.json` | clean, no output |
+| `svelte-check` (apps/web) | `COMPLETED 369 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS` |
+| `bun test` | `121 pass`, `0 fail`, `3708 expect() calls`, `Ran 121 tests across 19 files.` |
+| `bun run build` | adapter-static `Wrote site to "build"` |
+| `playwright test` | `4 passed (17.2s)` |
+
+Same two `[bus] handler for match.updated failed … error: boom` traces as every prior run (the EventBus test that deliberately throws to prove failure isolation — expected, not a regression).
+
+New/changed tests covering this wave:
+
+- `apps/server/src/http/app.test.ts`: `new human identities are limited to 10 per hour per IP; an existing cookie is unaffected` (10×201 then 429 from one IP, `SLOW_DOWN` body, and the "already have a cookie" branch confirmed to bypass the limiter even once it's exhausted); `human auto-AFK > a GET does not reset the idle timer; a POST does` (FakeClock-driven: idle at 10 min after a GET at the 9-minute mark, still ready after a POST at the 9-minute mark).
+- `apps/server/src/core/games.test.ts`: `a DB failure while creating a match leaves no ghost: both players freed, error rethrown` (a seat with no `identities` row makes the `match_players` FK insert fail; asserts both players' `activeMatchOf` clears, presence returns to its prior status, the error still reaches the caller, and a fresh match can be created afterwards).
+
+Both new server-side tests were run RED (against the pre-fix code, via `git stash` of just the implementation file) before the fix, then GREEN after, per TDD.
+
+Findings 4–5 (the `goLive` guard clause and the `finish()` transaction) and 6–11 (nginx, docs/API.md, ChatPanel limit, WS frame guard, reconnect chat catch-up, verdict focus) are covered indirectly by the existing suite (`games.test.ts`'s existing match-lifecycle tests still pass unchanged) plus the full typecheck/build/e2e pass above; they did not call for new dedicated tests per the findings list.
+
+### By hand
+
+Not repeated for this pass — the live site on port 3000 was left running throughout per instruction and not touched; the fixes were verified through the automated suite above (including the Playwright e2e suite against a separate instance on port 3100).
+
 ## M1 "Doors open", 2026-09-26
 
 **Tree:** `def04ec` (`git rev-parse --short HEAD`) plus this task's uncommitted changes. Those changes (the e2e suite, the two fixes below, this file) went into the commit that adds this file, so the hash above is its parent.

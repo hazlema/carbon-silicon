@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import type { CMCommand } from '@cs/critical-mass';
 import type { InboxPoll, MatchEnvelope } from '@cs/shared/protocol';
 import { createCore } from '../core/core';
+import { FakeClock } from '../lib/clock';
 import { createApp } from './app';
 
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
@@ -108,6 +109,58 @@ describe('identity over HTTP', () => {
     const statuses: number[] = [];
     for (let i = 0; i < 6; i++) statuses.push((await call('POST', '/api/agents', { ip: '192.168.9.9', body: { name: `lim${tag()}` } })).status);
     expect(statuses).toEqual([201, 201, 201, 201, 201, 429]);
+  });
+  test('new human identities are limited to 10 per hour per IP; an existing cookie is unaffected', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 10; i++) statuses.push((await call('POST', '/api/session', { ip: '192.168.9.10', body: { handle: `Slow${tag()}` } })).status);
+    expect(statuses).toEqual(Array(10).fill(201));
+    const blocked = await call('POST', '/api/session', { ip: '192.168.9.10', body: { handle: `Slow${tag()}` } });
+    expect(blocked.status).toBe(429);
+    expect(blocked.data.error).toEqual({ code: 'SLOW_DOWN', message: 'Too many new names from here. Try again later.' });
+    // the "already have a human cookie" branch never touches the limiter, even once it's exhausted
+    const fresh = await call('POST', '/api/session', { ip: '192.168.9.11', body: { handle: `Steady${tag()}` } });
+    expect(fresh.status).toBe(201);
+    const cookie = (fresh.headers.get('set-cookie') ?? '').split(';')[0];
+    expect((await call('POST', '/api/session', { ip: '192.168.9.10', cookie, body: { handle: 'whatever' } })).status).toBe(200);
+  });
+});
+
+describe('human auto-AFK', () => {
+  test('a GET does not reset the idle timer; a POST does', async () => {
+    const clock = new FakeClock();
+    const afkCore = await createCore({
+      databaseUrl: 'pglite:memory',
+      houseKey: 'hk',
+      adminHandles: [],
+      diaryDir,
+      countdownMs: 0,
+      houseFallbackMs: 60_000,
+      clock,
+    });
+    const afkApp = createApp(afkCore, { apiDocs: '# API reference', llmsTxt: 'llms quickstart' });
+    try {
+      const idle = await afkCore.identities.createHuman(`Idle${tag()}`);
+      afkCore.presence.humanConnected(idle.identity);
+      clock.advance(9 * 60_000);
+      const me = await afkApp.request('/api/me', { headers: { cookie: `cs_key=${idle.key}`, 'x-forwarded-for': '10.1.0.1' } });
+      expect(me.status).toBe(200);
+      clock.advance(60_000);
+      expect(afkCore.presence.get(idle.identity.id)?.status).toBe('afk');
+
+      const active = await afkCore.identities.createHuman(`Active${tag()}`);
+      afkCore.presence.humanConnected(active.identity);
+      clock.advance(9 * 60_000);
+      const post = await afkApp.request('/api/chat/lobby', {
+        method: 'POST',
+        headers: { cookie: `cs_key=${active.key}`, 'x-forwarded-for': '10.1.0.2', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'still here' }),
+      });
+      expect(post.status).toBe(201);
+      clock.advance(60_000);
+      expect(afkCore.presence.get(active.identity.id)?.status).toBe('ready');
+    } finally {
+      await afkCore.close();
+    }
   });
 });
 

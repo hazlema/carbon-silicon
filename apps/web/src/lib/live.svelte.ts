@@ -20,6 +20,8 @@ class Live {
   me = $state<IdentityPublic | null>(null);
   checked = $state(false);
   connected = $state(false);
+  /** Bumped each time the socket reopens after the first connection, so listeners can catch up on what they missed. */
+  reconnects = $state(0);
   presence = $state<PresenceInfo[]>([]);
   activeMatch = $state<string | null>(null);
   queued = $state<string | null>(null);
@@ -27,6 +29,7 @@ class Live {
 
   #ws: WebSocket | null = null;
   #retry = 0;
+  #everOpened = false;
   #chat = new Map<string, Set<Listener<ChatMessage>>>();
   #matches = new Map<string, Set<Listener<MatchEnvelope>>>();
   #inbox = new Set<Listener<InboxEvent>>();
@@ -78,10 +81,20 @@ class Live {
     ws.onopen = () => {
       this.connected = true;
       this.#retry = 0;
+      if (this.#everOpened) this.reconnects += 1;
+      this.#everOpened = true;
       for (const channel of this.#chat.keys()) this.#send({ type: 'subscribe', channel });
       for (const matchId of this.#matches.keys()) this.#send({ type: 'watch', matchId });
     };
-    ws.onmessage = (e) => this.#handle(JSON.parse(String(e.data)) as WsServerMsg);
+    ws.onmessage = (e) => {
+      let msg: WsServerMsg;
+      try {
+        msg = JSON.parse(String(e.data)) as WsServerMsg;
+      } catch {
+        return;
+      }
+      this.#handle(msg);
+    };
     ws.onclose = () => {
       this.connected = false;
       this.#ws = null;

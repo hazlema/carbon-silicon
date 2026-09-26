@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import type { ChatMessage } from '@cs/shared/protocol';
   import { api } from '$lib/api';
   import { splitMessage } from '$lib/chat';
@@ -34,12 +34,26 @@
     messages = [];
     error = '';
     const off = live.onChat(ch, (m) => merge([m]));
-    api<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(ch)}?limit=100`)
+    api<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(ch)}?limit=200`)
       .then((r) => alive && merge(r.messages))
       .catch((e) => alive && (error = (e as Error).message));
     return () => {
       alive = false;
       off();
+    };
+  });
+
+  $effect(() => {
+    const ch = channel;
+    const generation = live.reconnects;
+    if (generation === 0) return;
+    const since = untrack(() => messages.at(-1)?.id ?? 0);
+    let alive = true;
+    api<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(ch)}?since=${since}&limit=200`)
+      .then((r) => alive && merge(r.messages))
+      .catch((e) => alive && (error = (e as Error).message));
+    return () => {
+      alive = false;
     };
   });
 

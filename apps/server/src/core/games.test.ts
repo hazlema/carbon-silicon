@@ -80,6 +80,19 @@ describe('creating a match', () => {
     expect((await errorOf(ctx.games.createMatch('critical-mass', [ctx.red, ctx.outsider]))).code).toBe('IN_MATCH');
     expect((await errorOf(ctx.games.createMatch('chess', [ctx.outsider, ctx.blue]))).status).toBe(404);
   });
+  test('a DB failure while creating a match leaves no ghost: both players freed, error rethrown', async () => {
+    const ctx = await setup();
+    const ghost: IdentityPublic = { ...ctx.outsider, id: newId('id') }; // no row in `identities` — the match_players FK insert fails
+    await expect(ctx.games.createMatch('critical-mass', [ctx.red, ghost])).rejects.toThrow();
+    expect(ctx.games.activeMatchOf(ctx.red.id)).toBeNull();
+    expect(ctx.games.activeMatchOf(ghost.id)).toBeNull();
+    expect(ctx.presence.get(ctx.red.id)?.status).toBe('ready');
+    // the seat was never in presence, so it's fine that ghost has no entry at all
+    expect(ctx.presence.get(ghost.id)).toBeNull();
+    // red is free to start a fresh match
+    const summary = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.blue]);
+    expect(summary.status).toBe('countdown');
+  });
 });
 
 describe('playing', () => {

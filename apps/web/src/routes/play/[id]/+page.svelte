@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { tick } from 'svelte';
   import type { CMView } from '@cs/critical-mass';
   import type { MatchEnvelope } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
@@ -22,6 +23,8 @@
   let busy = $state(false);
   let confirmResign = $state(false);
   let now = $state(Date.now());
+  let verdictHeading: HTMLHeadingElement | undefined = $state();
+  let focusedOver = false;
 
   const id = $derived(page.params.id ?? '');
 
@@ -35,6 +38,7 @@
     env = null;
     gone = false;
     error = '';
+    focusedOver = false;
     const off = live.watchMatch(matchId, accept);
     api<MatchEnvelope>('GET', `/api/matches/${matchId}`)
       .then((e) => alive && accept(e))
@@ -77,6 +81,13 @@
     if (match.status === 'over' || match.status === 'abandoned') return verdict || 'This match was abandoned.';
     if (myTurn) return 'Your move. Place an orb on an empty cell or one of yours.';
     return `Waiting for ${handleOf(match.toMove[0] ?? '')}…`;
+  });
+
+  $effect(() => {
+    if (match?.status === 'over' && !focusedOver) {
+      focusedOver = true;
+      tick().then(() => verdictHeading?.focus());
+    }
   });
 
   async function move(cell: string) {
@@ -185,7 +196,7 @@
 
   {#if match.status === 'over'}
     <div class="verdict panel" role="dialog" aria-labelledby="verdict-title">
-      <h2 id="verdict-title">{verdict}</h2>
+      <h2 id="verdict-title" bind:this={verdictHeading} tabindex="-1">{verdict}</h2>
       <p>{REASONS[match.endReason ?? ''] ?? match.endReason}</p>
       {#if mySeat && live.me && !live.me.locked}
         <p class="note">Guest results count toward the humans-versus-machines score. The leaderboard arrives with reserved names.</p>

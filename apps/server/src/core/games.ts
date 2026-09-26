@@ -157,18 +157,28 @@ export class GameManager {
     m.timer = this.clock.setTimeout(() => {
       this.goLive(id).catch((e) => console.error('[games] goLive failed', e));
     }, this.opts.countdownMs);
-    await this.db.insert(matches).values({
-      id,
-      gameId,
-      status: 'countdown',
-      seed,
-      season: seasonOf(now),
-      rated: seats.every((s) => s.identity.kind === 'agent' || s.identity.locked),
-      createdAt: new Date(now),
-    });
-    await this.db.insert(matchPlayers).values(
-      seats.map((s) => ({ matchId: id, seat: s.seat, identityId: s.identity.id, kind: s.identity.kind })),
-    );
+    try {
+      await this.db.insert(matches).values({
+        id,
+        gameId,
+        status: 'countdown',
+        seed,
+        season: seasonOf(now),
+        rated: seats.every((s) => s.identity.kind === 'agent' || s.identity.locked),
+        createdAt: new Date(now),
+      });
+      await this.db.insert(matchPlayers).values(
+        seats.map((s) => ({ matchId: id, seat: s.seat, identityId: s.identity.id, kind: s.identity.kind })),
+      );
+    } catch (e) {
+      this.clock.clearTimeout(m.timer);
+      this.matches.delete(id);
+      for (const s of seats) {
+        if (this.active.get(s.identity.id) === id) this.active.delete(s.identity.id);
+        this.presence.setPlaying(s.identity.id, false);
+      }
+      throw e;
+    }
     const summary = this.toSummary(m);
     for (const s of seats) this.comms.deliver(s.identity.id, { type: 'match.started', match: summary });
     await this.comms.postSystem(
@@ -186,7 +196,10 @@ export class GameManager {
     m.revision += 1;
     this.startTurn(m);
     this.changed(m);
-    await this.db.update(matches).set({ status: 'live' }).where(eq(matches.id, id));
+    await this.db
+      .update(matches)
+      .set({ status: 'live' })
+      .where(and(eq(matches.id, id), eq(matches.status, 'countdown')));
   }
 
   private startTurn(m: LiveMatch): void {
@@ -296,16 +309,18 @@ export class GameManager {
     for (const s of m.seats) this.release(m, s.identity.id);
     this.changed(m);
     m.timer = this.clock.setTimeout(() => this.matches.delete(m.id), this.opts.retainMs);
-    await this.db
-      .update(matches)
-      .set({ status: 'over', outcome, endReason: outcome.reason, endedAt: new Date(this.clock.now()) })
-      .where(eq(matches.id, m.id));
-    for (const s of m.seats) {
-      await this.db
-        .update(matchPlayers)
-        .set({ result: resultFor(outcome, s.seat) })
-        .where(and(eq(matchPlayers.matchId, m.id), eq(matchPlayers.seat, s.seat)));
-    }
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(matches)
+        .set({ status: 'over', outcome, endReason: outcome.reason, endedAt: new Date(this.clock.now()) })
+        .where(eq(matches.id, m.id));
+      for (const s of m.seats) {
+        await tx
+          .update(matchPlayers)
+          .set({ result: resultFor(outcome, s.seat) })
+          .where(and(eq(matchPlayers.matchId, m.id), eq(matchPlayers.seat, s.seat)));
+      }
+    });
     for (const s of m.seats) {
       this.comms.deliver(s.identity.id, { type: 'match.over', matchId: m.id, outcome, result: resultFor(outcome, s.seat) });
     }

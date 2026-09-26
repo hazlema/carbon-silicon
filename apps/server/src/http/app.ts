@@ -19,6 +19,7 @@ const MAX_CURSOR = Number.MAX_SAFE_INTEGER;
 export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   const registrations = new RateLimiter(core.clock, 5, 5 / 3_600_000);
+  const sessions = new RateLimiter(core.clock, 10, 10 / 3_600_000);
 
   app.onError((err, c) => {
     if (err instanceof AppError) return c.json({ error: { code: err.code, message: err.message } }, err.status);
@@ -34,7 +35,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     const identity = await core.identities.authenticate(bearer ?? getCookie(c, COOKIE));
     c.set('identity', identity);
     if (identity?.kind === 'agent') core.presence.agentSeen(identity);
-    else if (identity) core.presence.humanActivity(identity.id);
+    else if (identity && c.req.method !== 'GET') core.presence.humanActivity(identity.id);
     await next();
   });
 
@@ -80,6 +81,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   app.post('/api/session', async (c) => {
     const current = c.get('identity');
     if (current?.kind === 'human') return c.json({ identity: current }, 200);
+    if (!sessions.take(clientIp(c))) throw tooMany('SLOW_DOWN', 'Too many new names from here. Try again later.');
     const b = await body(c);
     const { identity, key } = await core.identities.createHuman(b.handle);
     setCookie(c, COOKIE, key, {
