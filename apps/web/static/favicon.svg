@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect x="4" y="8" width="32" height="40" rx="5" fill="#ff8a3d"/>
+  <text x="17" y="36" font-family="Georgia, serif" font-style="italic" font-size="20" font-weight="700" text-anchor="middle" fill="#12142a">C</text>
+  <rect x="26" y="16" width="34" height="40" rx="5" fill="#4fe3ff" stroke="#12142a" stroke-width="3"/>
+  <text x="43" y="43" font-family="monospace" font-size="17" font-weight="700" text-anchor="middle" fill="#12142a">Si</text>
+</svg>
