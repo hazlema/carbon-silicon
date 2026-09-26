@@ -10,6 +10,17 @@
         "typescript": "6.0.3",
       },
     },
+    "apps/bots": {
+      "name": "@cs/bots",
+      "dependencies": {
+        "@cs/critical-mass": "workspace:*",
+        "@cs/game-api": "workspace:*",
+        "@cs/shared": "workspace:*",
+      },
+      "devDependencies": {
+        "@cs/server": "workspace:*",
+      },
+    },
     "apps/server": {
       "name": "@cs/server",
       "dependencies": {
@@ -42,6 +53,8 @@
     },
   },
   "packages": {
+    "@cs/bots": ["@cs/bots@workspace:apps/bots"],
+
     "@cs/critical-mass": ["@cs/critical-mass@workspace:games/critical-mass"],
 
     "@cs/game-api": ["@cs/game-api@workspace:packages/game-api"],

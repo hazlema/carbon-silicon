@@ -1,0 +1,11 @@
+{
+  "name": "@cs/bots",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@cs/critical-mass": "workspace:*",
+    "@cs/game-api": "workspace:*",
+    "@cs/shared": "workspace:*"
+  },
+  "devDependencies": { "@cs/server": "workspace:*" }
+}

@@ -3,6 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": { "db:generate": "drizzle-kit generate" },
+  "exports": {
+    "./core": "./src/core/core.ts",
+    "./http": "./src/http/app.ts",
+    "./server": "./src/server.ts"
+  },
   "dependencies": {
     "@cs/critical-mass": "workspace:*",
     "@cs/game-api": "workspace:*",
