@@ -1,0 +1,13 @@
+{
+  "name": "@cs/shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./brand": "./src/brand.ts",
+    "./filter": "./src/filter.ts",
+    "./handles": "./src/handles.ts",
+    "./protocol": "./src/protocol.ts"
+  },
+  "dependencies": { "obscenity": "0.4.6" }
+}

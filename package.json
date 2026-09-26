@@ -1,0 +1,23 @@
+{
+  "name": "carbon-silicon",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "games/*", "apps/*"],
+  "scripts": {
+    "dev:server": "bun --watch apps/server/src/main.ts",
+    "dev:web": "cd apps/web && bun run dev",
+    "dev:bots": "bun apps/bots/src/main.ts",
+    "build": "cd apps/web && bun run build",
+    "start": "bun apps/server/src/main.ts",
+    "bots": "bun apps/bots/src/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json && cd apps/web && bun run check",
+    "e2e": "playwright test",
+    "verify": "bun run typecheck && bun test && bun run build && bun run e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/bun": "1.4.2",
+    "typescript": "6.0.3"
+  }
+}
