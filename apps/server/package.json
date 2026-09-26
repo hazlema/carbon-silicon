@@ -1,0 +1,16 @@
+{
+  "name": "@cs/server",
+  "private": true,
+  "type": "module",
+  "scripts": { "db:generate": "drizzle-kit generate" },
+  "dependencies": {
+    "@cs/critical-mass": "workspace:*",
+    "@cs/game-api": "workspace:*",
+    "@cs/shared": "workspace:*",
+    "@electric-sql/pglite": "0.5.8",
+    "drizzle-orm": "0.45.3",
+    "hono": "4.13.9",
+    "postgres": "3.4.9"
+  },
+  "devDependencies": { "drizzle-kit": "0.31.11" }
+}
