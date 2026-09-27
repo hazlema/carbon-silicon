@@ -3,7 +3,10 @@ import type {
   IdentityPublic,
   InboxEvent,
   MatchEnvelope,
+  MeResponse,
   PresenceInfo,
+  RelationsInfo,
+  SanctionInfo,
   Status,
   WsClientMsg,
   WsServerMsg,
@@ -11,6 +14,7 @@ import type {
 import { api, ApiError } from './api';
 
 type Listener<T> = (value: T) => void;
+export type Removal = { id: number; by: string };
 
 const byHandle = (a: PresenceInfo, b: PresenceInfo) =>
   a.identity.handle.toLowerCase().localeCompare(b.identity.handle.toLowerCase());
@@ -25,22 +29,26 @@ class Live {
   presence = $state<PresenceInfo[]>([]);
   activeMatch = $state<string | null>(null);
   queued = $state<string | null>(null);
+  /** Your active mute or suspension, if any. */
+  sanction = $state<SanctionInfo | null>(null);
+  relations = $state<RelationsInfo>({ ignores: [], blocks: [] });
+  /** Everyone you ignore or block; their chat is hidden for you. */
+  hiddenAuthors: Set<string> = $derived(new Set([...this.relations.ignores, ...this.relations.blocks].map((i) => i.id)));
   myStatus: Status = $derived(this.presence.find((p) => p.identity.id === this.me?.id)?.status ?? 'offline');
 
   #ws: WebSocket | null = null;
   #retry = 0;
   #everOpened = false;
   #chat = new Map<string, Set<Listener<ChatMessage>>>();
+  #removed = new Map<string, Set<Listener<Removal>>>();
   #matches = new Map<string, Set<Listener<MatchEnvelope>>>();
   #inbox = new Set<Listener<InboxEvent>>();
 
   async init(): Promise<void> {
     try {
-      const r = await api<{ identity: IdentityPublic; activeMatch: string | null; queued: string | null }>('GET', '/api/me');
-      this.me = r.identity;
-      this.activeMatch = r.activeMatch;
-      this.queued = r.queued;
+      await this.refreshMe();
       this.connect();
+      void this.loadRelations();
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 401)) console.error(e);
     } finally {
@@ -48,10 +56,63 @@ class Live {
     }
   }
 
+  /** Re-read who you are, your match and queue, and your sanction. */
+  async refreshMe(): Promise<void> {
+    const r = await api<MeResponse>('GET', '/api/me');
+    this.me = r.identity;
+    this.activeMatch = r.activeMatch;
+    this.queued = r.queued;
+    this.sanction = r.sanction;
+  }
+
   async join(handle: string): Promise<void> {
     const r = await api<{ identity: IdentityPublic }>('POST', '/api/session', { handle });
-    this.me = r.identity;
+    await this.#signedIn(r.identity);
+  }
+
+  async signIn(handle: string, password: string): Promise<void> {
+    const r = await api<{ identity: IdentityPublic }>('POST', '/api/session/login', { handle, password });
+    await this.#signedIn(r.identity);
+  }
+
+  /** Sets a new password with a recovery code. The browser is already signed in afterwards, but the
+   *  gate shows the new code first and calls `finishRecovery` once the player has saved it. */
+  recover(handle: string, code: string, password: string): Promise<{ identity: IdentityPublic; recoveryCode: string }> {
+    return api('POST', '/api/session/recover', { handle, code, password });
+  }
+
+  async finishRecovery(identity: IdentityPublic): Promise<void> {
+    await this.#signedIn(identity);
+  }
+
+  async #signedIn(identity: IdentityPublic): Promise<void> {
+    this.me = identity;
+    try {
+      await this.refreshMe();
+    } catch (e) {
+      console.error(e);
+    }
     this.connect();
+    void this.loadRelations();
+  }
+
+  /** Sign this browser out and start over from a clean page. */
+  async signOut(): Promise<void> {
+    await api('DELETE', '/api/session');
+    location.assign('/');
+  }
+
+  async loadRelations(): Promise<void> {
+    try {
+      this.relations = await api<RelationsInfo>('GET', '/api/me/relations');
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async setRelation(handle: string, kind: 'ignore' | 'block', on: boolean): Promise<void> {
+    const path = `/api/me/${kind === 'ignore' ? 'ignores' : 'blocks'}/${encodeURIComponent(handle)}`;
+    this.relations = await api<RelationsInfo>(on ? 'PUT' : 'DELETE', path);
   }
 
   async setStatus(status: 'ready' | 'afk'): Promise<void> {
@@ -83,6 +144,12 @@ class Live {
       this.#retry = 0;
       if (this.#everOpened) this.reconnects += 1;
       this.#everOpened = true;
+      // A sanction (or a session revocation, a release, an IP ban) that lands in the gap between
+      // the earlier refreshMe() and the socket actually opening would otherwise be missed until
+      // the next authenticated request; re-read /api/me on every open, first connect included, to
+      // close that window. This also fires on every reconnect, so a push missed while offline is
+      // caught up here rather than waiting on the next push.
+      void this.refreshMe().catch((e) => console.error(e));
       for (const channel of this.#chat.keys()) this.#send({ type: 'subscribe', channel });
       for (const matchId of this.#matches.keys()) this.#send({ type: 'watch', matchId });
     };
@@ -121,12 +188,17 @@ class Live {
       case 'chat':
         for (const fn of this.#chat.get(msg.message.channel) ?? []) fn(msg.message);
         break;
+      case 'chat.removed':
+        for (const fn of this.#removed.get(msg.channel) ?? []) fn({ id: msg.id, by: msg.by });
+        break;
       case 'inbox':
         if (msg.event.type === 'match.started') {
           this.activeMatch = msg.event.match.id;
           this.queued = null;
         }
         if (msg.event.type === 'match.over' && this.activeMatch === msg.event.matchId) this.activeMatch = null;
+        // A sanction started or ended: the server may also have resigned a match or dropped a queue entry.
+        if (msg.event.type === 'moderation') void this.refreshMe().catch((e) => console.error(e));
         for (const fn of this.#inbox) fn(msg.event);
         break;
       case 'match':
@@ -151,6 +223,20 @@ class Live {
         this.#chat.delete(channel);
         this.#send({ type: 'unsubscribe', channel });
       }
+    };
+  }
+
+  /** Messages a mod removed in a channel you already follow with `onChat`. */
+  onChatRemoved(channel: string, fn: Listener<Removal>): () => void {
+    let set = this.#removed.get(channel);
+    if (!set) {
+      set = new Set();
+      this.#removed.set(channel, set);
+    }
+    set.add(fn);
+    return () => {
+      set.delete(fn);
+      if (set.size === 0) this.#removed.delete(channel);
     };
   }
 

@@ -143,6 +143,8 @@
   </div>
   {#if readOnly}
     <p class="note">{readOnlyNote}</p>
+  {:else if live.sanction}
+    <p class="note">{live.sanction.kind === 'mute' ? "You're muted and can't chat." : "You're suspended and can't chat."}</p>
   {:else if live.me}
     <form onsubmit={send}>
       <label class="visually-hidden" for={inputId}>Message {title}</label>

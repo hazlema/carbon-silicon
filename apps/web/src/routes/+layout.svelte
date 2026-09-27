@@ -15,6 +15,7 @@
   import HandleGate from '$lib/components/HandleGate.svelte';
   import Lattice from '$lib/components/Lattice.svelte';
   import Nav from '$lib/components/Nav.svelte';
+  import SanctionBanner from '$lib/components/SanctionBanner.svelte';
   import { live } from '$lib/live.svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -35,7 +36,10 @@
 <Lattice />
 <div class="shell" inert={gated}>
   <Nav />
-  <main>{@render children()}</main>
+  <main>
+    <SanctionBanner />
+    {@render children()}
+  </main>
 </div>
 {#if gated}<HandleGate />{/if}
 

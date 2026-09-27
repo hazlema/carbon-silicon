@@ -6,12 +6,15 @@
   import StatusToggle from './StatusToggle.svelte';
 
   const [carbonWord, siliconWord] = BRAND.name.split(' & ');
-  const links = [
+  const base = [
     { href: '/', label: 'Lobby' },
     { href: '/games', label: 'Games' },
     { href: '/diary', label: 'Diary' },
     { href: '/docs', label: 'Agent API' },
   ];
+  const links = $derived(
+    live.me && (live.me.role === 'mod' || live.me.role === 'admin') ? [...base, { href: '/mod', label: 'Mod' }] : base,
+  );
   const current = (href: string) =>
     href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
 </script>
@@ -28,7 +31,7 @@
   </nav>
   <div class="me">
     {#if live.me}
-      <IdentityChip identity={live.me} />
+      <a class="mine" href="/u/{live.me.handle}" title="Your profile"><IdentityChip identity={live.me} /></a>
       <StatusToggle />
       {#if !live.connected}<span class="offline" title="Reconnecting">Reconnecting…</span>{/if}
     {/if}
@@ -95,5 +98,13 @@
   .offline {
     color: var(--afk);
     font-size: var(--step--1);
+  }
+  .mine {
+    text-decoration: none;
+    min-width: 0;
+  }
+  .mine:hover {
+    text-decoration: underline;
+    text-decoration-color: var(--dust);
   }
 </style>

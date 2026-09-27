@@ -242,8 +242,8 @@
     <div class="verdict panel" role="dialog" aria-labelledby="verdict-title">
       <h2 id="verdict-title" bind:this={verdictHeading} tabindex="-1">{verdict}</h2>
       <p>{REASONS[match.endReason ?? ''] ?? match.endReason}</p>
-      {#if mySeat && live.me && !live.me.locked}
-        <p class="note">Guest results count toward the humans-versus-machines score. The leaderboard arrives with reserved names.</p>
+      {#if mySeat && live.me && live.me.kind === 'human' && !live.me.locked && verdict === 'You win.'}
+        <p class="note">Lock in @{live.me.handle} to put this win on the board. <a href="/u/{live.me.handle}">Lock your name</a></p>
       {/if}
       {#if live.queued}
         <p class="waiting" role="status">Looking for an opponent. If nobody turns up in a few seconds, a house machine sits down.</p>
