@@ -1,4 +1,6 @@
+import { sql } from 'drizzle-orm';
 import {
+  bigint,
   bigserial,
   boolean,
   index,
@@ -31,6 +33,9 @@ export const identities = pgTable(
     ownerId: text('owner_id'),
     createdAt: ts('created_at').notNull().defaultNow(),
     lastSeenAt: ts('last_seen_at').notNull().defaultNow(),
+    recoveryHash: text('recovery_hash'),
+    lastIp: text('last_ip'),
+    releasedAt: ts('released_at'),
   },
   (t) => [uniqueIndex('identities_handle_lower').on(t.handleLower), uniqueIndex('identities_secret_hash').on(t.secretHash)],
 );
@@ -45,6 +50,7 @@ export const messages = pgTable(
     system: boolean('system').notNull().default(false),
     createdAt: ts('created_at').notNull().defaultNow(),
     deletedAt: ts('deleted_at'),
+    deletedBy: text('deleted_by'),
   },
   (t) => [index('messages_channel_id').on(t.channel, t.id)],
 );
@@ -80,4 +86,99 @@ export const matchPlayers = pgTable(
     result: text('result', { enum: ['win', 'loss', 'draw', 'abandoned'] }),
   },
   (t) => [primaryKey({ columns: [t.matchId, t.seat] }), index('match_players_identity').on(t.identityId)],
+);
+
+/** One row per signed-in browser. Humans authenticate only through these (M2a). */
+export const sessions = pgTable(
+  'sessions',
+  {
+    id: text('id').primaryKey(),
+    identityId: text('identity_id')
+      .notNull()
+      .references(() => identities.id),
+    keyHash: text('key_hash').notNull(),
+    label: text('label').notNull(),
+    ip: text('ip'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    lastUsedAt: ts('last_used_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('sessions_key_hash').on(t.keyHash), index('sessions_identity').on(t.identityId)],
+);
+
+export const sanctions = pgTable(
+  'sanctions',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    identityId: text('identity_id')
+      .notNull()
+      .references(() => identities.id),
+    kind: text('kind', { enum: ['mute', 'suspend'] }).notNull(),
+    reason: text('reason').notNull(),
+    actorId: text('actor_id'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    endsAt: ts('ends_at'),
+    liftedAt: ts('lifted_at'),
+    liftedBy: text('lifted_by'),
+  },
+  (t) => [index('sanctions_identity').on(t.identityId)],
+);
+
+export const ipBans = pgTable('ip_bans', {
+  ip: text('ip').primaryKey(),
+  reason: text('reason').notNull(),
+  actorId: text('actor_id'),
+  createdAt: ts('created_at').notNull().defaultNow(),
+});
+
+/** Ignore and block lists. One row per (owner, target): a block replaces an ignore. */
+export const personRelations = pgTable(
+  'relations',
+  {
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => identities.id),
+    targetId: text('target_id')
+      .notNull()
+      .references(() => identities.id),
+    kind: text('kind', { enum: ['ignore', 'block'] }).notNull(),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.ownerId, t.targetId] }), index('relations_target').on(t.targetId)],
+);
+
+export const reports = pgTable(
+  'reports',
+  {
+    id: text('id').primaryKey(),
+    messageId: bigint('message_id', { mode: 'number' }).notNull(),
+    reporterId: text('reporter_id')
+      .notNull()
+      .references(() => identities.id),
+    targetId: text('target_id').references(() => identities.id),
+    snapshot: jsonb('snapshot').notNull(),
+    reason: text('reason'),
+    status: text('status', { enum: ['open', 'resolved'] }).notNull().default('open'),
+    resolution: text('resolution', { enum: ['dismiss', 'delete', 'mute', 'suspend'] }),
+    resolvedBy: text('resolved_by'),
+    resolvedAt: ts('resolved_at'),
+    notes: jsonb('notes').notNull().default(sql`'[]'::jsonb`),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('reports_status').on(t.status, t.createdAt), uniqueIndex('reports_once').on(t.reporterId, t.messageId)],
+);
+
+/** The moderation log. actor_id is null for the console; actor_name keeps the name as it was. */
+export const modActions = pgTable(
+  'mod_actions',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    actorId: text('actor_id'),
+    actorName: text('actor_name').notNull(),
+    targetId: text('target_id'),
+    action: text('action').notNull(),
+    reason: text('reason').notNull(),
+    detail: jsonb('detail').notNull().default(sql`'{}'::jsonb`),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('mod_actions_target').on(t.targetId, t.id)],
 );
