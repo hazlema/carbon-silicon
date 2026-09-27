@@ -33,6 +33,12 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   // Failed sign-ins and recoveries only: 5 per handle and 20 per IP per 15 minutes.
   const loginsByHandle = new RateLimiter(core.clock, 5, 5 / 900_000);
   const loginsByIp = new RateLimiter(core.clock, 20, 20 / 900_000);
+  // Wrong passwords on /api/me/password and DELETE /api/me: 5 per signed-in person per 15 minutes
+  // (and they share the per-IP failure budget above).
+  const checksByIdentity = new RateLimiter(core.clock, 5, 5 / 900_000);
+  // Every sign-in, right or wrong: 30 per IP per 15 minutes, so a known password can't drive
+  // unlimited argon2 verifies and session rows.
+  const signInsByIp = new RateLimiter(core.clock, 30, 30 / 900_000);
 
   app.onError((err, c) => {
     if (err instanceof AppError) return c.json({ error: { code: err.code, message: err.message } }, err.status);
@@ -93,32 +99,43 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
       secure: opts.secureCookies ?? false,
     });
   /**
-   * Runs a sign-in attempt under the failure limits; only a wrong password or code spends a token.
-   * Both tokens are reserved up front (synchronously, so concurrent requests can't all slip past the
-   * check before any of them spends one) and refunded unless the attempt ends in a counted failure.
+   * Runs a password (or recovery code) check under the failure limits; only a wrong password or
+   * code spends a token. Both tokens — per IP and per `key` — are reserved up front (synchronously,
+   * so concurrent requests can't all slip past the check before any of them spends one) and
+   * refunded unless the attempt ends in a counted failure.
    */
-  const limitedSignIn = async <T>(c: Context<AppEnv>, handle: unknown, attempt: () => Promise<T>): Promise<T> => {
+  const limitedCheck = async <T>(
+    c: Context<AppEnv>,
+    byKey: RateLimiter,
+    key: string,
+    message: string,
+    attempt: () => Promise<T>,
+  ): Promise<T> => {
     const ip = clientIp(c);
-    const who = typeof handle === 'string' ? handle.trim().toLowerCase() : '';
     const ipReserved = loginsByIp.take(ip);
-    const handleReserved = loginsByHandle.take(who);
-    if (!ipReserved || !handleReserved) {
+    const keyReserved = byKey.take(key);
+    if (!ipReserved || !keyReserved) {
       if (ipReserved) loginsByIp.refund(ip);
-      if (handleReserved) loginsByHandle.refund(who);
-      throw tooMany('SLOW_DOWN', 'Too many sign-in attempts. Try again in a few minutes.');
+      if (keyReserved) byKey.refund(key);
+      throw tooMany('SLOW_DOWN', message);
     }
     try {
       const result = await attempt();
       loginsByIp.refund(ip);
-      loginsByHandle.refund(who);
+      byKey.refund(key);
       return result;
     } catch (e) {
       if (e instanceof AppError && (e.code === 'BAD_PASSWORD' || e.code === 'BAD_CODE')) throw e; // counted: keep the spent token
       loginsByIp.refund(ip);
-      loginsByHandle.refund(who);
+      byKey.refund(key);
       throw e;
     }
   };
+  const limitedSignIn = <T>(c: Context<AppEnv>, handle: unknown, attempt: () => Promise<T>): Promise<T> =>
+    limitedCheck(c, loginsByHandle, typeof handle === 'string' ? handle.trim().toLowerCase() : '', 'Too many sign-in attempts. Try again in a few minutes.', attempt);
+  /** For a signed-in person re-entering their password (change it, delete the name). */
+  const limitedPasswordCheck = <T>(c: Context<AppEnv>, who: IdentityPublic, attempt: () => Promise<T>): Promise<T> =>
+    limitedCheck(c, checksByIdentity, who.id, 'Too many password attempts. Try again in a few minutes.', attempt);
 
   // ── discovery ──
   app.get('/api', (c) => c.json(apiIndex(core)));
@@ -146,6 +163,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   });
   app.post('/api/session/login', async (c) => {
     const b = await body(c);
+    if (!signInsByIp.take(clientIp(c))) throw tooMany('SLOW_DOWN', 'Too many sign-ins from here. Try again in a few minutes.');
     const { identity, key } = await limitedSignIn(c, b.handle, () => core.accounts.login(b.handle, b.password, meta(c)));
     setSessionCookie(c, key);
     return c.json({ identity });
@@ -191,7 +209,8 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   app.delete('/api/me', async (c) => {
     const who = me(c);
     const b = await optionalBody(c);
-    await core.accounts.deleteSelf(who, b.password); // guard and password come first: a refusal touches nothing
+    // guard and password come first: a refusal touches nothing
+    await limitedPasswordCheck(c, who, () => core.accounts.deleteSelf(who, b.password));
     // Only once deletion actually happens: leave the queue and resign any match in progress,
     // exactly like a moderator's release (ModerationManager.bench does the same two calls).
     await core.moderation.bench(who);
@@ -205,7 +224,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   app.post('/api/me/password', async (c) => {
     const who = me(c);
     const b = await body(c);
-    await core.accounts.changePassword(who, b.current, b.next, c.get('sessionId'));
+    await limitedPasswordCheck(c, who, () => core.accounts.changePassword(who, b.current, b.next, c.get('sessionId')));
     return c.body(null, 204);
   });
   app.get('/api/me/sessions', async (c) => {

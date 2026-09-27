@@ -251,6 +251,42 @@ describe('accounts over HTTP', () => {
     const wrong = await call('POST', '/api/session/login', { body: { handle, password: 'wrong wrong wrong' } });
     expect([wrong.status, wrong.data.error.code]).toEqual([401, 'BAD_PASSWORD']);
   });
+  test('password checks on /api/me/password are limited per person: concurrent guesses cannot all slip through', async () => {
+    const { cookie } = await lockedHuman('guess');
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => call('POST', '/api/me/password', { cookie, body: { current: 'wrong wrong wrong', next: 'a whole new one' } })),
+    );
+    expect(results.map((r) => r.status).sort()).toEqual([...Array(5).fill(401), ...Array(5).fill(429)]);
+    expect(results.filter((r) => r.status === 429).every((r) => r.data.error.code === 'SLOW_DOWN')).toBe(true);
+  });
+  test('password checks on DELETE /api/me are limited per person too', async () => {
+    const { cookie } = await lockedHuman('guessdel');
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => call('DELETE', '/api/me', { cookie, body: { password: 'wrong wrong wrong' } })),
+    );
+    expect(results.map((r) => r.status).sort()).toEqual([...Array(5).fill(401), ...Array(5).fill(429)]);
+    expect(results.filter((r) => r.status === 429).every((r) => r.data.error.code === 'SLOW_DOWN')).toBe(true);
+    expect((await call('GET', '/api/me', { cookie })).status).toBe(200); // still there
+  });
+  test('a right password does not spend a token on /api/me/password', async () => {
+    const { cookie } = await lockedHuman('rightpw');
+    let current = PW;
+    for (let i = 0; i < 6; i++) {
+      const next = `a new password no ${i}`;
+      expect((await call('POST', '/api/me/password', { cookie, body: { current, next } })).status).toBe(204);
+      current = next;
+    }
+    const wrong = await call('POST', '/api/me/password', { cookie, body: { current: 'wrong wrong wrong', next: 'whatever it is' } });
+    expect([wrong.status, wrong.data.error.code]).toEqual([401, 'BAD_PASSWORD']);
+  });
+  test('even successful sign-ins are capped per IP (30 per 15 minutes)', async () => {
+    const { handle } = await lockedHuman('often');
+    const ip = '192.168.66.66';
+    for (let i = 0; i < 30; i++) expect((await call('POST', '/api/session/login', { ip, body: { handle, password: PW } })).status).toBe(200);
+    const capped = await call('POST', '/api/session/login', { ip, body: { handle, password: PW } });
+    expect([capped.status, capped.data.error.code]).toEqual([429, 'SLOW_DOWN']);
+    expect((await call('POST', '/api/session/login', { body: { handle, password: PW } })).status).toBe(200); // another address is fine
+  });
   test('signing out revokes this browser only', async () => {
     const { handle, cookie: first } = await lockedHuman('out');
     const second = cookieOf(await call('POST', '/api/session/login', { body: { handle, password: PW } }));

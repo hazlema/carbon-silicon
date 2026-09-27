@@ -4,16 +4,17 @@ import { fileURLToPath } from 'node:url';
 import { BRAND } from '@cs/shared/brand';
 import { createCore } from './core/core';
 import { createApp } from './http/app';
+import { secretFromEnv } from './lib/secrets';
 import { startServer } from './server';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const env = process.env;
 const production = env.NODE_ENV === 'production';
 
-const houseKey = env.HOUSE_KEY ?? (production ? null : 'dev-house-key');
+const houseKey = secretFromEnv('HOUSE_KEY', env.HOUSE_KEY, production);
 if (!houseKey) console.warn('[main] HOUSE_KEY is not set — house bots cannot register.');
 
-const adminKey = env.ADMIN_KEY ?? (production ? null : 'dev-admin-key');
+const adminKey = secretFromEnv('ADMIN_KEY', env.ADMIN_KEY, production);
 if (!adminKey) console.warn('[main] ADMIN_KEY is not set — `bun run admin` is switched off.');
 
 const core = await createCore({
