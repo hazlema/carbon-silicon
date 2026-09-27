@@ -8,7 +8,7 @@ export interface TimeOpts {
 
 // Newer ICU data puts a narrow no-break space (U+202F) or no-break space (U+00A0) before AM/PM;
 // plain spaces read and test the same everywhere. Written as escapes so they can't be lost again.
-export const clean = (s: string) => s.replace(/[  ]/g, ' ');
+export const clean = (s: string) => s.replace(/[\u202f\u00a0]/g, ' ');
 
 /** "until 3:40 PM", "until Tue, Sep 29 at 3:40 PM", or "until further notice" for a permanent sanction. */
 export function untilText(endsAt: string | null, opts: TimeOpts = {}): string {

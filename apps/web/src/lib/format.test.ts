@@ -5,8 +5,8 @@ const opts = { now: Date.UTC(2026, 8, 27, 12, 0, 0), locale: 'en-US', timeZone: 
 
 describe('clean', () => {
   test('turns a narrow no-break space or a no-break space into a plain space', () => {
-    expect(clean('3:40 PM')).toBe('3:40 PM');
-    expect(clean('3:40 PM')).toBe('3:40 PM');
+    expect(clean('3:40\u202fPM')).toBe('3:40 PM');
+    expect(clean('3:40\u00a0PM')).toBe('3:40 PM');
   });
 });
 
