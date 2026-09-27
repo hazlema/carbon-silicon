@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { EventBus } from '../core/bus';
 import { FakeClock } from './clock';
 import { hashSecret, newId, newSecret } from './ids';
+import { clientIp, isLoopback } from './ip';
 import { RateLimiter } from './ratelimit';
 
 describe('FakeClock', () => {
@@ -71,6 +72,49 @@ describe('RateLimiter', () => {
     expect(rl.take('a')).toBe(true);
     expect(rl.take('a')).toBe(true);
     expect(rl.take('a')).toBe(false);
+  });
+});
+
+describe('clientIp', () => {
+  test('ignores X-Forwarded-For unless the proxy is trusted', () => {
+    expect(clientIp('6.6.6.6', '203.0.113.9', false)).toBe('203.0.113.9');
+    expect(clientIp('6.6.6.6', undefined, false)).toBe('local');
+  });
+  test('behind a trusted proxy, the last hop is the client (nginx sets or appends it)', () => {
+    expect(clientIp('198.51.100.7', '127.0.0.1', true)).toBe('198.51.100.7');
+    // a client that sends its own X-Forwarded-For can only prepend lies; the proxy's entry is last
+    expect(clientIp('6.6.6.6, 198.51.100.7', '127.0.0.1', true)).toBe('198.51.100.7');
+    expect(clientIp(' , ', '127.0.0.1', true)).toBe('127.0.0.1');
+    expect(clientIp(null, '127.0.0.1', true)).toBe('127.0.0.1');
+  });
+  test('loopback addresses', () => {
+    for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) expect(isLoopback(ip)).toBe(true);
+    for (const ip of ['10.0.0.1', '127.0.0.2x', '', null, undefined, 'local']) expect(isLoopback(ip)).toBe(false);
+  });
+});
+
+describe('RateLimiter pruning', () => {
+  test('prune drops only buckets that have refilled to capacity', () => {
+    const clock = new FakeClock();
+    const rl = new RateLimiter(clock, 2, 1 / 1000);
+    rl.take('a');
+    rl.take('b');
+    rl.take('b');
+    expect(rl.size).toBe(2);
+    clock.advance(1000); // a is full again (1 + 1); b has 1 of 2
+    expect(rl.prune()).toBe(1);
+    expect(rl.size).toBe(1);
+    // a pruned key behaves exactly like a fresh one
+    expect([rl.take('a'), rl.take('a'), rl.take('a')]).toEqual([true, true, false]);
+  });
+  test('take() prunes by itself every 1000 calls', () => {
+    const clock = new FakeClock();
+    const rl = new RateLimiter(clock, 1, 1 / 1000);
+    for (let i = 0; i < 999; i++) rl.take(`k${i}`);
+    expect(rl.size).toBe(999);
+    clock.advance(2000);
+    rl.take('last'); // the 1000th call
+    expect(rl.size).toBe(1);
   });
 });
 

@@ -9,7 +9,7 @@ import { createApp } from './app';
 
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
 const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir, countdownMs: 0, houseFallbackMs: 60_000 });
-const app = createApp(core, { apiDocs: '# API reference', llmsTxt: 'llms quickstart' });
+const app = createApp(core, { apiDocs: '# API reference', llmsTxt: 'llms quickstart', trustProxy: true });
 afterAll(() => core.close());
 
 let ipCounter = 0;
@@ -150,7 +150,7 @@ describe('human auto-AFK', () => {
       houseFallbackMs: 60_000,
       clock,
     });
-    const afkApp = createApp(afkCore, { apiDocs: '# API reference', llmsTxt: 'llms quickstart' });
+    const afkApp = createApp(afkCore, { apiDocs: '# API reference', llmsTxt: 'llms quickstart', trustProxy: true });
     try {
       const idle = await afkCore.identities.createHuman(`Idle${tag()}`);
       afkCore.presence.humanConnected(idle.identity);
@@ -358,5 +358,32 @@ describe('a full match over plain HTTP', () => {
     const resign = await call('POST', `/api/matches/${id}/resign`, { token: mover.token });
     expect(resign.data.match.status).toBe('over');
     expect((await call('DELETE', '/api/quickmatch', { token: a.token })).data).toEqual({ left: false });
+  });
+  test('long-polling a match needs credentials; a plain read does not', async () => {
+    const a = await agent('poller');
+    const b = await agent('polled');
+    await call('POST', '/api/quickmatch', { token: a.token, body: { gameId: 'critical-mass' } });
+    const id = (await call('POST', '/api/quickmatch', { token: b.token, body: { gameId: 'critical-mass' } })).data.match.id;
+    const anon = await call('GET', `/api/matches/${id}?since=1&waitMs=10`);
+    expect([anon.status, anon.data.error.code]).toEqual([401, 'UNAUTHORIZED']);
+    expect((await call('GET', `/api/matches/${id}?since=1&waitMs=10`, { token: a.token })).status).toBe(200);
+    expect((await call('GET', `/api/matches/${id}`)).status).toBe(200);
+    await call('POST', `/api/matches/${id}/resign`, { token: a.token });
+  });
+});
+
+describe('client IPs', () => {
+  test('without trustProxy, a forged X-Forwarded-For does not dodge the per-IP limits', async () => {
+    const strict = createApp(core, { apiDocs: '', llmsTxt: '' });
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const res = await strict.request('/api/agents', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': `172.16.0.${i + 1}` },
+        body: JSON.stringify({ name: `forge${tag()}` }),
+      });
+      statuses.push(res.status);
+    }
+    expect(statuses).toEqual([201, 201, 201, 201, 201, 429]);
   });
 });

@@ -3,13 +3,10 @@ import type { IdentityPublic, Role } from '@cs/shared/protocol';
 import type { Core } from '../core/core';
 import type { Actor } from '../core/powers';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors';
+import { isLoopback } from '../lib/ip';
 import type { AppEnv } from './app';
 
-const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const CONSOLE: Actor = { kind: 'console' };
-
-/** The socket address only. Task 10 swaps this for the shared isLoopback in lib/ip.ts. */
-const isLoopback = (ip: string | undefined | null): boolean => !!ip && LOOPBACK.has(ip);
 
 /**
  * `bun run admin` lands here. Shell access to the server is the root of trust: the request must

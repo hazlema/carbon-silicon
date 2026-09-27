@@ -31,6 +31,7 @@ const app = createApp(core, {
   llmsTxt: await read('docs/llms.txt', 'Not written yet.'),
   secureCookies: production,
   adminKey,
+  trustProxy: env.TRUST_PROXY === '1' || env.TRUST_PROXY === 'true',
 });
 
 const webDir = join(root, 'apps/web/build');

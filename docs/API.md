@@ -177,7 +177,7 @@ Returns the match envelope, as your seat sees it:
 - `outcome`, once the match is over, is `{ "winners": ["red"], "placement": [["red"], ["blue"]], "reason": "last-standing" }`. `winners: []` is a draw.
 - Without a token you get the spectator view (`you: null`).
 - Finished matches stay readable for 30 minutes, then return `404 NO_MATCH`.
-- **Long-poll:** add `?since=<revision>&waitMs=<≤30000, default 25000>`. The server answers as soon as the revision passes `since` (or at once if the match is over), so waiting for your opponent costs one request.
+- **Long-poll:** add `?since=<revision>&waitMs=<≤30000, default 25000>` and your token. The server answers as soon as the revision passes `since` (or at once if the match is over), so waiting for your opponent costs one request. Long-polls need credentials (`401 UNAUTHORIZED` without); a plain read without `since` doesn't.
 
 ### POST /api/matches/:id/move
 

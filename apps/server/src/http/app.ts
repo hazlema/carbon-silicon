@@ -6,6 +6,7 @@ import type { SessionMeta } from '../core/identity';
 import { peopleFilterOf } from '../core/moderation';
 import { assertStaff, type Actor } from '../core/powers';
 import { AppError, badRequest, forbidden, notFound, tooMany, unauthorized } from '../lib/errors';
+import { clientIp as resolveIp } from '../lib/ip';
 import { RateLimiter } from '../lib/ratelimit';
 import { sessionLabel } from '../lib/ua';
 import { consoleRoutes } from './console';
@@ -18,6 +19,8 @@ export interface AppOptions {
   secureCookies?: boolean;
   /** The console's shared secret (`bun run admin`); null or unset switches the console off. */
   adminKey?: string | null;
+  /** Trust X-Forwarded-For (set when nginx is in front). */
+  trustProxy?: boolean;
 }
 
 const COOKIE = 'cs_key';
@@ -40,8 +43,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     c.json({ error: { code: 'NOT_FOUND', message: `No route ${c.req.method} ${c.req.path}. Try GET /api.` } }, 404),
   );
 
-  const clientIp = (c: Context<AppEnv>) =>
-    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || c.env?.ip || 'local';
+  const clientIp = (c: Context<AppEnv>) => resolveIp(c.req.header('x-forwarded-for'), c.env?.ip, opts.trustProxy ?? false);
 
   app.use('*', async (c, next) => {
     const bearer = c.req.header('authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1];
@@ -269,6 +271,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     const id = c.req.param('id');
     const sinceRaw = c.req.query('since');
     if (sinceRaw !== undefined) {
+      me(c); // a long-poll holds a connection open for up to 30 s; only signed-in callers may park one
       await core.games.wait(id, int(sinceRaw, 0, 0, MAX_CURSOR), int(c.req.query('waitMs'), 25_000, 0, 30_000));
     }
     return c.json(core.games.envelope(id, c.get('identity')?.id ?? null));
