@@ -5,11 +5,12 @@ import type { CMCommand } from '@cs/critical-mass';
 import { createCore } from '@cs/server/core';
 import { createApp } from '@cs/server/http';
 import { startServer } from '@cs/server/server';
-import { ambientDue, runBot, type BotOptions } from './bot';
+import { ambientDue, CHAT_WATCH_MS, runBot, unansweredCandidate, type BotOptions } from './bot';
 import { Client } from './client';
 import { shout } from './personality';
 import { oldIron } from './personalities/old-iron';
 import { sprocket } from './personalities/sprocket';
+import type { ChatMessage } from '@cs/shared/protocol';
 import type { Moment, Voice } from './voice';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -53,26 +54,41 @@ const ironDone = runBot({
   log: () => {},
 });
 
+// A third parlor for the unprompted-answer tests: humans talk there, and only the bots started by
+// those tests listen, so their replies and cooldowns can't be disturbed by the tests above.
+const listenCore = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', adminHandles: [], diaryDir: join(root, 'no-diary'), countdownMs: 0, houseFallbackMs: 100 });
+const listenServer = startServer(listenCore, createApp(listenCore, { apiDocs: '', llmsTxt: '' }), { port: 0, hostname: '127.0.0.1', webDir: null, allowedOrigins: [] });
+
 afterAll(async () => {
   controller.abort();
   ironController.abort();
   await Promise.all([botDone, ironDone]);
-  await Promise.all([running.stop(), ironServer.stop()]);
-  await Promise.all([core.close(), ironCore.close()]);
+  await Promise.all([running.stop(), ironServer.stop(), listenServer.stop()]);
+  await Promise.all([core.close(), ironCore.close(), listenCore.close()]);
 });
 
 /** A short random tag for test handles. Digits only — a base-36 tag can occasionally spell
  *  something the profanity filter rejects, which would fail these tests in setup. */
 const randomTag = () => String(Math.floor(Math.random() * 1e9)).padStart(9, '0');
+const randomIp = () => `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}`;
 
 /** Registers an agent from its own made-up address: the server allows five agent registrations per
  *  address per hour, and the bots under test register from the loopback address themselves. */
 async function newAgent(base: string, name: string, houseKey?: string): Promise<{ client: Client; handle: string }> {
   const client = new Client(base);
-  const ip = `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}`;
-  const reg = await client.call<{ identity: { handle: string }; token: string }>('POST', '/api/agents', { name }, { 'x-forwarded-for': ip, ...(houseKey ? { 'x-house-key': houseKey } : {}) });
+  const reg = await client.call<{ identity: { handle: string }; token: string }>('POST', '/api/agents', { name }, { 'x-forwarded-for': randomIp(), ...(houseKey ? { 'x-house-key': houseKey } : {}) });
   client.token = reg.token;
   return { client, handle: reg.identity.handle };
+}
+
+/** Starts a human session (the web client's door) from its own made-up address; the session key
+ *  from the cookie works as a bearer token too. */
+async function newHuman(base: string, name: string): Promise<{ client: Client; handle: string }> {
+  const res = await fetch(`${base}/api/session`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': randomIp() }, body: JSON.stringify({ handle: name }) });
+  const key = /cs_key=([^;]+)/.exec(res.headers.get('set-cookie') ?? '')?.[1];
+  if (res.status !== 201 || !key) throw new Error(`no session for ${name}: HTTP ${res.status}`);
+  const { identity } = (await res.json()) as { identity: { handle: string } };
+  return { client: new Client(base, decodeURIComponent(key)), handle: identity.handle };
 }
 
 async function until<T>(fn: () => Promise<T | null | undefined | false>, ms = 10_000): Promise<T> {
@@ -348,6 +364,153 @@ describe('OLD IRON (a bot with a voice)', () => {
   }, 30_000);
 });
 
+describe('answering a human nobody answered', () => {
+  const QUIET_MS = 300;
+  /** Long enough for a listening bot to see a line, wait out the silence and speak. */
+  const settle = () => Bun.sleep(CHAT_WATCH_MS + QUIET_MS + 1500);
+  const heardHere: Moment[] = [];
+  const listenVoice: Voice = {
+    say(m) {
+      heardHere.push(m);
+      return Promise.resolve(`VOICE ${m.kind.toUpperCase()} LINE.`);
+    },
+  };
+  // OLD IRON registers once here and keeps his token across restarts (his profile doesn't change).
+  const ironTokenFile = join(root, `.data/test-bots/${crypto.randomUUID()}.token`);
+  const listen = async (extra: Partial<BotOptions> = {}) => {
+    const c = new AbortController();
+    let ready = () => {};
+    const listening = new Promise<void>((resolve) => (ready = resolve));
+    const done = runBot({
+      base: listenServer.url,
+      personality: oldIron,
+      voice: listenVoice,
+      tokenFile: ironTokenFile,
+      replyCooldownMs: 0,
+      unansweredAfterMs: QUIET_MS,
+      unansweredCooldownMs: 0,
+      ambientEveryMs: 0,
+      houseKey: 'hk',
+      thinkMs: [0, 0],
+      pollWaitMs: 500,
+      signal: c.signal,
+      log: () => {},
+      onReady: () => ready(),
+      ...extra,
+    });
+    await listening;
+    return { stop: async () => (c.abort(), await done) };
+  };
+  const lobbySince = async (id: number) => (await new Client(listenServer.url).call<Said>('GET', `/api/chat/lobby?since=${id}`)).messages;
+  const post = async (client: Client, text: string) => ((await client.chat('lobby', text)) as { message: { id: number } }).message.id;
+  const ironLines = (messages: Said['messages']) => messages.filter((m) => m.author?.handle === 'OLD_IRON').map((m) => m.text);
+
+  let bot: { stop: () => Promise<void> } | null = null;
+  afterAll(async () => {
+    await bot?.stop();
+  });
+
+  test('answers a lone line from a human after the silence, addressed to them; ignores what was said before it started', async () => {
+    const early = await newHuman(listenServer.url, `Early${randomTag()}`);
+    const before = await post(early.client, 'hello? is this thing on?'); // said while no bot listens
+    bot = await listen();
+    const { client, handle } = await newHuman(listenServer.url, `Ann${randomTag()}`);
+    const asked = await post(client, 'hey, anyone around?');
+    const reply = await until(async () => ironLines(await lobbySince(asked))[0]);
+    expect(reply).toBe(`@${handle} VOICE UNANSWERED LINE.`);
+    const moment = heardHere.find((m) => m.kind === 'unanswered' && m.addressedBy === handle)!;
+    expect(moment.channel).toBe('lobby');
+    expect(moment.answering).toEqual({ author: handle, kind: 'human', text: 'hey, anyone around?' });
+    await settle();
+    expect(ironLines(await lobbySince(before))).toEqual([reply]); // one reply, and none to the early line
+    expect(heardHere.some((m) => m.addressedBy === early.handle)).toBe(false);
+  }, 30_000);
+
+  test('stays quiet when someone else answers within the silence', async () => {
+    const ann = await newHuman(listenServer.url, `Ann${randomTag()}`);
+    const bob = await newHuman(listenServer.url, `Bob${randomTag()}`);
+    const asked = await post(ann.client, 'is anyone here?');
+    await post(bob.client, `@${ann.handle} yep, right here`);
+    await settle();
+    expect(ironLines(await lobbySince(asked))).toEqual([]);
+  }, 30_000);
+
+  test('a line for someone else gets no unprompted reply; a line for the bot gets exactly one (its mention reply)', async () => {
+    const ann = await newHuman(listenServer.url, `Ann${randomTag()}`);
+    const bob = await newHuman(listenServer.url, `Bob${randomTag()}`);
+    const toBob = await post(ann.client, `@${bob.handle} fancy a game later?`);
+    await settle();
+    expect(ironLines(await lobbySince(toBob))).toEqual([]);
+    const toIron = await post(ann.client, '@OLD_IRON are you the famous one?');
+    await until(async () => ironLines(await lobbySince(toIron)).length > 0);
+    await settle();
+    expect(ironLines(await lobbySince(toIron))).toEqual([`@${ann.handle} VOICE MENTION LINE.`]);
+  }, 30_000);
+
+  test('ignores lines from machines', async () => {
+    const agent = await newAgent(listenServer.url, `Bolt${randomTag()}`);
+    const said = await post(agent.client, 'hey, anyone around?');
+    await settle();
+    expect(ironLines(await lobbySince(said))).toEqual([]);
+  }, 30_000);
+
+  test('answers at most one unanswered line per channel per cooldown', async () => {
+    await bot?.stop();
+    bot = await listen({ unansweredCooldownMs: 60_000 });
+    const ann = await newHuman(listenServer.url, `Ann${randomTag()}`);
+    const first = await post(ann.client, 'hello? anybody?');
+    await until(async () => ironLines(await lobbySince(first)).length > 0);
+    await post(ann.client, 'ok, and does anyone want a game?');
+    await settle();
+    expect(ironLines(await lobbySince(first))).toEqual([`@${ann.handle} VOICE UNANSWERED LINE.`]);
+  }, 30_000);
+
+  test('a bot without a voice never reads the public channels', async () => {
+    // A counting proxy in front of the parlor sees every request the bot makes.
+    const seen: string[] = [];
+    const proxy = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      async fetch(req) {
+        const url = new URL(req.url);
+        seen.push(`${req.method} ${url.pathname}`);
+        const headers = new Headers(req.headers);
+        headers.delete('host');
+        const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.arrayBuffer();
+        return fetch(listenServer.url + url.pathname + url.search, { method: req.method, headers, body });
+      },
+    });
+    const c = new AbortController();
+    let ready = () => {};
+    const listening = new Promise<void>((resolve) => (ready = resolve));
+    const done = runBot({
+      base: `http://127.0.0.1:${proxy.port}`,
+      personality: { ...sprocket, name: `Gear${randomTag()}` },
+      tokenFile: join(root, `.data/test-bots/${crypto.randomUUID()}.token`),
+      unansweredAfterMs: QUIET_MS,
+      unansweredCooldownMs: 0,
+      houseKey: 'hk',
+      thinkMs: [0, 0],
+      pollWaitMs: 500,
+      signal: c.signal,
+      log: () => {},
+      onReady: () => ready(),
+    });
+    try {
+      await listening;
+      const ann = await newHuman(listenServer.url, `Ann${randomTag()}`);
+      await post(ann.client, 'hey, is anyone here?');
+      await settle();
+      expect(seen.some((r) => r.startsWith('GET /api/inbox'))).toBe(true); // the proxy is really in the way
+      expect(seen.filter((r) => r.includes('/api/chat/'))).toEqual([]);
+    } finally {
+      c.abort();
+      await done;
+      await proxy.stop(true);
+    }
+  }, 30_000);
+});
+
 describe('helpers', () => {
   test('shout capitalises everything but @handles', () => {
     expect(shout('@frosty your move, @Sprocket.')).toBe('@frosty YOUR MOVE, @Sprocket.');
@@ -361,5 +524,15 @@ describe('helpers', () => {
     expect(ambientDue({ ...quiet, humansPresent: false })).toBe(false);
     expect(ambientDue({ ...quiet, inMatch: true })).toBe(false);
     expect(ambientDue({ ...quiet, newestLobbyAt: now - 7 * 60_000 })).toBe(false);
+  });
+
+  test('only a human\'s plain line can be one nobody answered', () => {
+    const human = { id: 'h1', handle: 'frosty', kind: 'human' } as ChatMessage['author'];
+    const msg = (text: string, author = human, system = false) => ({ id: 1, channel: 'lobby', author, text, createdAt: '', system }) as ChatMessage;
+    expect(unansweredCandidate(msg('hey, is anyone here?'), 'bot')).toBe(true);
+    expect(unansweredCandidate(msg('@OLD_IRON hey'), 'bot')).toBe(false);
+    expect(unansweredCandidate(msg('hey @Sprocket'), 'bot')).toBe(false);
+    expect(unansweredCandidate(msg('hey', { ...human!, kind: 'agent' }), 'bot')).toBe(false);
+    expect(unansweredCandidate(msg('frosty joined', null, true), 'bot')).toBe(false);
   });
 });

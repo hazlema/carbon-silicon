@@ -19,6 +19,8 @@ export interface Personality {
     mentioned: string[];
     /** Unprompted lobby chatter; only bots with a voice ever use it. May be empty. */
     ambient: string[];
+    /** Answers to a human's public line that nobody else answered; only bots with a voice use it. */
+    unanswered?: string[];
   };
 }
 

@@ -120,11 +120,13 @@ describe('LlmVoice request', () => {
     await voice.say(moment({ kind: 'bigCascade', channel: 'match:abc', opponent: 'frosty' }));
     await voice.say(moment({ kind: 'lose', channel: 'match:abc', opponent: 'frosty' }));
     await voice.say(moment({ kind: 'ambient', channel: 'lobby', recent: [] }));
+    await voice.say(moment({ kind: 'unanswered', channel: 'lobby', addressedBy: 'frosty' }));
     const users = captured.map((c) => c.body.messages[1].content);
     expect(users[0]).toContain('You just set off a big chain reaction against @frosty.');
     expect(users[1]).toContain('You lost the match against @frosty.');
     expect(users[2]).toContain('quiet');
     expect(users[2]).toContain('(no messages yet)');
+    expect(users[3]).toContain('@frosty said something in #lobby and nobody has answered them. Answer them in character.');
   });
 });
 

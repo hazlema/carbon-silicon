@@ -27,7 +27,12 @@ export interface BotOptions {
   /** How long a line at a match table may wait for the voice before the canned bank answers
    *  instead (default 4 s), so a slow or hanging model never holds up a match. */
   voiceDeadlineMs?: number;
-  /** Called once the bot is connected and has skipped its inbox backlog, i.e. is listening. */
+  /** A bot with a voice answers a human's public line that nobody answered after this much
+   *  silence in the channel (default 5 s). */
+  unansweredAfterMs?: number;
+  /** At most one such unprompted answer per channel per this long (default 60 s). */
+  unansweredCooldownMs?: number;
+  /** Called once the bot is connected and has skipped its inbox and chat backlog, i.e. is listening. */
   onReady?: () => void;
 }
 
@@ -36,6 +41,9 @@ const LOBBY_QUIET_MS = 8 * 60_000;
 const AMBIENT_CHANCE = 0.5;
 /** At most one cascade remark per this long at a table. */
 const CHATTER_GAP_MS = 8000;
+/** How often a bot with a voice reads the public channels for lines nobody answered. */
+export const CHAT_WATCH_MS = 1500;
+const MENTION_RE = /@[A-Za-z0-9_-]{3,20}/;
 
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -58,6 +66,7 @@ const BANK: Record<MomentKind, keyof Personality['lines'] | null> = {
   bigCascade: 'bigCascade',
   gotHit: 'gotHit',
   ambient: 'ambient',
+  unanswered: 'unanswered',
 };
 
 /** Should a bot with a voice speak up in the lobby now? (The coin flip happens elsewhere.) */
@@ -115,7 +124,8 @@ async function speak(
     }
     if (opts.signal?.aborted) return;
     const bank = BANK[kind];
-    text ||= bank ? line(opts.personality.lines[bank]) : null;
+    const lines = bank ? opts.personality.lines[bank] : undefined;
+    text ||= lines ? line(lines) : null;
     if (!text) return;
     if (extra.addressedBy && !text.includes(`@${extra.addressedBy}`)) text = `@${extra.addressedBy} ${text}`;
     for (let attempt = 0; attempt < 2 && !opts.signal?.aborted; attempt++) {
@@ -295,6 +305,23 @@ export async function runBot(opts: BotOptions): Promise<void> {
   };
   const ambient = opts.voice && (opts.ambientEveryMs ?? 12 * 60_000) > 0 ? ambientLoop(client, opts, () => playing.size > 0, log) : null;
 
+  // A bot with a voice also reads the public channels and answers a human nobody else answered.
+  // Voiceless bots make no extra calls at all.
+  const lastUnprompted = new Map<string, number>();
+  const unansweredCooldown = opts.unansweredCooldownMs ?? 60_000;
+  const watch = opts.voice
+    ? watchPublicChannels(client, opts, myId, log, (channel, message, lastOwnLineAt) => {
+        const now = Date.now();
+        if (playing.size > 0) return; // seated at a table: the match has its own talk
+        if ((lastUnprompted.get(channel) ?? -Infinity) + unansweredCooldown > now) return;
+        // Not right after the bot's own line in this channel (the reply cooldown, 20 s by default).
+        if (lastOwnLineAt !== null && lastOwnLineAt + cooldown > now) return;
+        if (!mayReply(channel)) return; // shares the mention cooldown, never bypasses it
+        lastUnprompted.set(channel, now);
+        track(speak(client, opts, 'unanswered', channel, { addressedBy: message.author!.handle, answering: message }));
+      })
+    : { ready: Promise.resolve(), done: Promise.resolve() };
+
   // Start from the inbox's current end. The server keeps a bot's inbox across bot restarts, so
   // reading from 0 would replay old mentions (answering them again, long after the fact) and old
   // match.started events (re-saying win/lose lines for finished matches). A match that is still
@@ -305,7 +332,9 @@ export async function runBot(opts: BotOptions): Promise<void> {
     try {
       if (cursor === null) {
         cursor = (await client.inbox(0, 0)).cursor;
-        opts.onReady?.();
+        void watch.ready.then(() => {
+          if (!opts.signal?.aborted) opts.onReady?.();
+        });
       }
       const me = await client.me();
       if (me.presence?.status === 'afk') await client.setStatus('ready');
@@ -338,7 +367,76 @@ export async function runBot(opts: BotOptions): Promise<void> {
       await sleep(2000, opts.signal);
     }
   }
-  await Promise.allSettled([ambient, ...tasks]);
+  await Promise.allSettled([ambient, watch.done, ...tasks]);
+}
+
+/** Could this line be one nobody answered? Only a human's plain line qualifies: a line that
+ *  @mentions this bot goes through the mention path, and one that @mentions anyone else is
+ *  addressed to them. */
+export function unansweredCandidate(m: ChatMessage, myId: string | null): boolean {
+  return !m.system && m.author?.kind === 'human' && m.author.id !== myId && !MENTION_RE.test(m.text);
+}
+
+/**
+ * Polls each public channel for lines nobody answered. It starts at each channel's newest line,
+ * so nothing said before the bot started is answered. The newest candidate line in a channel is
+ * handed to `answer` once the channel has stayed silent for `unansweredAfterMs` after the bot
+ * saw it; any newer line from anyone drops it. `ready` resolves once the starting points are
+ * known; `done` once `signal` aborts.
+ */
+function watchPublicChannels(
+  client: Client,
+  opts: BotOptions,
+  myId: string | null,
+  log: (m: string) => void,
+  answer: (channel: string, message: ChatMessage, lastOwnLineAt: number | null) => void,
+): { ready: Promise<void>; done: Promise<void> } {
+  const quiet = opts.unansweredAfterMs ?? 5000;
+  const read = (channel: string, query: string) =>
+    client.call<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(channel)}?${query}`).then((r) => r.messages);
+  const loops = PUBLIC_CHANNELS.map((channel) => {
+    let started = () => {};
+    const ready = new Promise<void>((resolve) => (started = resolve));
+    const done = (async () => {
+      let cursor: number | null = null;
+      let candidate: { message: ChatMessage; dueAt: number } | null = null;
+      let lastOwnLineAt: number | null = null;
+      try {
+        while (!opts.signal?.aborted) {
+          try {
+            if (cursor === null) {
+              cursor = (await read(channel, 'limit=1')).at(-1)?.id ?? 0;
+              started();
+              await sleep(CHAT_WATCH_MS, opts.signal);
+              continue;
+            }
+            const batch = await read(channel, `since=${cursor}&limit=50`);
+            const now = Date.now();
+            for (const m of batch) {
+              cursor = Math.max(cursor, m.id);
+              if (m.author && m.author.id === myId) lastOwnLineAt = now;
+              // Any newer line ends the wait; a human's plain line starts a new one.
+              candidate = unansweredCandidate(m, myId) ? { message: m, dueAt: now + quiet } : null;
+            }
+            if (batch.length === 50) continue; // more to read before judging the silence
+            if (candidate && now >= candidate.dueAt) {
+              answer(channel, candidate.message, lastOwnLineAt);
+              candidate = null;
+            }
+            await sleep(candidate ? Math.min(CHAT_WATCH_MS, Math.max(0, candidate.dueAt - Date.now())) : CHAT_WATCH_MS, opts.signal);
+          } catch (e) {
+            if (opts.signal?.aborted) break;
+            log(`chat watch failed for #${channel}: ${(e as Error).message}`);
+            await sleep(2000, opts.signal);
+          }
+        }
+      } finally {
+        started(); // never leave onReady waiting on a watcher that stopped
+      }
+    })();
+    return { ready, done };
+  });
+  return { ready: Promise.all(loops.map((l) => l.ready)).then(() => {}), done: Promise.all(loops.map((l) => l.done)).then(() => {}) };
 }
 
 /** Every `ambientEveryMs`, maybe liven up a quiet lobby. Only runs for bots with a voice. */

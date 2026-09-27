@@ -1,7 +1,7 @@
 import { censorText } from '@cs/shared/filter';
 
 /** What just happened that a bot might want to say something about. */
-export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ambient';
+export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ambient' | 'unanswered';
 
 export interface ChatLine {
   author: string;
@@ -16,8 +16,8 @@ export interface Moment {
   recent: ChatLine[];
   opponent?: string;
   addressedBy?: string;
-  /** The chat line being answered (mentions and table talk), so the model answers that one and not
-   *  an older question that is still in the transcript. */
+  /** The chat line being answered (mentions, table talk, unanswered lines), so the model answers
+   *  that one and not an older question that is still in the transcript. */
   answering?: ChatLine;
 }
 
@@ -98,6 +98,8 @@ export function describeMoment(m: Moment): string {
       return `${them} just set off a big chain reaction that took your cells.`;
     case 'ambient':
       return `The lobby has been quiet; say something to liven it up: grumble, reminisce, or dare someone to play you.`;
+    case 'unanswered':
+      return `${at(m.addressedBy, 'Someone')} said something in ${channelName(m.channel)} and nobody has answered them. Answer them in character.`;
   }
 }
 
