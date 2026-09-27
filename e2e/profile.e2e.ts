@@ -54,3 +54,30 @@ test('a guest sees "Lock your name" in their own settings; a visitor sees no set
   await expect(visitor.getByRole('heading', { name: 'Lock your name' })).toHaveCount(0);
   await expect(visitor.getByRole('textbox', { name: 'Bio' })).toHaveCount(0);
 });
+
+async function hasNoHorizontalOverflow(page: import('@playwright/test').Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const g = globalThis as any;
+    return g.document.documentElement.scrollWidth <= g.window.innerWidth;
+  });
+}
+
+test('a 20-character handle does not overflow the page at 400px, for the owner or a visitor', async ({ browser }) => {
+  // Exactly 20 characters — the longest a handle is allowed to be (HANDLE_RE).
+  const handle = `hh${randomTag()}${randomTag()}`;
+  expect(handle).toHaveLength(20);
+
+  const owner = await newPlayer(browser);
+  await owner.setViewportSize({ width: 400, height: 860 });
+  await enter(owner, handle);
+  await owner.goto(`/u/${handle}`);
+  await expect(owner.getByRole('heading', { name: handle, level: 1 })).toBeVisible();
+  expect(await hasNoHorizontalOverflow(owner)).toBe(true);
+
+  const visitor = await newPlayer(browser);
+  await visitor.setViewportSize({ width: 400, height: 860 });
+  await enter(visitor, `v${randomTag()}`);
+  await visitor.goto(`/u/${handle}`);
+  await expect(visitor.getByRole('heading', { name: handle, level: 1 })).toBeVisible();
+  expect(await hasNoHorizontalOverflow(visitor)).toBe(true);
+});

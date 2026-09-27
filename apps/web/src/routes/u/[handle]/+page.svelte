@@ -167,6 +167,9 @@
     align-items: flex-start;
     justify-content: space-between;
     padding: 1.5rem;
+    /* Without this, this grid item's auto min-width is its content's min-content size — the
+       nowrap h1 deep inside would force it (and the page) wider than the viewport. */
+    min-width: 0;
   }
   .who {
     display: flex;
@@ -180,8 +183,10 @@
   h1 {
     margin: 0;
     /* Handles run up to 20 characters: shrink to fit a narrow viewport rather than wrap mid-word,
-       and fall back to an ellipsis if it's still too wide (a long handle beside a wide avatar). */
-    font-size: clamp(1.25rem, 6vw, var(--step-3));
+       and fall back to an ellipsis if it's still too wide (a long handle beside a wide avatar).
+       At 400px the avatar + gap leave the title well under half the viewport, so this needs to
+       shrink further than the viewport width alone suggests — tuned so 20 characters fit there. */
+    font-size: clamp(1rem, 4vw, var(--step-3));
     line-height: 1.1;
     max-width: 100%;
     overflow-wrap: normal;
@@ -310,6 +315,7 @@
   }
   .matches {
     padding: 1.1rem 1.25rem;
+    min-width: 0;
   }
   h2 {
     margin: 0 0 0.8rem;
