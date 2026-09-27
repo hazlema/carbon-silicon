@@ -3,9 +3,12 @@
   import type { ChatMessage } from '@cs/shared/protocol';
   import { api } from '$lib/api';
   import { splitMessage } from '$lib/chat';
+  import { untilText } from '$lib/format';
+  import { applyRemoval, chatItems, hiddenLabel } from '$lib/hidden';
   import { live } from '$lib/live.svelte';
   import Avatar from './Avatar.svelte';
   import IdentityChip from './IdentityChip.svelte';
+  import MessageMenu from './MessageMenu.svelte';
 
   let {
     channel,
@@ -33,6 +36,9 @@
   let log: HTMLDivElement | undefined = $state();
   let pinned = true;
   const inputId = $derived(`say-${channel.replace(/[^a-z0-9-]/gi, '-')}`);
+  let revealed = $state(new Set<number>());
+  const items = $derived(chatItems(messages, live.hiddenAuthors, revealed));
+  const canMenu = (m: ChatMessage) => !!live.me && !!m.author && m.author.id !== live.me.id && !m.removed;
 
   function merge(list: ChatMessage[]) {
     const byId = new Map(messages.map((m) => [m.id, m]));
@@ -44,14 +50,18 @@
     const ch = channel;
     let alive = true;
     messages = [];
+    revealed = new Set();
     error = '';
     const off = live.onChat(ch, (m) => merge([m]));
+    const isStaff = !!live.me && (live.me.role === 'mod' || live.me.role === 'admin');
+    const offRemoved = live.onChatRemoved(ch, (r) => (messages = applyRemoval(messages, r.id, r.by, isStaff)));
     api<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(ch)}?limit=200`)
       .then((r) => alive && merge(r.messages))
       .catch((e) => alive && (error = (e as Error).message));
     return () => {
       alive = false;
       off();
+      offRemoved();
     };
   });
 
@@ -111,31 +121,48 @@
     </header>
   {/if}
   <div class="log" bind:this={log} onscroll={onScroll} role="log" aria-live="polite" aria-relevant="additions">
-    {#each messages as m (m.id)}
-      {#if m.system}
-        <p class="sys">
-          {#each splitMessage(m.text) as p}{#if p.kind === 'link'}<a href={p.value}>{p.value}</a>{:else}{p.value}{/if}{/each}
+    {#each items as item (item.kind === 'message' ? item.message.id : `hidden-${item.key}`)}
+      {#if item.kind === 'hidden'}
+        <p class="hidden-run">
+          <button type="button" class="link" onclick={() => (revealed = new Set([...revealed, ...item.ids]))}
+            >{hiddenLabel(item.ids.length)} · show</button
+          >
         </p>
       {:else}
-        <article
-          class="msg"
-          class:mine={m.author?.id === live.me?.id}
-          class:mention={mentionsMe(m)}
-          class:machine={m.author?.kind === 'agent'}
-        >
-          {#if m.author}<Avatar kind={m.author.kind} />{:else}<span></span>{/if}
-          <div class="body">
-            <div class="meta">
-              {#if m.author}<IdentityChip identity={m.author} badge={false} />{/if}
-              <time datetime={m.createdAt}>{time(m.createdAt)}</time>
+        {@const m = item.message}
+        {#if m.system}
+          <p class="sys">
+            {#each splitMessage(m.text) as p}{#if p.kind === 'link'}<a href={p.value}>{p.value}</a>{:else}{p.value}{/if}{/each}
+          </p>
+        {:else}
+          <article
+            class="msg"
+            class:mine={m.author?.id === live.me?.id}
+            class:mention={mentionsMe(m)}
+            class:machine={m.author?.kind === 'agent'}
+          >
+            {#if m.author}<Avatar kind={m.author.kind} />{:else}<span></span>{/if}
+            <div class="body">
+              <div class="meta">
+                {#if m.author}<IdentityChip identity={m.author} badge={false} />{/if}
+                <span class="right">
+                  <time datetime={m.createdAt}>{time(m.createdAt)}</time>
+                  {#if canMenu(m)}<MessageMenu message={m} />{/if}
+                </span>
+              </div>
+              {#if m.removed}
+                <p class="removed">message removed by @{m.removed.by}</p>
+                {#if m.text}<p class="removed-text">{m.text}</p>{/if}
+              {:else}
+                <p class="text">
+                  {#each splitMessage(m.text) as p}{#if p.kind === 'mention'}<span class="at">{p.value}</span>{:else if p.kind === 'link'}<a
+                        href={p.value}>{p.value}</a
+                      >{:else}{p.value}{/if}{/each}
+                </p>
+              {/if}
             </div>
-            <p class="text">
-              {#each splitMessage(m.text) as p}{#if p.kind === 'mention'}<span class="at">{p.value}</span>{:else if p.kind === 'link'}<a
-                    href={p.value}>{p.value}</a
-                  >{:else}{p.value}{/if}{/each}
-            </p>
-          </div>
-        </article>
+          </article>
+        {/if}
       {/if}
     {:else}
       <p class="empty">{readOnly ? 'Nothing posted yet.' : 'Quiet in here. Say hello.'}</p>
@@ -143,8 +170,12 @@
   </div>
   {#if readOnly}
     <p class="note">{readOnlyNote}</p>
-  {:else if live.sanction}
-    <p class="note">{live.sanction.kind === 'mute' ? "You're muted and can't chat." : "You're suspended and can't chat."}</p>
+  {:else if live.me && live.sanction}
+    <p class="note">
+      {live.sanction.kind === 'mute'
+        ? `You're muted ${untilText(live.sanction.endsAt)}, so chat is off. You can still play.`
+        : `Your account is suspended ${untilText(live.sanction.endsAt)}. You can read, but not chat.`}
+    </p>
   {:else if live.me}
     <form onsubmit={send}>
       <label class="visually-hidden" for={inputId}>Message {title}</label>
@@ -255,5 +286,41 @@
   }
   .pad {
     margin: 0 1.25rem 0.75rem;
+  }
+  .right {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.3rem;
+    flex: none;
+  }
+  .removed {
+    margin: 0.15rem 0 0;
+    color: var(--dust);
+    font-style: italic;
+    font-size: var(--step--1);
+  }
+  /* Only a mod or admin viewer ever gets text back on a removed message (S145-146); shown dimmed,
+     under the "removed by" line, so it reads as evidence rather than as a normal message. */
+  .removed-text {
+    margin: 0.15rem 0 0;
+    color: var(--fog);
+    font-size: var(--step--1);
+    opacity: 0.75;
+  }
+  .hidden-run {
+    margin: 0;
+    font-size: var(--step--1);
+  }
+  .link {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--dust);
+    text-decoration: underline;
+    text-decoration-color: var(--lattice);
+    text-underline-offset: 0.2em;
+  }
+  .link:hover {
+    color: var(--fog);
   }
 </style>
