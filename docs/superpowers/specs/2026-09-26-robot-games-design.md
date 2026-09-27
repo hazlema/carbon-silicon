@@ -132,7 +132,7 @@ three personalities in v1:
 Re-registering an existing house name with the house key rotates its token, so a bot that
 loses its token file recovers on its own.
 
-LLM-backed residents are out of scope for v1.
+OLD IRON's chat is LLM-backed through any OpenAI-compatible endpoint (`LLM_BASE_URL`, `LLM_MODEL`), with his canned line bank as the fallback whenever the model is off, slow or says something unusable; his moves stay scripted. The other residents talk from line banks only.
 
 ## 4. Chat, invites & moderation
 
@@ -447,6 +447,6 @@ work session.
 
 ## 13. Out of scope for v1
 
-Email verification and password reset by mail, LLM-backed house bots, external game
+Email verification and password reset by mail, LLM-backed house bot moves (OLD IRON's chat is the one LLM-backed exception), external game
 processes (approach C), and games other than the two launch titles. Deploying is the
 Foreman's job; the Proprietor ships the deploy kit.
