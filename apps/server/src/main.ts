@@ -13,6 +13,9 @@ const production = env.NODE_ENV === 'production';
 const houseKey = env.HOUSE_KEY ?? (production ? null : 'dev-house-key');
 if (!houseKey) console.warn('[main] HOUSE_KEY is not set — house bots cannot register.');
 
+const adminKey = env.ADMIN_KEY ?? (production ? null : 'dev-admin-key');
+if (!adminKey) console.warn('[main] ADMIN_KEY is not set — `bun run admin` is switched off.');
+
 const core = await createCore({
   databaseUrl: env.DATABASE_URL ?? `pglite:${join(root, '.data/pglite')}`,
   houseKey,
@@ -27,6 +30,7 @@ const app = createApp(core, {
   apiDocs: await read('docs/API.md', '# API reference\n\nNot written yet.'),
   llmsTxt: await read('docs/llms.txt', 'Not written yet.'),
   secureCookies: production,
+  adminKey,
 });
 
 const webDir = join(root, 'apps/web/build');

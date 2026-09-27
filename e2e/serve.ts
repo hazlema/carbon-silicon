@@ -18,6 +18,7 @@ const core = await createCore({
 const app = createApp(core, {
   apiDocs: await Bun.file(join(root, 'docs/API.md')).text(),
   llmsTxt: await Bun.file(join(root, 'docs/llms.txt')).text(),
+  adminKey: 'e2e-admin',
 });
 const running = startServer(core, app, { port, hostname: '127.0.0.1', webDir: join(root, 'apps/web/build'), allowedOrigins: [] });
 const controller = new AbortController();

@@ -8,6 +8,7 @@ import { assertStaff, type Actor } from '../core/powers';
 import { AppError, badRequest, forbidden, notFound, tooMany, unauthorized } from '../lib/errors';
 import { RateLimiter } from '../lib/ratelimit';
 import { sessionLabel } from '../lib/ua';
+import { consoleRoutes } from './console';
 import { apiIndex } from './index-doc';
 
 export type AppEnv = { Bindings: { ip?: string }; Variables: { identity: IdentityPublic | null; sessionId: string | null } };
@@ -15,6 +16,8 @@ export interface AppOptions {
   apiDocs: string;
   llmsTxt: string;
   secureCookies?: boolean;
+  /** The console's shared secret (`bun run admin`); null or unset switches the console off. */
+  adminKey?: string | null;
 }
 
 const COOKIE = 'cs_key';
@@ -410,6 +413,8 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
       }),
     });
   });
+
+  app.route('/api/console', consoleRoutes(core, opts.adminKey ?? null));
 
   return app;
 }
