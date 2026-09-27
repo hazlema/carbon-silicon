@@ -11,7 +11,6 @@ const port = Number(process.env.E2E_PORT ?? 3100);
 const core = await createCore({
   databaseUrl: 'pglite:memory',
   houseKey: 'e2e-house',
-  adminHandles: [],
   diaryDir: join(root, 'diary'),
   countdownMs: 500,
   houseFallbackMs: 3000,

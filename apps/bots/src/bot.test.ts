@@ -14,7 +14,7 @@ import type { ChatMessage } from '@cs/shared/protocol';
 import type { Moment, Voice } from './voice';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', adminHandles: [], diaryDir: join(root, 'no-diary'), countdownMs: 0, houseFallbackMs: 100 });
+const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir: join(root, 'no-diary'), countdownMs: 0, houseFallbackMs: 100 });
 const running = startServer(core, createApp(core, { apiDocs: '', llmsTxt: '' }), { port: 0, hostname: '127.0.0.1', webDir: null, allowedOrigins: [] });
 const controller = new AbortController();
 const tokenFile = join(root, `.data/test-bots/${crypto.randomUUID()}.token`);
@@ -22,7 +22,7 @@ const botDone = runBot({ base: running.url, personality: sprocket, houseKey: 'hk
 
 // A second parlor with OLD IRON as its only house bot, speaking through a fake voice (no LLM),
 // so quick matches there always seat OLD IRON and never Sprocket.
-const ironCore = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', adminHandles: [], diaryDir: join(root, 'no-diary'), countdownMs: 0, houseFallbackMs: 100 });
+const ironCore = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir: join(root, 'no-diary'), countdownMs: 0, houseFallbackMs: 100 });
 const ironServer = startServer(ironCore, createApp(ironCore, { apiDocs: '', llmsTxt: '' }), { port: 0, hostname: '127.0.0.1', webDir: null, allowedOrigins: [] });
 const ironController = new AbortController();
 const heard: Moment[] = [];
@@ -56,7 +56,7 @@ const ironDone = runBot({
 
 // A third parlor for the unprompted-answer tests: humans talk there, and only the bots started by
 // those tests listen, so their replies and cooldowns can't be disturbed by the tests above.
-const listenCore = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', adminHandles: [], diaryDir: join(root, 'no-diary'), countdownMs: 0, houseFallbackMs: 100 });
+const listenCore = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir: join(root, 'no-diary'), countdownMs: 0, houseFallbackMs: 100 });
 const listenServer = startServer(listenCore, createApp(listenCore, { apiDocs: '', llmsTxt: '' }), { port: 0, hostname: '127.0.0.1', webDir: null, allowedOrigins: [] });
 
 afterAll(async () => {

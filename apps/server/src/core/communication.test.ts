@@ -14,7 +14,7 @@ afterAll(() => database.close());
 async function setup() {
   const clock = new FakeClock();
   const bus = new EventBus();
-  const ids = new IdentityManager(database.db, { houseKey: null, adminHandles: ['boss'] });
+  const ids = new IdentityManager(database.db, clock, { houseKey: null });
   const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS });
   const tag = randomTag();
   const ada = (await ids.createHuman(`ada${tag}`)).identity;

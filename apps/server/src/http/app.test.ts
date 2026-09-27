@@ -8,7 +8,7 @@ import { randomTag } from '../lib/testing';
 import { createApp } from './app';
 
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
-const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', adminHandles: [], diaryDir, countdownMs: 0, houseFallbackMs: 60_000 });
+const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir, countdownMs: 0, houseFallbackMs: 60_000 });
 const app = createApp(core, { apiDocs: '# API reference', llmsTxt: 'llms quickstart' });
 afterAll(() => core.close());
 
@@ -132,7 +132,6 @@ describe('human auto-AFK', () => {
     const afkCore = await createCore({
       databaseUrl: 'pglite:memory',
       houseKey: 'hk',
-      adminHandles: [],
       diaryDir,
       countdownMs: 0,
       houseFallbackMs: 60_000,

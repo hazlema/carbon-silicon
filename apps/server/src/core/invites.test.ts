@@ -18,7 +18,7 @@ afterAll(() => database.close());
 async function setup() {
   const clock = new FakeClock();
   const bus = new EventBus();
-  const ids = new IdentityManager(database.db, { houseKey: 'hk', adminHandles: [] });
+  const ids = new IdentityManager(database.db, clock, { houseKey: 'hk' });
   const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS });
   const presence = new PresenceManager(bus, clock);
   const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame]);

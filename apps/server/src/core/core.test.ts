@@ -4,7 +4,7 @@ import { createCore } from './core';
 import { parseEntry } from './diary';
 
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
-const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', adminHandles: ['Boss'], diaryDir });
+const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir });
 afterAll(() => core.close());
 
 describe('parseEntry', () => {
@@ -35,9 +35,7 @@ describe('createCore', () => {
     ]);
     expect(await core.diary.announce(core.comms)).toBe(0);
   });
-  test('admin handles are case-insensitive and the catalog has Critical Mass', async () => {
-    const { identity } = await core.identities.createHuman('boss');
-    expect(identity.role).toBe('admin');
+  test('the catalog has Critical Mass', () => {
     expect(core.games.catalog().map((g) => g.id)).toEqual(['critical-mass']);
   });
 });

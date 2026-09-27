@@ -4,7 +4,7 @@ import { createCore } from './core/core';
 import { apiIndex } from './http/index-doc';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: null, adminHandles: [], diaryDir: `${root}diary` });
+const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: null, diaryDir: `${root}diary` });
 afterAll(() => core.close());
 
 describe('docs', () => {

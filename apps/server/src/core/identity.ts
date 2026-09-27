@@ -1,17 +1,26 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { censorText } from '@cs/shared/filter';
 import { checkHandle } from '@cs/shared/handles';
-import type { IdentityPublic, Kind } from '@cs/shared/protocol';
+import type { IdentityPublic, Kind, Role } from '@cs/shared/protocol';
 import type { DB } from '../db';
-import { identities } from '../db/schema';
-import { AppError, badRequest, conflict, forbidden, isUniqueViolation } from '../lib/errors';
+import { identities, sessions } from '../db/schema';
+import type { Clock } from '../lib/clock';
+import { AppError, badRequest, conflict, forbidden, isUniqueViolation, notFound } from '../lib/errors';
 import { hashSecret, newId, newSecret } from '../lib/ids';
 
-type Row = typeof identities.$inferSelect;
+export type IdentityRow = typeof identities.$inferSelect;
+
+/** Where a browser session came from; shown back to its owner on their profile. */
+export interface SessionMeta {
+  label: string;
+  ip: string | null;
+}
 
 const WARM = ['#ffb347', '#ff6b5b', '#ffd166', '#ff8fa3', '#ffa07a'];
 const COOL = ['#3de0ff', '#9b6bff', '#5dffa5', '#6bd0ff', '#c38bff', '#b8ff5d'];
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const TOUCH_EVERY_MS = 5 * 60_000;
+const DEFAULT_META: SessionMeta = { label: 'browser', ip: null };
 
 export interface AgentInput {
   name?: unknown;
@@ -20,7 +29,7 @@ export interface AgentInput {
   model?: unknown;
 }
 
-export function toPublic(row: Row): IdentityPublic {
+export function toPublic(row: IdentityRow): IdentityPublic {
   return {
     id: row.id,
     handle: row.handle,
@@ -32,7 +41,7 @@ export function toPublic(row: Row): IdentityPublic {
     locked: row.passwordHash !== null,
     role: row.role,
     ownerHandle: null,
-    released: false,
+    released: row.releasedAt !== null,
   };
 }
 
@@ -52,17 +61,27 @@ function optionalText(value: unknown, max: number, field: string): string | null
 
 const taken = (handle: string) => conflict('HANDLE_TAKEN', `@${handle} is taken. Try another.`);
 
+interface Cached {
+  identity: IdentityPublic;
+  /** The browser session behind a human's key; null for agent tokens. */
+  sessionId: string | null;
+}
+
 export class IdentityManager {
-  private cacheBySecret = new Map<string, IdentityPublic>();
+  /** Key hash → who it signs in. Anything that changes who a key belongs to or what they may do evicts. */
+  private cache = new Map<string, Cached>();
+  private touchedAt = new Map<string, number>();
 
   constructor(
     private db: DB,
-    private opts: { houseKey: string | null; adminHandles: string[] },
+    private clock: Clock,
+    private opts: { houseKey: string | null },
   ) {}
 
-  async createHuman(rawHandle: unknown): Promise<{ identity: IdentityPublic; key: string }> {
-    const key = newSecret('csk_');
-    const identity = await this.insert({ rawHandle, kind: 'human', secret: key, color: null, tagline: null, model: null, isHouse: false });
+  async createHuman(rawHandle: unknown, meta: SessionMeta = DEFAULT_META): Promise<{ identity: IdentityPublic; key: string }> {
+    // A human's own secret is never handed out: browsers sign in through sessions.
+    const identity = await this.insert({ rawHandle, kind: 'human', secret: newSecret('csx_'), color: null, tagline: null, model: null, isHouse: false });
+    const key = await this.newSession(identity.id, meta);
     return { identity, key };
   }
 
@@ -104,12 +123,8 @@ export class IdentityManager {
       .set({ secretHash: hashSecret(token), tagline: p.tagline, color: p.color ?? row.color, model: p.model })
       .where(eq(identities.id, row.id))
       .returning();
-    for (const [hash, cachedIdentity] of this.cacheBySecret) {
-      if (cachedIdentity.id === row.id) this.cacheBySecret.delete(hash);
-    }
-    const identity = toPublic(updated);
-    this.cacheBySecret.set(updated.secretHash, identity);
-    return { identity, token };
+    this.evict(row.id);
+    return { identity: toPublic(updated), token };
   }
 
   private async insert(p: {
@@ -132,6 +147,7 @@ export class IdentityManager {
       .limit(1);
     if (existing.length > 0) throw taken(handle);
     try {
+      const now = new Date(this.clock.now());
       const [row] = await this.db
         .insert(identities)
         .values({
@@ -144,32 +160,107 @@ export class IdentityManager {
           tagline: p.tagline,
           model: p.model,
           isHouse: p.isHouse,
-          role: this.opts.adminHandles.includes(handleLower) ? 'admin' : 'user',
+          createdAt: now,
+          lastSeenAt: now,
         })
         .returning();
-      const identity = toPublic(row);
-      this.cacheBySecret.set(row.secretHash, identity);
-      return identity;
+      return toPublic(row);
     } catch (e) {
       if (isUniqueViolation(e)) throw taken(handle);
       throw e;
     }
   }
 
+  /** Opens a new browser session for a human and returns its raw csk_ key (shown once, stored hashed). */
+  async newSession(identityId: string, meta: SessionMeta): Promise<string> {
+    const key = newSecret('csk_');
+    const now = new Date(this.clock.now());
+    await this.db.insert(sessions).values({
+      id: newId('se'),
+      identityId,
+      keyHash: hashSecret(key),
+      label: meta.label.trim().slice(0, 60) || 'browser',
+      ip: meta.ip,
+      createdAt: now,
+      lastUsedAt: now,
+    });
+    return key;
+  }
+
   async authenticate(secret?: string | null): Promise<IdentityPublic | null> {
+    return (await this.authenticateSession(secret))?.identity ?? null;
+  }
+
+  /** Humans sign in with a session key (csk_…), agents with their token (cs_…). Released identities never do. */
+  async authenticateSession(secret?: string | null): Promise<Cached | null> {
     if (!secret || secret.length > 200) return null;
     const hash = hashSecret(secret);
-    const cached = this.cacheBySecret.get(hash);
+    const cached = this.cache.get(hash);
     if (cached) return cached;
-    const [row] = await this.db.select().from(identities).where(eq(identities.secretHash, hash)).limit(1);
-    if (!row) return null;
-    const identity = toPublic(row);
-    this.cacheBySecret.set(hash, identity);
-    return identity;
+    let found: Cached | null = null;
+    if (secret.startsWith('csk_')) {
+      const [hit] = await this.db
+        .select({ s: sessions, i: identities })
+        .from(sessions)
+        .innerJoin(identities, eq(identities.id, sessions.identityId))
+        .where(eq(sessions.keyHash, hash))
+        .limit(1);
+      if (hit && hit.i.releasedAt === null) found = { identity: toPublic(hit.i), sessionId: hit.s.id };
+    } else {
+      const [row] = await this.db
+        .select()
+        .from(identities)
+        .where(and(eq(identities.secretHash, hash), eq(identities.kind, 'agent')))
+        .limit(1);
+      if (row && row.releasedAt === null) found = { identity: toPublic(row), sessionId: null };
+    }
+    if (found) this.cache.set(hash, found);
+    return found;
+  }
+
+  /** Forgets every cached key of this identity; the next request re-reads the database. */
+  evict(identityId: string): void {
+    for (const [hash, entry] of this.cache) {
+      if (entry.identity.id === identityId) this.cache.delete(hash);
+    }
+  }
+
+  /** Records that someone was here: last seen, last IP and the session's last use. At most once per
+   *  5 minutes per session (or per agent), and fire-and-forget so it never slows a request. */
+  touch(identityId: string, ip: string | null, sessionId: string | null = null): void {
+    const now = this.clock.now();
+    const key = sessionId ?? identityId;
+    const last = this.touchedAt.get(key);
+    if (last !== undefined && now - last < TOUCH_EVERY_MS) return;
+    this.touchedAt.set(key, now);
+    const at = new Date(now);
+    void (async () => {
+      await this.db.update(identities).set({ lastSeenAt: at, ...(ip ? { lastIp: ip } : {}) }).where(eq(identities.id, identityId));
+      if (sessionId) await this.db.update(sessions).set({ lastUsedAt: at, ...(ip ? { ip } : {}) }).where(eq(sessions.id, sessionId));
+    })().catch((e) => console.error('[identity] touch failed', e));
+  }
+
+  /** Re-reads an identity after a change, and drops its cached keys so they pick the change up. */
+  async refresh(identityId: string): Promise<IdentityPublic | null> {
+    this.evict(identityId);
+    const row = await this.row(identityId);
+    return row ? toPublic(row) : null;
+  }
+
+  async setRole(identityId: string, role: Role): Promise<IdentityPublic> {
+    const [row] = await this.db.update(identities).set({ role }).where(eq(identities.id, identityId)).returning();
+    if (!row) throw notFound('NO_USER', 'No such player.');
+    this.evict(identityId);
+    return toPublic(row);
+  }
+
+  async row(id: string): Promise<IdentityRow | null> {
+    const [row] = await this.db.select().from(identities).where(eq(identities.id, id)).limit(1);
+    return row ?? null;
   }
 
   async get(id: string): Promise<IdentityPublic | null> {
-    const [row] = await this.db.select().from(identities).where(eq(identities.id, id)).limit(1);
+    const row = await this.row(id);
     return row ? toPublic(row) : null;
   }
 

@@ -15,7 +15,6 @@ export interface CoreOptions {
   databaseUrl?: string;
   clock?: Clock;
   houseKey: string | null;
-  adminHandles: string[];
   diaryDir: string;
   countdownMs?: number;
   houseFallbackMs?: number;
@@ -40,10 +39,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const database = await openDatabase(opts.databaseUrl);
   const clock = opts.clock ?? systemClock;
   const bus = new EventBus();
-  const identities = new IdentityManager(database.db, {
-    houseKey: opts.houseKey,
-    adminHandles: opts.adminHandles.map((h) => h.trim().toLowerCase()).filter(Boolean),
-  });
+  const identities = new IdentityManager(database.db, clock, { houseKey: opts.houseKey });
   const presence = new PresenceManager(bus, clock);
   const comms = new CommunicationManager(database.db, bus, clock, identities, { publicChannels: PUBLIC_CHANNELS });
   const gameOpts: Partial<GameManagerOptions> = {};

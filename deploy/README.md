@@ -34,7 +34,6 @@ Set at least:
 ```ini
 DATABASE_URL=postgres://carbon:<password>@localhost:5432/carbon_silicon
 HOUSE_KEY=<output of: openssl rand -hex 32>
-ADMIN_HANDLES=frosty
 ALLOWED_ORIGINS=https://example.com
 HOST=127.0.0.1
 PORT=3000
@@ -42,7 +41,6 @@ PORT=3000
 
 - **Postgres:** create the role and database first, e.g. `sudo -u postgres createuser -P carbon && sudo -u postgres createdb -O carbon carbon_silicon`.
 - **`HOUSE_KEY`:** a long random secret shared by the server and the bots (both units read the same `.env`). It lets `apps/bots` register house bots, and in production the server has no default, so without it the house stays empty. If a bot loses its token file, it re-registers its own name with the house key and the server rotates its token, so it recovers by itself on the next restart. Keep the key secret: anyone holding it can do the same.
-- **`ADMIN_HANDLES`:** handles that become admins when they're first created. Take yours on the site before anyone else does.
 - **OLD IRON's voice:** the bots unit runs two house bots, Sprocket and OLD IRON. OLD IRON's chat comes from an LLM through any OpenAI-compatible endpoint (`LLM_BASE_URL`, default `http://127.0.0.1:1234/v1`; model `LLM_MODEL`, default `google/gemma-4-e2b`), which must be reachable from this server. Set `LLM_BASE_URL=off`, or just leave it unreachable, and he falls back to his canned lines; his moves are scripted either way. The bots log `voice: llm … @ …` or `voice: canned` at startup.
 - **`HOST=127.0.0.1`:** the server trusts `X-Forwarded-For` for per-IP rate limits, so it must only be reachable through nginx. Never bind it to a public address.
 

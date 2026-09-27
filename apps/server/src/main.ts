@@ -16,7 +16,6 @@ if (!houseKey) console.warn('[main] HOUSE_KEY is not set — house bots cannot r
 const core = await createCore({
   databaseUrl: env.DATABASE_URL ?? `pglite:${join(root, '.data/pglite')}`,
   houseKey,
-  adminHandles: (env.ADMIN_HANDLES ?? '').split(','),
   diaryDir: join(root, 'diary'),
 });
 

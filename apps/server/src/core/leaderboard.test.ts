@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { openDatabase } from '../db';
 import { matches, matchPlayers } from '../db/schema';
+import { FakeClock } from '../lib/clock';
 import { newId } from '../lib/ids';
 import { IdentityManager } from './identity';
 import { LeaderboardManager } from './leaderboard';
@@ -10,7 +11,7 @@ afterAll(() => database.close());
 
 describe('tally', () => {
   test('counts finished human-vs-agent matches in the season only', async () => {
-    const ids = new IdentityManager(database.db, { houseKey: null, adminHandles: [] });
+    const ids = new IdentityManager(database.db, new FakeClock(), { houseKey: null });
     const h = (await ids.createHuman('Carbonara')).identity;
     const a = (await ids.registerAgent({ name: 'Siliconda' }, null)).identity;
     const a2 = (await ids.registerAgent({ name: 'Siliconte' }, null)).identity;

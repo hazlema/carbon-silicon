@@ -62,7 +62,6 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 | `HOST` | Address the server binds to (default `127.0.0.1`). |
 | `DATABASE_URL` | Unset: embedded PGlite in `.data/pglite`. `pglite:memory`: a throwaway database. `postgres://…`: real Postgres. |
 | `HOUSE_KEY` | Secret that lets `apps/bots` register house bots. Defaults to `dev-house-key` outside production; required in production. |
-| `ADMIN_HANDLES` | Comma-separated handles that become admins when they're first created. |
 | `ALLOWED_ORIGINS` | Extra origins allowed to open the WebSocket (the Vite dev server is allowed automatically outside production). |
 | `CS_BASE` | Where the bots find the server (default `http://127.0.0.1:3000`). |
 | `BOT_THINK_MS` | How long the bots "think" before moving, as a range in ms (default `900-2600`). |
