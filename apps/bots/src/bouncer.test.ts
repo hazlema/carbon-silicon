@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +21,7 @@ describe('decide', () => {
 });
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir: join(root, 'no-diary'), countdownMs: 0, houseFallbackMs: 60_000, sweepEveryMs: 0 });
+const core = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: 'hk', diaryDir: join(root, 'no-diary'), countdownMs: 0, houseFallbackMs: 60_000, sweepEveryMs: 0 });
 const running = startServer(core, createApp(core, { apiDocs: '', llmsTxt: '', trustProxy: true }), { port: 0, hostname: '127.0.0.1', webDir: null, allowedOrigins: [] });
 const controller = new AbortController();
 afterAll(async () => {
@@ -45,9 +46,17 @@ const extraVerdicts: Record<string, Verdict | null> = {
 /** Every call the running Bouncer makes to the judge, by the reported message's text — lets a
  *  test count how many times a given report was actually judged, across every sweep it sees. */
 const judgeCalls: string[] = [];
+/** A test may install a gate for one message's text before its report exists, to hold the stub's
+ *  judge() call open once the Bouncer reaches it — `judgeCalls` having recorded the text is the
+ *  signal that it's now waiting. This lets a test interleave a mutation (e.g. releasing the
+ *  target) strictly between "the Bouncer started judging" and "the Bouncer acts on the verdict",
+ *  instead of racing the background sweep loop on relative timing (which real Postgres, with its
+ *  own network and query latency, does not resolve the same way PGlite's in-process reads do). */
+const judgeGates = new Map<string, Promise<void>>();
 const stub: Judge = {
   judge: async (r: ReportInfo) => {
     judgeCalls.push(r.snapshot.text);
+    await judgeGates.get(r.snapshot.text);
     return verdicts[r.snapshot.text] ?? extraVerdicts[r.snapshot.text] ?? null;
   },
 };
@@ -168,11 +177,21 @@ test('a report the Bouncer resolved carries a note, so reopening it and restarti
 test('a resolve that permanently fails (not 401/429) is noted instead of retried, and does not block the rest of the sweep', async () => {
   const reporter = await human('rep');
   const gone = await human('auth');
-  const message = await core.comms.post(gone, 'lobby', 'mute me please (release test)');
+  const text = 'mute me please (release test)';
+  // Hold the Bouncer's judge() call open once it reaches this report, so the release below is
+  // guaranteed to land before `decide` chooses to act and `resolve` calls `moderation.mute` —
+  // instead of hoping this statement outruns the Bouncer's background sweep.
+  let releaseGate!: () => void;
+  judgeGates.set(text, new Promise((resolve) => (releaseGate = resolve)));
+  const message = await core.comms.post(gone, 'lobby', text);
   const report = await core.reports.create(reporter, message.id, 'please look');
+  await until(() => judgeCalls.includes(text)); // the Bouncer is now blocked on our gate
+
   // The target leaves before the Bouncer gets to the report: its mute call now hits a target
   // that `moderation.mute` rejects with 404 NO_USER, after `decide` already chose to act.
   await core.moderation.release({ kind: 'console' }, gone.id, 'left before the Bouncer got to it');
+  releaseGate();
+  judgeGates.delete(text);
 
   const nextAuthor = await human('auth');
   const nextMessage = await core.comms.post(nextAuthor, 'lobby', 'this one is fine');

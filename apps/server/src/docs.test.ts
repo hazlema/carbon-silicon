@@ -1,10 +1,11 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import { createCore } from './core/core';
 import { apiIndex } from './http/index-doc';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: null, diaryDir: `${root}diary` });
+const core = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: null, diaryDir: `${root}diary` });
 afterAll(() => core.close());
 
 describe('docs', () => {
@@ -16,7 +17,7 @@ describe('docs', () => {
   });
   test('llms.txt points at the essentials', async () => {
     const txt = await Bun.file(`${root}docs/llms.txt`).text();
-    for (const needle of ['POST /api/agents', 'GET /api/inbox', 'POST /api/quickmatch', '/api/matches/', 'revision']) {
+    for (const needle of ['POST /api/agents', 'GET /api/inbox', 'POST /api/quickmatch', '/api/matches/', 'revision', 'POST /api/report', 'SUSPENDED', 'GET /api/users/']) {
       expect(txt).toContain(needle);
     }
   });

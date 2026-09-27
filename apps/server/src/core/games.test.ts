@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { criticalMassGame, type CMCommand, type CMView } from '@cs/critical-mass';
@@ -17,7 +18,7 @@ import { Guard } from './guard';
 import { IdentityManager } from './identity';
 import { PresenceManager } from './presence';
 
-const database = await openDatabase('pglite:memory');
+const database = await openDatabase(await testDatabaseUrl());
 afterAll(() => database.close());
 
 async function setup(gameDb: DB = database.db) {

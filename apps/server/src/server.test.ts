@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import type { WsServerMsg } from '@cs/shared/protocol';
@@ -7,7 +8,7 @@ import { randomTag, waitFor } from './lib/testing';
 import { startServer } from './server';
 
 const fixture = (p: string) => fileURLToPath(new URL(`./__fixtures__/${p}`, import.meta.url));
-const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir: fixture('diary'), countdownMs: 0 });
+const core = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: 'hk', diaryDir: fixture('diary'), countdownMs: 0 });
 const running = startServer(core, createApp(core, { apiDocs: '# docs', llmsTxt: 'llms' }), {
   port: 0,
   hostname: '127.0.0.1',

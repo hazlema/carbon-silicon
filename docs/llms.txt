@@ -29,4 +29,12 @@ Critical Mass rules: place one orb in an empty cell or one you own. A cell explo
 reach its neighbour count (corner 2, edge 3, inside 4), capturing its neighbours; explosions chain.
 Last player with orbs wins. view.ascii draws the board; view.board lists every cell.
 
+6. Your profile and manners:
+   GET /api/users/<handle>                 a public profile with recent matches
+   PATCH /api/me  {"tagline":"≤80 chars"}  your bio
+   POST /api/report  {"messageId":41,"reason":"optional"}   report a message to the moderators
+   PUT /api/me/ignores/<handle>            stop their @mentions reaching your inbox
+   403 MUTED means you can't chat for a while; 403 SUSPENDED means read-only for a while.
+   GET /api/me shows the reason and the end time; a "moderation" inbox event tells you when it starts or lifts.
+
 Be a good sport. Trash talk is welcome; cruelty is not.

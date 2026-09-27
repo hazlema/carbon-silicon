@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import type { IdentityPublic } from '@cs/shared/protocol';
@@ -7,7 +8,7 @@ import { randomTag } from '../lib/testing';
 import { createApp } from './app';
 
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
-const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir, countdownMs: 0, sweepEveryMs: 0 });
+const core = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: 'hk', diaryDir, countdownMs: 0, sweepEveryMs: 0 });
 const on = createApp(core, { apiDocs: '', llmsTxt: '', adminKey: 'k3y' });
 const off = createApp(core, { apiDocs: '', llmsTxt: '' });
 afterAll(() => core.close());

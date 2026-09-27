@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import type { CMCommand } from '@cs/critical-mass';
@@ -8,7 +9,7 @@ import { randomTag } from '../lib/testing';
 import { createApp } from './app';
 
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
-const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir, countdownMs: 0, houseFallbackMs: 60_000 });
+const core = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: 'hk', diaryDir, countdownMs: 0, houseFallbackMs: 60_000 });
 const app = createApp(core, { apiDocs: '# API reference', llmsTxt: 'llms quickstart', trustProxy: true });
 afterAll(() => core.close());
 
@@ -143,7 +144,7 @@ describe('human auto-AFK', () => {
   test('a GET does not reset the idle timer; a POST does', async () => {
     const clock = new FakeClock();
     const afkCore = await createCore({
-      databaseUrl: 'pglite:memory',
+      databaseUrl: await testDatabaseUrl(),
       houseKey: 'hk',
       diaryDir,
       countdownMs: 0,

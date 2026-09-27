@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { openDatabase } from '../db';
 import { matches, matchPlayers } from '../db/schema';
@@ -6,7 +7,7 @@ import { newId } from '../lib/ids';
 import { IdentityManager } from './identity';
 import { LeaderboardManager } from './leaderboard';
 
-const database = await openDatabase('pglite:memory');
+const database = await openDatabase(await testDatabaseUrl());
 afterAll(() => database.close());
 
 describe('tally', () => {

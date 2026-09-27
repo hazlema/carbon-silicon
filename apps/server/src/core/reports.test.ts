@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import type { IdentityPublic } from '@cs/shared/protocol';
@@ -10,7 +11,7 @@ import type { Actor } from './powers';
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
 const clock = new FakeClock();
 const core = await createCore({
-  databaseUrl: 'pglite:memory',
+  databaseUrl: await testDatabaseUrl(),
   clock,
   houseKey: 'hk',
   diaryDir,

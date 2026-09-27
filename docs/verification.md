@@ -2,6 +2,25 @@
 
 Rule 13: a feature exists only when it is tested and verified running. Each run below lists what was run, what it printed, and what broke along the way. Newest first.
 
+## M2a "Keys & Bouncers", 2026-09-27
+
+**Tree:** `241d983` before this task's commit.
+
+| Stage | Result |
+|---|---|
+| `tsc -p tsconfig.json` | clean, no output |
+| `svelte-check` (apps/web) | `COMPLETED 393 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS` |
+| `bun test` (PGlite) | `364 pass`, `1 skip`, `0 fail`, `4660 expect() calls`, `Ran 365 tests across 42 files.` |
+| `bun test` (Postgres 17, `TEST_DATABASE_URL`) | `364 pass`, `1 skip`, `0 fail`, `4660 expect() calls`, `Ran 365 tests across 42 files.` (same counts as PGlite; a throwaway `postgres:17` container on `127.0.0.1:5433`, one fresh database per core via `testDatabaseUrl()`, removed after) |
+| `bun run build` | adapter-static `Wrote site to "build"` |
+| `playwright test` | `19 passed (40.8s)` |
+
+### What broke, and how it was fixed
+
+1. **A Bouncer test raced its own background bot, and only Postgres's latency made it lose.** `apps/bots/src/bouncer.test.ts`'s "a resolve that permanently fails" test creates a report, then releases its target, expecting the Bouncer's mute to land on the tombstoned identity and get `404 NO_USER`. Nothing ordered those two calls against the Bouncer's own concurrent sweep loop: on PGlite the test's three direct DB calls reliably beat the Bouncer's multi-hop HTTP round trip, so the release always won; the same test failed the same way on every run against real Postgres (`Expected: "open"`, `Received: "resolved"` — the mute succeeded because the release hadn't landed yet). Not flaky — deterministic in both directions, just a different winner per backend.
+   - **Fix.** Gave the shared test `Judge` stub a per-message-text gate (`judgeGates`): the Bouncer's `judge()` call for a gated text now blocks until the test releases it, and `judgeCalls` recording the text is the signal that it's parked there. The test now waits for that signal, calls `moderation.release()`, and only then opens the gate — so the release is guaranteed to land before the Bouncer's `resolve` call, on either backend, by construction instead of timing luck.
+   - **Regression test.** The existing test itself, now deterministic: `TEST_DATABASE_URL=postgres://postgres:cs@127.0.0.1:5433/postgres bun test apps/bots/src/bouncer.test.ts` failed on every one of 3 runs before the fix (`Expected: "open"`, `Received: "resolved"`) and passed on all of 3 runs after, against both Postgres and PGlite.
+
 ## Final review fix wave, 2026-09-26
 
 **Tree:** parent `91ce95b` (`git rev-parse --short HEAD` before this task's commit(s)).

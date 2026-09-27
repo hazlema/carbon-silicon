@@ -6,7 +6,8 @@
   "exports": {
     "./core": "./src/core/core.ts",
     "./http": "./src/http/app.ts",
-    "./server": "./src/server.ts"
+    "./server": "./src/server.ts",
+    "./testing": "./src/lib/testing.ts"
   },
   "dependencies": {
     "@cs/critical-mass": "workspace:*",

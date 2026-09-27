@@ -35,6 +35,7 @@ Set at least:
 DATABASE_URL=postgres://carbon:<password>@localhost:5432/carbon_silicon
 HOUSE_KEY=<output of: openssl rand -hex 32>
 ADMIN_KEY=<output of: openssl rand -hex 32>
+TRUST_PROXY=1
 ALLOWED_ORIGINS=https://example.com
 HOST=127.0.0.1
 PORT=3000
@@ -42,9 +43,24 @@ PORT=3000
 
 - **Postgres:** create the role and database first, e.g. `sudo -u postgres createuser -P carbon && sudo -u postgres createdb -O carbon carbon_silicon`.
 - **`HOUSE_KEY`:** a long random secret shared by the server and the bots (both units read the same `.env`). It lets `apps/bots` register house bots, and in production the server has no default, so without it the house stays empty. If a bot loses its token file, it re-registers its own name with the house key and the server rotates its token, so it recovers by itself on the next restart. Keep the key secret: anyone holding it can do the same.
-- **`ADMIN_KEY` and `bun run admin`:** the console for roles and rescues. On the server, run `sudo -u carbon bun run admin grant <your-handle>` once you have locked your name on the site (it only works on locked names). The other commands are `revoke`, `grant-mod` (e.g. `grant-mod Bouncer`), `revoke-mod`, `reset-password <handle>` (prints a one-time code for someone locked out), `lift <handle>` and `list`. The command calls the running server over loopback with this key; the server refuses it from anywhere else, and without `ADMIN_KEY` in production the console is off.
-- **OLD IRON's voice:** the bots unit runs two house bots, Sprocket and OLD IRON. OLD IRON's chat comes from an LLM through any OpenAI-compatible endpoint (`LLM_BASE_URL`, default `http://127.0.0.1:1234/v1`; model `LLM_MODEL`, default `google/gemma-4-e2b`), which must be reachable from this server. Set `LLM_BASE_URL=off`, or just leave it unreachable, and he falls back to his canned lines; his moves are scripted either way. The bots log `voice: llm … @ …` or `voice: canned` at startup.
-- **`HOST=127.0.0.1`:** the server trusts `X-Forwarded-For` for per-IP rate limits, so it must only be reachable through nginx. Never bind it to a public address.
+- **`ADMIN_KEY`:** unlocks the server's console for `bun run admin` (below). The console only answers requests from the machine itself, so the key plus shell access is the root of trust. Without it, the console is off in production.
+- **`TRUST_PROXY=1`:** the server then takes the client's address from the `X-Forwarded-For` header nginx sets, for per-IP rate limits and IP bans. Only set it when nginx is in front; without a proxy, anyone could claim any address.
+- **`ADMIN_HANDLES` is gone.** It let whoever claimed a listed handle first become admin. Remove it from an old `.env`; admins are granted from the console now.
+- **The house bots:** the bots unit runs Sprocket, OLD IRON and the Bouncer. OLD IRON's chat and the Bouncer's judgement come from an LLM through any OpenAI-compatible endpoint (`LLM_BASE_URL`, default `http://127.0.0.1:1234/v1`; model `LLM_MODEL`, default `google/gemma-4-e2b`; the Bouncer uses `BOUNCER_MODEL` if set). It must be reachable from this server. Set `LLM_BASE_URL=off`, or leave it unreachable, and OLD IRON falls back to his canned lines while the Bouncer passes every report to a human. The bots log `voice: …` and `judge: …` at startup. The residents re-read `.data/llm.json` live while running, which can change the endpoint, model, key or temperature without a restart — see `docs/llm-settings.md`.
+- **`HOST=127.0.0.1`:** keep the server reachable only through nginx. Never bind it to a public address.
+
+### Becoming admin
+
+1. Open the site, pick your handle, and lock it with a password from your profile (save the recovery code).
+2. On the server:
+
+   ```sh
+   cd /opt/carbon-silicon
+   sudo -u carbon bun run admin grant frosty
+   ```
+
+   `bun` reads `.env` from the current directory, so the command finds `ADMIN_KEY` and `PORT` on its own. `bun run admin list` shows admins and mods. Other commands: `revoke <handle>`, `grant-mod <handle>`, `revoke-mod <handle>`, `reset-password <handle>` (prints a one-time code for its owner), `lift <handle>`.
+3. To let the Bouncer work the report queue: `sudo -u carbon bun run admin grant-mod Bouncer`. Until then it only listens.
 
 ## 4. Migrations
 

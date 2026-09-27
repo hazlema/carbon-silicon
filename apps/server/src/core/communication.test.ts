@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { PUBLIC_CHANNELS, type ChatMessage } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
@@ -9,7 +10,7 @@ import { CommunicationManager } from './communication';
 import { Guard } from './guard';
 import { IdentityManager } from './identity';
 
-const database = await openDatabase('pglite:memory');
+const database = await openDatabase(await testDatabaseUrl());
 afterAll(() => database.close());
 
 async function setup() {

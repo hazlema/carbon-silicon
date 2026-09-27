@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import type { ServerWebSocket } from 'bun';
@@ -9,7 +10,7 @@ import { WsHub, type WsData } from './hub';
 
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
 const clock = new FakeClock();
-const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir, countdownMs: 0, clock, sweepEveryMs: 0 });
+const core = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: 'hk', diaryDir, countdownMs: 0, clock, sweepEveryMs: 0 });
 const hub = new WsHub(core);
 afterAll(async () => {
   hub.stop();

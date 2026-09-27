@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { criticalMassGame } from '@cs/critical-mass';
 import { PUBLIC_CHANNELS } from '@cs/shared/protocol';
@@ -13,7 +14,7 @@ import { IdentityManager } from './identity';
 import { InviteManager } from './invites';
 import { PresenceManager } from './presence';
 
-const database = await openDatabase('pglite:memory');
+const database = await openDatabase(await testDatabaseUrl());
 afterAll(() => database.close());
 
 async function setup() {

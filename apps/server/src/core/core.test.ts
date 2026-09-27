@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
@@ -8,7 +9,7 @@ import { createCore } from './core';
 import { parseEntry } from './diary';
 
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
-const core = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk', diaryDir });
+const core = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: 'hk', diaryDir });
 afterAll(() => core.close());
 
 describe('parseEntry', () => {
@@ -47,7 +48,7 @@ describe('createCore', () => {
 describe('the idle sweep', () => {
   test('runs on its timer and stops when the core closes', async () => {
     const clock = new FakeClock(Date.now());
-    const swept = await createCore({ databaseUrl: 'pglite:memory', houseKey: null, diaryDir, clock, sweepEveryMs: 1000 });
+    const swept = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: null, diaryDir, clock, sweepEveryMs: 1000 });
     try {
       const { identity } = await swept.identities.createHuman('Driftwood');
       await swept.database.db

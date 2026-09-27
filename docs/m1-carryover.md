@@ -13,6 +13,12 @@ Decisions and deferred findings from building M1 ("Doors open"). Read this befor
 - A human who reconnects mid-match after the 15 s grace shows 'ready' in presence.
 - Verify the postgres-js path against a real Postgres before/at first deploy (only PGlite was exercised).
 
+## M2b must-do
+
+- Close a person's open WebSockets when their session is revoked, their name is released or their IP is banned (M2a leaves them open until reload).
+
+M2a's sanctions and bans take effect on the next authenticated HTTP request (and, since Task 12, on the next WebSocket open too — see `refreshMe()` in `ws.onopen`), but a socket that's already open keeps receiving public chat and its own inbox pushes until the browser reloads. DMs and invites (M2b) raise the cost of that gap, so it's a must-do before they ship, not a nice-to-have.
+
 ## Rulings made during M1
 
 - Ruling: R1 — expected test counts in Tasks 1, 5 and 16 are off by one; the test code in the plan is authoritative, implementers report actual counts — costs nothing if wrong.

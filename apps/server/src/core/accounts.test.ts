@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { openDatabase, type Database } from '../db';
@@ -10,7 +11,7 @@ import { AccountManager } from './accounts';
 import { Guard } from './guard';
 import { IdentityManager } from './identity';
 
-const database = await openDatabase('pglite:memory');
+const database = await openDatabase(await testDatabaseUrl());
 afterAll(() => database.close());
 const DAY = 86_400_000;
 const PW = 'correct horse battery';
@@ -225,7 +226,7 @@ describe('bio', () => {
 
 describe('the idle sweep', () => {
   test('releases idle guests after 30 days, or 180 with matches; never locked names, agents or house bots', async () => {
-    const own = await openDatabase('pglite:memory');
+    const own = await openDatabase(await testDatabaseUrl());
     try {
       const clock = new FakeClock(Date.now());
       const ctx = setup(own, clock);

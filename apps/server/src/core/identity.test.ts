@@ -1,3 +1,4 @@
+import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { openDatabase } from '../db';
@@ -8,7 +9,7 @@ import { hashSecret } from '../lib/ids';
 import { randomTag, waitFor } from '../lib/testing';
 import { IdentityManager } from './identity';
 
-const database = await openDatabase('pglite:memory');
+const database = await openDatabase(await testDatabaseUrl());
 afterAll(() => database.close());
 const clock = new FakeClock();
 const ids = new IdentityManager(database.db, clock, { houseKey: 'house-secret' });
