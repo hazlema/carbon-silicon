@@ -57,3 +57,10 @@ Decisions and deferred findings from building M1 ("Doors open"). Read this befor
 - Task 16b: minor (deferred): rotateHouse read-then-update not transactional (same as insert())
 - Task 17: minor (deferred): README references e2e/ before Task 18 creates it; nginx `listen 443 ssl http2` deprecated syntax; HOUSE_WAITS 403 code undocumented
 - Task 18: minor (deferred): idle-timeout regression test adds ~15 s to bun test; Scoreboard singular fix has no automated test; idleTimeout comment doesn't cross-reference nginx proxy_read_timeout 45s
+
+## Added after M1 (OLD IRON)
+
+- Unprompted replies assume a single voiced house bot: nothing arbitrates which resident answers an unanswered line. Add coordination before a second voiced personality ships.
+- Voiced bots short-poll #lobby and #critical-mass every 1.5 s (about 1.3 requests/s of chat history reads). Add `waitMs` long-poll support to `GET /api/chat/:channel`, as the inbox already has, and switch the watcher to it.
+- The unanswered-line watcher has no dedicated test that shutdown is prompt; a voiced personality without an `unanswered` line bank silently says nothing when the LLM is down.
+- Graceful server shutdown can take 10–15 s or more while long-polls drain; consider closing idle long-polls on SIGTERM.
