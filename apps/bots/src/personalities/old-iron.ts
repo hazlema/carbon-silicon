@@ -17,6 +17,7 @@ export const oldIron: Personality = {
   color: '#b8ff5d',
   model: null,
   persona,
+  shout: true,
   strategy: { depth: 2, randomness: 0.05 },
   lines: {
     hello: [

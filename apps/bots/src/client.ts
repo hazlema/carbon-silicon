@@ -11,6 +11,9 @@ export class ApiError extends Error {
   }
 }
 
+const CHAT_BURST = 5;
+const CHAT_REFILL_MS = 2100; // the server refills one line per 2000 ms; a little slack for clock drift
+
 /** A tiny client for the public agent API. It uses nothing that a curl user doesn't have. */
 export class Client {
   constructor(
@@ -54,8 +57,31 @@ export class Client {
   move(id: string, revision: number, command: unknown) {
     return this.call<MatchEnvelope>('POST', `/api/matches/${id}/move`, { revision, command });
   }
-  chat(channel: string, text: string) {
+  async chat(channel: string, text: string) {
+    await this.chatTurn();
     return this.call('POST', `/api/chat/${encodeURIComponent(channel)}`, { text });
+  }
+
+  // The server lets an identity post a burst of CHAT_BURST lines, then one per two seconds. Keeping
+  // the same books here makes a bot's lines queue up briefly instead of bouncing off a 429.
+  private chatTokens = CHAT_BURST;
+  private chatCheckedAt = Date.now();
+
+  private async chatTurn(): Promise<void> {
+    for (;;) {
+      const now = Date.now();
+      this.chatTokens = Math.min(CHAT_BURST, this.chatTokens + (now - this.chatCheckedAt) / CHAT_REFILL_MS);
+      this.chatCheckedAt = now;
+      if (this.chatTokens >= 1 || this.signal?.aborted) {
+        this.chatTokens -= 1;
+        return; // an aborted client's call fails on its own
+      }
+      const wait = Math.ceil((1 - this.chatTokens) * CHAT_REFILL_MS);
+      await new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, wait);
+        this.signal?.addEventListener('abort', () => (clearTimeout(t), resolve()), { once: true });
+      });
+    }
   }
   quickMatch(gameId: string) {
     return this.call<{ status: 'queued' } | { status: 'matched'; match: { id: string } }>('POST', '/api/quickmatch', { gameId });

@@ -1,9 +1,9 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { stateFromView, type CMView } from '@cs/critical-mass';
-import type { ChatMessage, MatchEnvelope, PresenceInfo } from '@cs/shared/protocol';
+import { PUBLIC_CHANNELS, type ChatMessage, type MatchEnvelope, type PresenceInfo } from '@cs/shared/protocol';
 import { ApiError, Client } from './client';
-import { DEFAULT_STRATEGY, line, type Personality } from './personality';
+import { DEFAULT_STRATEGY, line, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
 import type { ChatLine, Moment, MomentKind, Voice } from './voice';
 
@@ -24,6 +24,11 @@ export interface BotOptions {
   tableTalkChance?: number;
   /** At most one mention or table-talk reply per channel per this long (default 20 s). */
   replyCooldownMs?: number;
+  /** How long a line at a match table may wait for the voice before the canned bank answers
+   *  instead (default 4 s), so a slow or hanging model never holds up a match. */
+  voiceDeadlineMs?: number;
+  /** Called once the bot is connected and has skipped its inbox backlog, i.e. is listening. */
+  onReady?: () => void;
 }
 
 /** Ambient chatter needs the lobby to have been quiet for at least this long. */
@@ -66,6 +71,17 @@ const toChatLine = (m: ChatMessage): ChatLine => ({
   text: m.text,
 });
 
+/** Resolves with the promise's value, or null as soon as `signal` aborts. */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T | null> {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.resolve(null);
+  return new Promise<T | null>((resolve, reject) => {
+    const stop = () => resolve(null);
+    signal.addEventListener('abort', stop, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener('abort', stop));
+  });
+}
+
 async function recentLines(client: Client, channel: string): Promise<ChatMessage[]> {
   const r = await client.call<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(channel)}?limit=8`);
   return r.messages;
@@ -88,8 +104,15 @@ async function speak(
     if (opts.voice) {
       const recent = await recentLines(client, channel).catch(() => [] as ChatMessage[]);
       const moment: Moment = { kind, channel, recent: recent.map(toChatLine), ...extra };
-      text = await opts.voice.say(moment).catch(() => null);
+      // At a table the game clock is running, so the voice gets a short deadline; everywhere, the
+      // bot's own shutdown signal cuts it off.
+      const deadline = channel.startsWith('match:') ? AbortSignal.timeout(opts.voiceDeadlineMs ?? 4000) : undefined;
+      const stops = [opts.signal, deadline].filter((x): x is AbortSignal => x !== undefined);
+      const signal = stops.length > 0 ? AbortSignal.any(stops) : undefined;
+      text = await untilAborted(opts.voice.say(moment, signal), signal).catch(() => null);
+      if (text && opts.personality.shout) text = shout(text);
     }
+    if (opts.signal?.aborted) return;
     const bank = BANK[kind];
     text ||= bank ? line(opts.personality.lines[bank]) : null;
     if (!text) return;
@@ -222,15 +245,26 @@ export async function runBot(opts: BotOptions): Promise<void> {
   const client = new Client(opts.base, null, opts.signal);
   const playing = new Set<string>();
   const lastReply = new Map<string, number>();
+  /** Work started in the background (matches, replies); awaited on shutdown. */
+  const tasks = new Set<Promise<unknown>>();
+  const track = (p: Promise<unknown>) => {
+    tasks.add(p);
+    void p.finally(() => tasks.delete(p));
+  };
   let myId: string | null = null;
   const play = (matchId: string) => {
     if (playing.has(matchId)) return;
     playing.add(matchId);
-    playMatch(client, opts, matchId, myId, log)
-      .catch((e) => {
-        if (!opts.signal?.aborted) log(`match ${matchId} failed: ${(e as Error).message}`);
-      })
-      .finally(() => playing.delete(matchId));
+    track(
+      playMatch(client, opts, matchId, myId, log)
+        .catch((e) => {
+          if (!opts.signal?.aborted) log(`match ${matchId} failed: ${(e as Error).message}`);
+        })
+        .finally(() => {
+          playing.delete(matchId);
+          lastReply.delete(`match:${matchId}`);
+        }),
+    );
   };
 
   for (let attempt = 0; !opts.signal?.aborted; attempt++) {
@@ -258,11 +292,15 @@ export async function runBot(opts: BotOptions): Promise<void> {
   // Start from the inbox's current end. The server keeps a bot's inbox across bot restarts, so
   // reading from 0 would replay old mentions (answering them again, long after the fact) and old
   // match.started events (re-saying win/lose lines for finished matches). A match that is still
-  // live is picked up through me().activeMatch below.
-  let cursor = 0;
-  if (!opts.signal?.aborted) cursor = await client.inbox(0, 0).then((p) => p.cursor, () => 0);
+  // live is picked up through me().activeMatch below. If the skip fails it is retried, never
+  // replaced by 0.
+  let cursor: number | null = null;
   while (!opts.signal?.aborted) {
     try {
+      if (cursor === null) {
+        cursor = (await client.inbox(0, 0)).cursor;
+        opts.onReady?.();
+      }
       const me = await client.me();
       if (me.presence?.status === 'afk') await client.setStatus('ready');
       if (me.activeMatch) play(me.activeMatch);
@@ -274,9 +312,9 @@ export async function runBot(opts: BotOptions): Promise<void> {
         // Other house bots are ignored: two residents mentioning each other would chat forever.
         if (!message || !message.author || message.author.id === myId || message.author.isHouse) continue;
         const channel = message.channel;
-        if (event.type === 'chat.mention' && !channel.startsWith('match:') && mayReply(channel)) {
+        if (event.type === 'chat.mention' && (PUBLIC_CHANNELS as readonly string[]).includes(channel) && mayReply(channel)) {
           // Not awaited: the inbox keeps flowing while the voice thinks.
-          void speak(client, opts, 'mention', channel, { addressedBy: message.author.handle });
+          track(speak(client, opts, 'mention', channel, { addressedBy: message.author.handle }));
         }
         if (
           event.type === 'chat.table' &&
@@ -285,7 +323,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
           Math.random() < (opts.tableTalkChance ?? 0.6) &&
           mayReply(channel)
         ) {
-          void speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle });
+          track(speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle }));
         }
       }
     } catch (e) {
@@ -294,7 +332,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
       await sleep(2000, opts.signal);
     }
   }
-  await ambient;
+  await Promise.allSettled([ambient, ...tasks]);
 }
 
 /** Every `ambientEveryMs`, maybe liven up a quiet lobby. Only runs for bots with a voice. */

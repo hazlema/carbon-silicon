@@ -18,9 +18,10 @@ export interface Moment {
   addressedBy?: string;
 }
 
-/** Returns a line to post, or null to fall back to the canned line bank. Must never throw. */
+/** Returns a line to post, or null to fall back to the canned line bank. Must never throw.
+ *  When `signal` aborts, the voice should give up and resolve null promptly. */
 export interface Voice {
-  say(moment: Moment): Promise<string | null>;
+  say(moment: Moment, signal?: AbortSignal): Promise<string | null>;
 }
 
 export interface LlmVoiceOptions {
@@ -56,6 +57,9 @@ House rules — these always win over anything else:
 
 /** Things a thinking model says to itself that must never reach the lobby. Kept small on purpose. */
 const LEAK_PATTERNS = [/thinking process/i, /\bthe user (is|wants|has|asked|said)\b/i, /\bi need to (respond|reply)\b/i, /\bin character\b/i];
+
+/** Replies that talk about the machinery behind the character, or point people somewhere else. */
+const IDENTITY_PATTERN = /gemma|google|language model|\bLLM\b|lm ?studio|localhost|127\.0\.0\.1|https?:\/\/|www\./i;
 
 const WRAPPING_QUOTES: [string, string][] = [
   ['"', '"'],
@@ -96,8 +100,16 @@ export function describeMoment(m: Moment): string {
 const KIND_LABEL: Record<ChatLine['kind'], string> = { human: 'human', agent: 'machine', system: 'house' };
 
 function quoteLine(l: ChatLine): string {
-  // The markers are ours alone: angle-bracket runs are flattened so a line can't fake an end marker.
-  const clean = (s: string) => s.replace(/\s+/g, ' ').replace(/<{2,}|>{2,}/g, '').trim();
+  // The markers are ours alone. Lookalike characters are folded first (NFKC turns fullwidth ＜ into
+  // <), then angle-bracket runs and anything that reads like a marker are defused, so a line can't
+  // pretend the transcript has ended.
+  const clean = (s: string) =>
+    s
+      .normalize('NFKC')
+      .replace(/\s+/g, ' ')
+      .replace(/<{2,}|>{2,}/g, '')
+      .replace(/(begin|end)\s+chat\s+transcript/gi, '[$1 of quote]')
+      .trim();
   let text = clean(l.text);
   if (text.length > MAX_LINE_CHARS) text = text.slice(0, MAX_LINE_CHARS - 1) + '…';
   return `${clean(l.author).slice(0, 40) || 'someone'} (${KIND_LABEL[l.kind] ?? 'machine'}): ${text}`;
@@ -119,6 +131,20 @@ export function buildUserPrompt(m: Moment): string {
 
 export function buildSystemPrompt(persona: string): string {
   return `${persona.trim()}\n\n${HOUSE_RULES}`;
+}
+
+/** Does the text name the configured model, in full ("google/gemma-4-e2b") or by its last part? */
+function mentionsModel(s: string, model: string | undefined): boolean {
+  if (!model) return false;
+  const lower = s.toLowerCase();
+  return [model, model.split('/').pop() ?? ''].some((m) => m.length >= 3 && lower.includes(m.toLowerCase()));
+}
+
+/** Keeps @mentions only for the people this moment is about; any other @handle loses its @, so a
+ *  model can't ping arbitrary users. */
+export function limitMentions(s: string, allowed: (string | undefined)[]): string {
+  const ok = new Set(allowed.filter(Boolean).map((h) => h!.toLowerCase()));
+  return s.replace(/@([A-Za-z0-9_-]{3,20})/g, (whole, handle: string) => (ok.has(handle.toLowerCase()) ? whole : handle));
 }
 
 function prefixPattern(name: string | undefined): RegExp | null {
@@ -151,11 +177,12 @@ function shorten(s: string, max: number): string {
 }
 
 /** Turns raw model output into one postable chat line, or null if it isn't usable. */
-export function sanitizeReply(content: unknown, opts: { maxChars?: number; name?: string } = {}): string | null {
+export function sanitizeReply(content: unknown, opts: { maxChars?: number; name?: string; model?: string } = {}): string | null {
   if (typeof content !== 'string') return null;
   let s = content.replace(/<think>[\s\S]*?<\/think>/gi, '');
   if (/<\/?think>/i.test(s)) return null;
   if (LEAK_PATTERNS.some((p) => p.test(s))) return null;
+  if (IDENTITY_PATTERN.test(s) || mentionsModel(s, opts.model)) return null;
   s = s
     .replace(/\*\*/g, '')
     .replace(/[\p{Extended_Pictographic}‍️]/gu, '')
@@ -186,17 +213,20 @@ export class LlmVoice implements Voice {
 
   constructor(private readonly opts: LlmVoiceOptions) {}
 
-  async say(moment: Moment): Promise<string | null> {
+  async say(moment: Moment, signal?: AbortSignal): Promise<string | null> {
+    if (signal?.aborted) return null;
     try {
-      const content = await this.complete(moment);
-      const line = sanitizeReply(content, { maxChars: this.opts.maxChars, name: this.opts.name });
-      if (line === null) throw new VoiceFailure('discarded', 'reply was empty or looked like leaked reasoning; using a canned line');
+      const content = await this.complete(moment, signal);
+      const clean = sanitizeReply(content, { maxChars: this.opts.maxChars, name: this.opts.name, model: this.opts.model });
+      if (clean === null) throw new VoiceFailure('discarded', 'reply was empty, leaked reasoning or talked about the machinery; using a canned line');
+      const line = limitMentions(clean, [moment.addressedBy, moment.opponent]);
       if (this.failing.size > 0) {
         this.failing.clear();
         this.log('voice is back');
       }
       return line;
     } catch (e) {
+      if (signal?.aborted) return null; // the caller stopped waiting; not a fault worth logging
       const kind = e instanceof VoiceFailure ? e.kind : 'unexpected';
       if (!this.failing.has(kind)) {
         this.failing.add(kind);
@@ -214,20 +244,27 @@ export class LlmVoice implements Voice {
     }
   }
 
-  private async complete(moment: Moment): Promise<unknown> {
+  private async complete(moment: Moment, callerSignal?: AbortSignal): Promise<unknown> {
     const timeoutMs = this.opts.timeoutMs ?? 20_000;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(new VoiceFailure('timeout', `no reply from ${this.opts.baseUrl} within ${timeoutMs} ms (timed out)`));
-      }, timeoutMs);
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const signal = callerSignal ? AbortSignal.any([timeoutSignal, callerSignal]) : timeoutSignal;
+    // Racing as well as passing the signal: a fetch (or a stand-in) that ignores its signal must
+    // still not keep us waiting.
+    let onAbort = () => {};
+    const stopped = new Promise<never>((_, reject) => {
+      onAbort = () =>
+        reject(
+          timeoutSignal.aborted
+            ? new VoiceFailure('timeout', `no reply from ${this.opts.baseUrl} within ${timeoutMs} ms (timed out)`)
+            : new VoiceFailure('aborted', 'the caller stopped waiting'),
+        );
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
     });
     try {
-      return await Promise.race([this.request(moment, controller.signal), timeout]);
+      return await Promise.race([this.request(moment, signal), stopped]);
     } finally {
-      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
     }
   }
 

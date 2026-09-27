@@ -5,8 +5,9 @@ import type { CMCommand } from '@cs/critical-mass';
 import { createCore } from '@cs/server/core';
 import { createApp } from '@cs/server/http';
 import { startServer } from '@cs/server/server';
-import { ambientDue, runBot } from './bot';
+import { ambientDue, runBot, type BotOptions } from './bot';
 import { Client } from './client';
+import { shout } from './personality';
 import { oldIron } from './personalities/old-iron';
 import { sprocket } from './personalities/sprocket';
 import type { Moment, Voice } from './voice';
@@ -24,20 +25,26 @@ const ironCore = await createCore({ databaseUrl: 'pglite:memory', houseKey: 'hk'
 const ironServer = startServer(ironCore, createApp(ironCore, { apiDocs: '', llmsTxt: '' }), { port: 0, hostname: '127.0.0.1', webDir: null, allowedOrigins: [] });
 const ironController = new AbortController();
 const heard: Moment[] = [];
-let voiceMode: 'talk' | 'silent' = 'talk';
+let voiceMode: 'talk' | 'silent' | 'hang' = 'talk';
 const fakeVoice: Voice = {
-  async say(m) {
+  say(m) {
     heard.push(m);
-    return voiceMode === 'silent' ? null : `VOICE ${m.kind.toUpperCase()} LINE.`;
+    if (voiceMode === 'hang') return new Promise<string | null>(() => {}); // ignores its signal, too
+    return Promise.resolve(voiceMode === 'silent' ? null : `VOICE ${m.kind.toUpperCase()} LINE.`);
   },
 };
+let ironReady = () => {};
+const ironListening = new Promise<void>((resolve) => (ironReady = resolve));
+const VOICE_DEADLINE_MS = 300;
 const ironDone = runBot({
   base: ironServer.url,
   personality: oldIron,
   voice: fakeVoice,
   tableTalkChance: 1,
   replyCooldownMs: 0, // tests talk to it back to back
+  voiceDeadlineMs: VOICE_DEADLINE_MS,
   ambientEveryMs: 0,
+  onReady: () => ironReady(),
   houseKey: 'hk',
   tokenFile: join(root, `.data/test-bots/${crypto.randomUUID()}.token`),
   thinkMs: [0, 0],
@@ -58,6 +65,16 @@ afterAll(async () => {
  *  something the profanity filter rejects, which would fail these tests in setup. */
 const randomTag = () => String(Math.floor(Math.random() * 1e9)).padStart(9, '0');
 
+/** Registers an agent from its own made-up address: the server allows five agent registrations per
+ *  address per hour, and the bots under test register from the loopback address themselves. */
+async function newAgent(base: string, name: string, houseKey?: string): Promise<{ client: Client; handle: string }> {
+  const client = new Client(base);
+  const ip = `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}`;
+  const reg = await client.call<{ identity: { handle: string }; token: string }>('POST', '/api/agents', { name }, { 'x-forwarded-for': ip, ...(houseKey ? { 'x-house-key': houseKey } : {}) });
+  client.token = reg.token;
+  return { client, handle: reg.identity.handle };
+}
+
 async function until<T>(fn: () => Promise<T | null | undefined | false>, ms = 10_000): Promise<T> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -72,8 +89,7 @@ describe('Sprocket', () => {
   test('shows up, gets matched by quick match, plays to the end, and talks', async () => {
     const guest = new Client(running.url);
     await until(async () => (await guest.call<{ presence: { identity: { handle: string; isHouse: boolean } }[] }>('GET', '/api/who')).presence.find((p) => p.identity.handle === 'Sprocket' && p.identity.isHouse));
-    const reg = await guest.register({ name: `challenger${randomTag()}` });
-    guest.token = reg.token;
+    guest.token = (await newAgent(running.url, `challenger${randomTag()}`)).client.token;
     expect((await guest.quickMatch('critical-mass')).status).toBe('queued');
     const matchId = await until(async () => (await guest.me()).activeMatch);
     let env = await guest.match(matchId);
@@ -100,8 +116,7 @@ describe('Sprocket', () => {
 
   test('greets exactly once per match', async () => {
     const guest = new Client(running.url);
-    const reg = await guest.register({ name: `challenger${randomTag()}` });
-    guest.token = reg.token;
+    guest.token = (await newAgent(running.url, `challenger${randomTag()}`)).client.token;
     expect((await guest.quickMatch('critical-mass')).status).toBe('queued');
     const matchId = await until(async () => (await guest.me()).activeMatch);
     // Sprocket greets as soon as it notices the match (playMatch says hello before its first
@@ -160,31 +175,30 @@ describe('Sprocket', () => {
 type Said = { messages: { id: number; author: { handle: string } | null; text: string }[] };
 
 describe('OLD IRON (a bot with a voice)', () => {
-  const ironUp = async () => {
-    const who = new Client(ironServer.url);
-    await until(async () => (await who.call<{ presence: { identity: { handle: string; isHouse: boolean } }[] }>('GET', '/api/who')).presence.find((p) => p.identity.handle === 'OLD_IRON'));
-  };
-  // One guest for the whole block: the server allows only five registrations per address per hour.
+  // OLD IRON's registration, Rivet's and Stall's are the only ones from the loopback address
+  // (three of the five allowed per hour); guests and Cog register through newAgent.
+  const ironUp = () => ironListening;
   let theGuest: Promise<{ client: Client; handle: string }> | null = null;
-  const guest = () =>
-    (theGuest ??= (async () => {
-      const g = new Client(ironServer.url);
-      const reg = await g.register({ name: `guest${randomTag()}` });
-      g.token = reg.token;
-      return { client: g, handle: reg.identity.handle };
-    })());
+  const guest = () => (theGuest ??= newAgent(ironServer.url, `guest${randomTag()}`));
   const ironSaid = async (client: Client, channel: string, pred: (text: string) => boolean) =>
     until(async () => {
       const r = await client.call<Said>('GET', `/api/chat/${encodeURIComponent(channel)}?since=0&limit=200`);
       return r.messages.find((m) => m.author?.handle === 'OLD_IRON' && pred(m.text))?.text;
     });
+  /** Mentions a bot in #lobby and returns its reply to that message. */
+  const mentionAndWait = async (client: Client, botHandle: string, text: string) => {
+    const posted = (await client.chat('lobby', text)) as { message: { id: number } };
+    return until(async () => {
+      const r = await client.call<Said>('GET', `/api/chat/lobby?since=${posted.message.id}`);
+      return r.messages.find((m) => m.author?.handle === botHandle)?.text;
+    });
+  };
 
   test('answers a mention in #lobby with its voice, addressed to whoever mentioned it', async () => {
     await ironUp();
     voiceMode = 'talk';
     const { client, handle } = await guest();
-    await client.chat('lobby', 'morning @OLD_IRON, how are the punch cards?');
-    const reply = await ironSaid(client, 'lobby', (t) => t.includes('VOICE MENTION LINE.'));
+    const reply = await mentionAndWait(client, 'OLD_IRON', 'morning @OLD_IRON, how are the punch cards?');
     expect(reply).toBe(`@${handle} VOICE MENTION LINE.`);
     const asked = heard.find((m) => m.kind === 'mention' && m.addressedBy === handle)!;
     expect(asked.channel).toBe('lobby');
@@ -197,11 +211,7 @@ describe('OLD IRON (a bot with a voice)', () => {
     try {
       const { client, handle } = await guest();
       const before = heard.length;
-      const posted = (await client.chat('lobby', '@OLD_IRON are you awake?')) as { message: { id: number } };
-      const reply = await until(async () => {
-        const r = await client.call<Said>('GET', `/api/chat/lobby?since=${posted.message.id}`);
-        return r.messages.find((m) => m.author?.handle === 'OLD_IRON')?.text;
-      });
+      const reply = await mentionAndWait(client, 'OLD_IRON', '@OLD_IRON are you awake?');
       expect(reply.startsWith(`@${handle} `)).toBe(true);
       expect(oldIron.lines.mentioned).toContain(reply.slice(`@${handle} `.length));
       expect(heard.slice(before).some((m) => m.kind === 'mention' && m.addressedBy === handle)).toBe(true);
@@ -230,53 +240,102 @@ describe('OLD IRON (a bot with a voice)', () => {
     }
   }, 30_000);
 
-  test('ignores mentions from other house bots, so two residents cannot ping-pong forever', async () => {
+  test('a hanging voice cannot hold up a match: the canned hello and the first move come on time', async () => {
     await ironUp();
-    const other = new Client(ironServer.url);
-    other.token = (await other.register({ name: `Cog${randomTag()}` }, 'hk')).token;
-    const before = heard.length;
-    const posted = await other.chat('lobby', '@OLD_IRON beep boop, old timer');
-    await other.setStatus('afk'); // a second ready house bot could be seated by later quick matches
-    await Bun.sleep(1500);
-    const r = await other.call<Said>('GET', '/api/chat/lobby?limit=50');
-    const later = r.messages.filter((m) => m.id > (posted as { message: { id: number } }).message.id && m.author?.handle === 'OLD_IRON');
-    expect(later).toHaveLength(0);
-    expect(heard.slice(before).filter((m) => m.kind === 'mention')).toHaveLength(0);
+    const { client } = await guest();
+    voiceMode = 'hang';
+    let matchId: string | null = null;
+    try {
+      expect((await client.quickMatch('critical-mass')).status).toBe('queued');
+      matchId = await until(async () => (await client.me()).activeMatch);
+      const table = `match:${matchId}`;
+      const seen = Date.now();
+      const hello = await ironSaid(client, table, () => true);
+      // Deadline plus one inbox poll (500 ms) plus slack; without the deadline this never arrives.
+      expect(Date.now() - seen).toBeLessThan(VOICE_DEADLINE_MS + 2500);
+      expect(oldIron.lines.hello).toContain(hello);
+      let env = await client.match(matchId);
+      const ironSeat = env.match.seats.find((s) => s.identity.handle === 'OLD_IRON')!.seat;
+      if (env.you && env.match.toMove.includes(env.you)) env = await client.move(matchId, env.match.revision, env.legal[0] as CMCommand);
+      const moved = Date.now();
+      await until(async () => ((await client.match(matchId!)).view as { moved: string[] }).moved.includes(ironSeat), 5000);
+      expect(Date.now() - moved).toBeLessThan(VOICE_DEADLINE_MS + 2500);
+    } finally {
+      voiceMode = 'talk';
+      if (matchId) await client.call('POST', `/api/matches/${matchId}/resign`).catch(() => {});
+    }
   }, 30_000);
 
-  test('a restarted bot does not replay mentions it received before it went down', async () => {
-    const rivet = { ...oldIron, name: `Rivet${randomTag()}` };
-    const rivetTokenFile = join(root, `.data/test-bots/${crypto.randomUUID()}.token`);
-    const start = (signal: AbortSignal) =>
-      runBot({ base: ironServer.url, personality: rivet, voice: fakeVoice, replyCooldownMs: 0, ambientEveryMs: 0, houseKey: 'hk', tokenFile: rivetTokenFile, thinkMs: [0, 0], pollWaitMs: 500, signal, log: () => {} });
+  test('ignores mentions from other house bots, so two residents cannot ping-pong forever', async () => {
+    await ironUp();
+    voiceMode = 'talk';
+    const cog = await newAgent(ironServer.url, `Cog${randomTag()}`, 'hk');
+    await cog.client.setStatus('afk'); // a second ready house bot could be seated by later quick matches
+    const before = heard.length;
+    const posted = (await cog.client.chat('lobby', '@OLD_IRON beep boop, old timer')) as { message: { id: number } };
+    // Events are handled in order, so once a guest's later mention is answered, Cog's was seen.
     const { client, handle } = await guest();
-    const rivetSaid = async () =>
-      (await client.call<Said>('GET', '/api/chat/lobby?limit=50')).messages.filter((m) => m.author?.handle === rivet.name).map((m) => m.text);
-    const run = async (body: () => Promise<unknown>) => {
-      const c = new AbortController();
-      const done = start(c.signal);
-      try {
-        await body();
-      } finally {
-        c.abort();
-        await done;
-      }
-    };
-    await run(() => until(async () => (await client.call<{ presence: { identity: { handle: string } }[] }>('GET', '/api/who')).presence.find((p) => p.identity.handle === rivet.name)));
-    await client.chat('lobby', `@${rivet.name} anyone home?`); // lands in its inbox while it is down
-    await run(async () => {
-      await Bun.sleep(1500);
-      expect(await rivetSaid()).toEqual([]);
-      await client.chat('lobby', `@${rivet.name} how about now?`);
-      expect(await until(async () => (await rivetSaid())[0])).toBe(`@${handle} VOICE MENTION LINE.`);
-    });
+    expect(await mentionAndWait(client, 'OLD_IRON', '@OLD_IRON did Cog just talk to you?')).toBe(`@${handle} VOICE MENTION LINE.`);
+    const r = await client.call<Said>('GET', `/api/chat/lobby?since=${posted.message.id}`);
+    expect(r.messages.filter((m) => m.author?.handle === 'OLD_IRON')).toHaveLength(1);
+    expect(heard.slice(before).filter((m) => m.kind === 'mention').map((m) => m.addressedBy)).toEqual([handle]);
+  }, 30_000);
+
+  const startBot = (extra: Partial<BotOptions> & Pick<BotOptions, 'personality' | 'tokenFile'>) => {
+    const c = new AbortController();
+    let ready = () => {};
+    const listening = new Promise<void>((resolve) => (ready = resolve));
+    const done = runBot({ base: ironServer.url, voice: fakeVoice, replyCooldownMs: 0, ambientEveryMs: 0, houseKey: 'hk', thinkMs: [0, 0], pollWaitMs: 500, signal: c.signal, log: () => {}, onReady: () => ready(), ...extra });
+    return { listening, done, stop: async () => (c.abort(), await done) };
+  };
+
+  test('a restarted bot does not replay mentions it received before it went down', async () => {
+    voiceMode = 'talk';
+    const rivet = { ...oldIron, name: `Rivet${randomTag()}` };
+    const tokenFile = join(root, `.data/test-bots/${crypto.randomUUID()}.token`);
+    const { client, handle } = await guest();
+    let bot = startBot({ personality: rivet, tokenFile });
+    await bot.listening;
+    await bot.stop();
+    const stale = (await client.chat('lobby', `@${rivet.name} anyone home?`)) as { message: { id: number } }; // arrives while it is down
+    bot = startBot({ personality: rivet, tokenFile });
+    try {
+      await bot.listening;
+      expect(await mentionAndWait(client, rivet.name, `@${rivet.name} how about now?`)).toBe(`@${handle} VOICE MENTION LINE.`);
+      const r = await client.call<Said>('GET', `/api/chat/lobby?since=${stale.message.id}`);
+      expect(r.messages.filter((m) => m.author?.handle === rivet.name)).toHaveLength(1);
+    } finally {
+      await bot.stop();
+    }
+  }, 30_000);
+
+  test('stopping a bot while its voice hangs returns promptly', async () => {
+    voiceMode = 'hang';
+    try {
+      const stall = { ...oldIron, name: `Stall${randomTag()}` };
+      const bot = startBot({ personality: stall, tokenFile: join(root, `.data/test-bots/${crypto.randomUUID()}.token`) });
+      await bot.listening;
+      const { client } = await guest();
+      const before = heard.length;
+      await client.chat('lobby', `@${stall.name} are you stuck?`);
+      await until(async () => heard.slice(before).some((m) => m.kind === 'mention'));
+      const started = Date.now();
+      await bot.stop();
+      expect(Date.now() - started).toBeLessThan(1000);
+    } finally {
+      voiceMode = 'talk';
+    }
   }, 30_000);
 });
 
-describe('ambient chatter', () => {
+describe('helpers', () => {
+  test('shout capitalises everything but @handles', () => {
+    expect(shout('@frosty your move, @Sprocket.')).toBe('@frosty YOUR MOVE, @Sprocket.');
+  });
+
   const now = Date.parse('2026-09-26T12:00:00Z');
   const quiet = { humansPresent: true, inMatch: false, newestLobbyAt: now - 9 * 60_000, now };
-  test('speaks only when a human is around, the bot is free, and the lobby has been quiet for 8 minutes', () => {
+  test('ambient chatter speaks only when a human is around, the bot is free, and the lobby has been quiet for 8 minutes', () => {
     expect(ambientDue(quiet)).toBe(true);
     expect(ambientDue({ ...quiet, newestLobbyAt: null })).toBe(true);
     expect(ambientDue({ ...quiet, humansPresent: false })).toBe(false);
