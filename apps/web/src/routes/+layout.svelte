@@ -38,7 +38,6 @@
 <svelte:head><title>{BRAND.name}</title></svelte:head>
 
 <UpdateBanner />
-{#if showLattice}<Lattice />{/if}
 <div class="shell" inert={gated}>
   <Nav />
   <main>
@@ -46,6 +45,8 @@
     {@render children()}
   </main>
 </div>
+<!-- After the page in the tab order; fixed to the corner (and clickable) all the same. -->
+{#if showLattice}<div inert={gated}><Lattice /></div>{/if}
 {#if gated}<HandleGate />{/if}
 
 <style>

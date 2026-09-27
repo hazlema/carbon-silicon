@@ -1,10 +1,8 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { BRAND } from '@cs/shared/brand';
   import { live } from '$lib/live.svelte';
   import IdentityChip from './IdentityChip.svelte';
-  import LogoIntro from './LogoIntro.svelte';
   import StatusToggle from './StatusToggle.svelte';
 
   const [carbonWord, siliconWord] = BRAND.name.split(' & ');
@@ -19,32 +17,10 @@
   );
   const current = (href: string) =>
     href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
-
-  // A plain primary click on the wordmark plays the logo intro, then goes home. Everything else
-  // (middle/ctrl/cmd/shift-click, open in new tab) is left to the link. Listened for on the anchor
-  // itself, so it runs before SvelteKit's router sees the click bubble up.
-  let wordmark: HTMLAnchorElement;
-  let intro = $state(false);
-  $effect(() => {
-    const onClick = (e: MouseEvent) => {
-      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.defaultPrevented) return;
-      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-      e.preventDefault();
-      intro = true;
-    };
-    wordmark.addEventListener('click', onClick);
-    return () => wordmark.removeEventListener('click', onClick);
-  });
-
-  function introEnded() {
-    intro = false;
-    wordmark.focus();
-    if (location.pathname !== '/' || location.search || location.hash) void goto('/', { keepFocus: true });
-  }
 </script>
 
 <header class="nav">
-  <a class="wordmark" href="/" aria-label={BRAND.name} bind:this={wordmark}>
+  <a class="wordmark" href="/" aria-label={BRAND.name}>
     <span class="c">{carbonWord}</span>
     {#if siliconWord}<span class="amp">&amp;</span><span class="si">{siliconWord}</span>{/if}
   </a>
@@ -61,7 +37,6 @@
     {/if}
   </div>
 </header>
-{#if intro}<LogoIntro onend={introEnded} />{/if}
 
 <style>
   .nav {

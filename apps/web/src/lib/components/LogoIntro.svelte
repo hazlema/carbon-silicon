@@ -4,6 +4,7 @@
    * the camera closes on their corner while the name builds above it. A port of the Foreman's
    * Claude Design mock; the motion is ../intro-timeline.ts, the sound ../intro-audio.ts.
    * Any click, Escape, Enter or Space ends it; `onend` fires once, however it ends.
+   * `still` (for reduced motion) shows the finished frame, silent, until it is dismissed.
    */
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
@@ -25,9 +26,10 @@
     type Cell,
   } from '$lib/intro-timeline';
 
-  let { onend }: { onend: () => void } = $props();
+  let { onend, still = false }: { onend: () => void; still?: boolean } = $props();
 
-  let T = $state(0);
+  // svelte-ignore state_referenced_locally
+  let T = $state(still ? INTRO_SECONDS : 0);
   const f = $derived(introFrame(T));
   // The table's fade-in is done early; pinning its clock lets the tiles stop re-rendering.
   const tableT = $derived(Math.min(T, TABLE_IN_END));
@@ -39,22 +41,23 @@
   const soundAtStart = loadSoundPref();
   let sound = $state(soundAtStart);
   let root: HTMLDivElement;
-  let soundButton: HTMLButtonElement;
-  const audio = new IntroSound(!soundAtStart);
+  let soundButton: HTMLButtonElement | undefined = $state();
+  // svelte-ignore state_referenced_locally
+  const audio = still ? null : new IntroSound(!soundAtStart);
   let done = false;
 
   function end() {
     if (done) return;
     done = true;
-    audio.close();
+    audio?.close();
     onend();
   }
 
   function toggleSound() {
     sound = !sound;
     saveSoundPref(sound);
-    audio.setMuted(!sound, T);
-    soundButton.focus();
+    audio?.setMuted(!sound, T);
+    soundButton?.focus();
   }
 
   function onKey(e: KeyboardEvent) {
@@ -62,7 +65,7 @@
     if (e.key === 'Tab') {
       // Two stops inside the dialog: the dialog itself and the sound button.
       e.preventDefault();
-      (document.activeElement === soundButton ? root : soundButton).focus();
+      (document.activeElement === soundButton || !soundButton ? root : soundButton).focus();
       return;
     }
     const onButton = e.target === soundButton;
@@ -82,8 +85,14 @@
     root.addEventListener('click', onClick);
     window.addEventListener('keydown', onKey);
 
+    if (still) {
+      return () => {
+        root.removeEventListener('click', onClick);
+        window.removeEventListener('keydown', onKey);
+      };
+    }
     const start = performance.now();
-    audio.play(0);
+    audio?.play(0);
     let raf = requestAnimationFrame(function tick() {
       T = Math.min(INTRO_SECONDS, (performance.now() - start) / 1000);
       if (T >= INTRO_SECONDS) end();
@@ -94,7 +103,7 @@
       cancelAnimationFrame(raf);
       root.removeEventListener('click', onClick);
       window.removeEventListener('keydown', onKey);
-      audio.close();
+      audio?.close();
     };
   });
 
@@ -208,7 +217,7 @@
     {/if}
   </div>
 
-  <button
+  {#if !still}<button
     bind:this={soundButton}
     type="button"
     class="sound"
@@ -225,7 +234,7 @@
         <path d="M16.5 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
       {/if}
     </svg>
-  </button>
+  </button>{/if}
 </div>
 
 {#snippet tile(cell: Cell, a: number)}

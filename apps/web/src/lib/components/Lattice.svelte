@@ -1,5 +1,12 @@
 <script lang="ts">
-  /** A corner of the periodic table: carbon sits directly above silicon, group 14. */
+  /**
+   * A corner of the periodic table: carbon sits directly above silicon, group 14. It is also the
+   * way into the logo intro, which ends by closing in on these very tiles. The intro never
+   * navigates, so playing it from a table doesn't pull anyone out of their match.
+   */
+  import { BRAND } from '@cs/shared/brand';
+  import LogoIntro from './LogoIntro.svelte';
+
   const tiles = [
     { n: 5, sym: 'B' },
     { n: 6, sym: 'C', el: 'c' },
@@ -8,16 +15,36 @@
     { n: 14, sym: 'Si', el: 'si' },
     { n: 15, sym: 'P' },
   ];
+
+  let button: HTMLButtonElement;
+  let intro = $state<'play' | 'still' | null>(null);
+
+  function open() {
+    intro = matchMedia('(prefers-reduced-motion: reduce)').matches ? 'still' : 'play';
+  }
+
+  function ended() {
+    intro = null;
+    button.focus();
+  }
 </script>
 
-<div class="lattice" aria-hidden="true">
+<button
+  bind:this={button}
+  type="button"
+  class="lattice"
+  aria-label="Play the {BRAND.name} intro"
+  title="Play the intro"
+  onclick={open}
+>
   {#each tiles as t}
-    <div class="tile {t.el ?? ''}">
+    <span class="tile {t.el ?? ''}" aria-hidden="true">
       <span class="n">{t.n}</span>
       <span class="sym">{t.sym}</span>
-    </div>
+    </span>
   {/each}
-</div>
+</button>
+{#if intro}<LogoIntro onend={ended} still={intro === 'still'} />{/if}
 
 <style>
   .lattice {
@@ -27,11 +54,37 @@
     display: grid;
     grid-template-columns: repeat(3, 4rem);
     gap: 0.4rem;
-    pointer-events: none;
-    z-index: 0;
+    /* Above the page shell, so it can be clicked; pages that show it keep this corner free. */
+    z-index: 2;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    border-radius: var(--r-tile);
+  }
+  .lattice:hover .tile,
+  .lattice:focus-visible .tile {
+    opacity: 1;
+  }
+  .lattice:hover .tile.c,
+  .lattice:focus-visible .tile.c {
+    box-shadow: 0 0 2rem color-mix(in oklab, var(--carbon) 45%, transparent);
+  }
+  .lattice:hover .tile.si,
+  .lattice:focus-visible .tile.si {
+    box-shadow: 0 0 2rem color-mix(in oklab, var(--silicon) 45%, transparent);
+  }
+  .lattice:focus-visible {
+    outline: 2px solid var(--chalk);
+    outline-offset: 4px;
   }
   .tile {
     height: 4rem;
+    text-align: left;
+    transition: opacity 150ms ease, box-shadow 150ms ease;
     display: grid;
     grid-template-rows: auto 1fr;
     padding: 0.35rem 0.45rem;
