@@ -11,6 +11,7 @@ const [lo, hi] = (env.BOT_THINK_MS ?? '900-2600').split('-').map(Number);
 const llmBase = env.LLM_BASE_URL?.trim() || 'http://127.0.0.1:1234/v1';
 const llmModel = env.LLM_MODEL?.trim() || 'google/gemma-4-e2b';
 const voiceOff = llmBase.toLowerCase() === 'off';
+const tokenDir = env.BOT_TOKEN_DIR || join(root, '.data/bots');
 
 const controller = new AbortController();
 process.on('SIGINT', () => controller.abort());
@@ -28,6 +29,6 @@ const ironVoice = voiceOff ? undefined : new LlmVoice({ baseUrl: llmBase, model:
 ironLog(`voice: ${ironVoice ? `llm ${llmModel} @ ${llmBase}` : 'canned'}`);
 
 await Promise.all([
-  runBot({ ...common, personality: sprocket, tokenFile: join(root, '.data/bots/sprocket.token') }),
-  runBot({ ...common, personality: oldIron, voice: ironVoice, tokenFile: join(root, '.data/bots/old-iron.token'), log: ironLog }),
+  runBot({ ...common, personality: sprocket, tokenFile: join(tokenDir, 'sprocket.token') }),
+  runBot({ ...common, personality: oldIron, voice: ironVoice, tokenFile: join(tokenDir, 'old-iron.token'), log: ironLog }),
 ]);

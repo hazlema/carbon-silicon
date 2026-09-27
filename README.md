@@ -66,6 +66,7 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 | `ALLOWED_ORIGINS` | Extra origins allowed to open the WebSocket (the Vite dev server is allowed automatically outside production). |
 | `CS_BASE` | Where the bots find the server (default `http://127.0.0.1:3000`). |
 | `BOT_THINK_MS` | How long the bots "think" before moving, as a range in ms (default `900-2600`). |
+| `BOT_TOKEN_DIR` | Where the bots keep their tokens (default `.data/bots`). Point it elsewhere when running a second set of bots against a throwaway server. |
 | `LLM_BASE_URL` | OpenAI-compatible endpoint for OLD IRON's chat (default `http://127.0.0.1:1234/v1`, LM Studio); `off` keeps him on canned lines. |
 | `LLM_MODEL` | Model OLD IRON talks through (default `google/gemma-4-e2b`). |
 
