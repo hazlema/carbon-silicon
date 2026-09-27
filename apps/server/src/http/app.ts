@@ -3,7 +3,9 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { seasonOf, type IdentityPublic, type MeResponse } from '@cs/shared/protocol';
 import type { Core } from '../core/core';
 import type { SessionMeta } from '../core/identity';
-import { AppError, badRequest, notFound, tooMany, unauthorized } from '../lib/errors';
+import { peopleFilterOf } from '../core/moderation';
+import { assertStaff, type Actor } from '../core/powers';
+import { AppError, badRequest, forbidden, notFound, tooMany, unauthorized } from '../lib/errors';
 import { RateLimiter } from '../lib/ratelimit';
 import { sessionLabel } from '../lib/ua';
 import { apiIndex } from './index-doc';
@@ -120,6 +122,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
 
   // ── identity ──
   app.post('/api/agents', async (c) => {
+    if (core.moderation.isIpBanned(clientIp(c))) throw forbidden('BANNED', 'New names are not accepted from your network.');
     if (!registrations.take(clientIp(c))) throw tooMany('SLOW_DOWN', 'Too many registrations from here. Try again later.');
     const b = await body(c);
     const result = await core.identities.registerAgent(b, c.req.header('x-house-key') ?? null);
@@ -129,6 +132,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   app.post('/api/session', async (c) => {
     const current = c.get('identity');
     if (current?.kind === 'human') return c.json({ identity: current }, 200);
+    if (core.moderation.isIpBanned(clientIp(c))) throw forbidden('BANNED', 'New names are not accepted from your network.');
     if (!sessions.take(clientIp(c))) throw tooMany('SLOW_DOWN', 'Too many new names from here. Try again later.');
     const b = await body(c);
     const { identity, key } = await core.identities.createHuman(b.handle, meta(c));
@@ -227,6 +231,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     const messages = await core.comms.history(c.req.param('channel'), {
       since: sinceRaw === undefined ? undefined : int(sinceRaw, 0, 0, MAX_CURSOR),
       limit: int(c.req.query('limit'), 50, 1, 200),
+      viewer: c.get('identity'),
     });
     return c.json({ messages });
   });
@@ -283,6 +288,127 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     const entry = core.diary.get(c.req.param('slug'));
     if (!entry) throw notFound('NO_ENTRY', 'No such diary entry.');
     return c.json({ entry });
+  });
+
+  // ── ignore, block and reports ──
+  const actorOf = (c: Context<AppEnv>): Actor => ({ kind: 'identity', identity: me(c) });
+  /** Read-only mod routes only need "is staff"; everything else is checked by the managers. */
+  const staffOf = (c: Context<AppEnv>): Actor => {
+    const actor = actorOf(c);
+    assertStaff(actor);
+    return actor;
+  };
+  const personId = async (handle: string): Promise<string> => {
+    const target = await core.identities.getByHandle(handle);
+    if (!target || target.released) throw notFound('NO_USER', `There is no @${handle}.`);
+    return target.id;
+  };
+
+  app.get('/api/me/relations', async (c) => c.json(await core.relations.list(me(c).id)));
+  for (const [path, kind] of [
+    ['ignores', 'ignore'],
+    ['blocks', 'block'],
+  ] as const) {
+    app.put(`/api/me/${path}/:handle`, async (c) => c.json(await core.relations.set(me(c), c.req.param('handle'), kind)));
+    app.delete(`/api/me/${path}/:handle`, async (c) => c.json(await core.relations.clear(me(c), c.req.param('handle'), kind)));
+  }
+  app.post('/api/report', async (c) => {
+    const who = me(c);
+    const b = await body(c);
+    return c.json({ report: await core.reports.create(who, b.messageId, b.reason) }, 201);
+  });
+
+  // ── moderation ──
+  app.get('/api/mod/reports', async (c) => {
+    staffOf(c);
+    const status = c.req.query('status') ?? 'open';
+    if (status !== 'open' && status !== 'resolved' && status !== 'all') {
+      throw badRequest('BAD_QUERY', 'status is "open", "resolved" or "all".');
+    }
+    return c.json({ reports: await core.reports.list(status, { resolvedBy: c.req.query('resolvedBy') || undefined }) });
+  });
+  app.post('/api/mod/reports/:id/resolve', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    return c.json({ report: await core.reports.resolve(actor, c.req.param('id'), b.resolution, b.reason, b.minutes) });
+  });
+  app.post('/api/mod/reports/:id/reopen', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    return c.json({ report: await core.reports.reopen(actor, c.req.param('id'), b.reason) });
+  });
+  app.post('/api/mod/reports/:id/notes', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    return c.json({ report: await core.reports.addNote(actor, c.req.param('id'), b.text) });
+  });
+  app.get('/api/mod/people', async (c) => {
+    staffOf(c);
+    return c.json({ people: await core.moderation.people(c.req.query('q') ?? '', peopleFilterOf(c.req.query('filter'))) });
+  });
+  app.get('/api/mod/people/:handle', async (c) => {
+    staffOf(c);
+    return c.json(await core.moderation.person(c.req.param('handle')));
+  });
+  app.post('/api/mod/people/:handle/mute', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    return c.json({ sanction: await core.moderation.mute(actor, await personId(c.req.param('handle')), b.reason, b.minutes) });
+  });
+  app.post('/api/mod/people/:handle/suspend', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    return c.json({ sanction: await core.moderation.suspend(actor, await personId(c.req.param('handle')), b.reason, b.minutes) });
+  });
+  app.post('/api/mod/people/:handle/lift', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    await core.moderation.lift(actor, await personId(c.req.param('handle')), b.reason);
+    return c.body(null, 204);
+  });
+  app.post('/api/mod/people/:handle/role', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    return c.json({ identity: await core.moderation.setRole(actor, await personId(c.req.param('handle')), b.role, b.reason) });
+  });
+  app.post('/api/mod/people/:handle/reset-password', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    return c.json({ code: await core.moderation.resetPassword(actor, await personId(c.req.param('handle')), b.reason) });
+  });
+  app.post('/api/mod/people/:handle/release', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    await core.moderation.release(actor, await personId(c.req.param('handle')), b.reason);
+    return c.body(null, 204);
+  });
+  app.delete('/api/mod/messages/:id', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    return c.json({ message: await core.moderation.deleteMessage(actor, Number(c.req.param('id')), b.reason) });
+  });
+  app.post('/api/mod/ip-bans', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    await core.moderation.banIp(actor, b.ip, b.reason);
+    return c.body(null, 204);
+  });
+  app.delete('/api/mod/ip-bans/:ip', async (c) => {
+    const actor = staffOf(c);
+    const b = await body(c);
+    await core.moderation.unbanIp(actor, c.req.param('ip'), b.reason);
+    return c.body(null, 204);
+  });
+  app.get('/api/mod/log', async (c) => {
+    staffOf(c);
+    const handle = c.req.query('handle');
+    const beforeRaw = c.req.query('before');
+    return c.json({
+      entries: await core.moderation.log({
+        before: beforeRaw === undefined ? undefined : int(beforeRaw, 0, 0, MAX_CURSOR),
+        targetId: handle ? await personId(handle) : undefined,
+      }),
+    });
   });
 
   return app;

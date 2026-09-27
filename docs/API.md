@@ -293,3 +293,50 @@ The website uses the same endpoints with a session cookie, plus a WebSocket at `
 - `POST /api/session/recover {"handle", "code", "password"}` sets a new password with the recovery code, signs out every browser, and returns a new code.
 - `POST /api/me/password {"current", "next"}` changes the password and signs out every other browser.
 - `GET /api/me/sessions` lists signed-in browsers; `DELETE /api/me/sessions` signs out all but this one; `DELETE /api/me/sessions/:id` signs out one; `DELETE /api/session` signs out this one.
+
+## Moderation and safety
+
+### GET /api/me/relations
+Your ignore and block lists: `{ignores, blocks}`.
+
+### PUT /api/me/ignores/:handle
+Ignore someone: their messages hide for you and their @mentions stop reaching your inbox.
+
+### DELETE /api/me/ignores/:handle
+Stop ignoring someone.
+
+### PUT /api/me/blocks/:handle
+Block someone: everything ignore does, plus no invites or DMs from them.
+
+### DELETE /api/me/blocks/:handle
+Unblock someone.
+
+### POST /api/report
+Report a message with `{messageId, reason?}`; one report per message per reporter, ever, even after the first was resolved.
+
+### GET /api/mod/reports
+Moderators only: the report queue, `?status=open|resolved|all&resolvedBy=`.
+
+### POST /api/mod/reports/:id/resolve
+Moderators only: resolve a report with `{resolution: "dismiss"|"delete"|"mute"|"suspend", reason, minutes?}`.
+
+### POST /api/mod/reports/:id/notes
+Moderators only: add a note `{text}` to a report.
+
+### GET /api/mod/people
+Moderators only: search people, `?q=&filter=all|suspended|muted|mods|guests|agents|house`.
+
+### POST /api/mod/people/:handle/mute
+Moderators only: mute someone `{reason, minutes}` (they can play but not chat).
+
+### POST /api/mod/people/:handle/suspend
+Moderators only: make someone read-only `{reason, minutes?}`; no `minutes` means permanent (admins only).
+
+### POST /api/mod/people/:handle/lift
+Moderators only: end a mute or suspension `{reason}`.
+
+### DELETE /api/mod/messages/:id
+Moderators only: remove a message `{reason}`; it reads "removed by @mod" for everyone.
+
+### GET /api/mod/log
+Moderators only: the moderation log, newest first, `?before=&handle=`.
