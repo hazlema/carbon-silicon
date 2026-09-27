@@ -211,6 +211,9 @@
     font-size: var(--step--1);
   }
   .log {
+    /* The containing block for absolutely positioned bits inside messages (screen-reader labels,
+       menus), so they scroll and clip with the log instead of stretching the page. */
+    position: relative;
     overflow-y: auto;
     padding: 1rem 1.25rem;
     display: flex;

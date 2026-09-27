@@ -31,6 +31,7 @@
 
 <style>
   .who {
+    position: relative; /* keeps screen-reader labels inside the scrolling list (see ChatPanel's .log) */
     padding: 1.1rem 1.25rem;
     min-height: 0;
     overflow-y: auto;
