@@ -3,6 +3,7 @@ import type { Clock } from '../lib/clock';
 import { conflict, forbidden } from '../lib/errors';
 import type { EventBus } from './bus';
 import type { GameManager } from './games';
+import type { Guard } from './guard';
 import type { PresenceManager } from './presence';
 
 interface QueueEntry {
@@ -21,6 +22,7 @@ export class InviteManager {
     private presence: PresenceManager,
     bus: EventBus,
     private clock: Clock,
+    private guard: Guard,
     private opts: { houseFallbackMs: number } = { houseFallbackMs: 8000 },
   ) {
     bus.on('presence.changed', (p) => {
@@ -29,6 +31,7 @@ export class InviteManager {
   }
 
   async quickMatch(identity: IdentityPublic, gameId: string): Promise<QuickMatchResult> {
+    this.guard.assert(identity, 'play');
     this.games.module(gameId);
     if (identity.isHouse) throw forbidden('HOUSE_WAITS', 'House bots are matched automatically.');
     if (this.games.activeMatchOf(identity.id)) throw conflict('IN_MATCH', 'Finish your current match first.');

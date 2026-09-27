@@ -16,6 +16,7 @@ import { AppError, badRequest, conflict, forbidden, notFound } from '../lib/erro
 import { newId } from '../lib/ids';
 import type { EventBus } from './bus';
 import type { CommunicationManager } from './communication';
+import type { Guard } from './guard';
 import type { PresenceManager } from './presence';
 
 export interface GameManagerOptions {
@@ -66,6 +67,7 @@ export class GameManager {
     private comms: CommunicationManager,
     private presence: PresenceManager,
     modules: GameModule<any>[],
+    private guard: Guard,
     opts: Partial<GameManagerOptions> = {},
   ) {
     this.modules = new Map(modules.map((m) => [m.meta.id, m]));
@@ -240,6 +242,7 @@ export class GameManager {
   }
 
   async move(matchId: string, identity: IdentityPublic, revision: unknown, command: unknown): Promise<MatchEnvelope> {
+    this.guard.assert(identity, 'play');
     const m = this.require(matchId);
     const seat = this.seatOf(m, identity.id);
     if (!seat) throw forbidden('NOT_SEATED', 'You are not playing in this match.');

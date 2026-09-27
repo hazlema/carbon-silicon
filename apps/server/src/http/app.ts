@@ -163,7 +163,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
       presence: core.presence.get(who.id),
       activeMatch: core.games.activeMatchOf(who.id),
       queued: core.invites.queuedFor(who.id),
-      sanction: null,
+      sanction: core.moderation.sanctionOf(who.id),
     };
     return c.json(out);
   });
@@ -184,10 +184,8 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     const b = await optionalBody(c);
     await core.accounts.deleteSelf(who, b.password); // guard and password come first: a refusal touches nothing
     // Only once deletion actually happens: leave the queue and resign any match in progress,
-    // exactly like a moderator's release (ModerationManager's benchNow does the same two calls).
-    core.invites.leave(who.id);
-    const matchId = core.games.activeMatchOf(who.id);
-    if (matchId) await core.games.resign(matchId, who).catch((e) => console.error('[app] resign on self-delete failed', e));
+    // exactly like a moderator's release (ModerationManager.bench does the same two calls).
+    await core.moderation.bench(who);
     deleteCookie(c, COOKIE, { path: '/' });
     return c.body(null, 204);
   });

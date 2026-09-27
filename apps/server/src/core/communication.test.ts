@@ -6,6 +6,7 @@ import type { AppError } from '../lib/errors';
 import { randomTag } from '../lib/testing';
 import { EventBus } from './bus';
 import { CommunicationManager } from './communication';
+import { Guard } from './guard';
 import { IdentityManager } from './identity';
 
 const database = await openDatabase('pglite:memory');
@@ -15,7 +16,7 @@ async function setup() {
   const clock = new FakeClock();
   const bus = new EventBus();
   const ids = new IdentityManager(database.db, clock, { houseKey: null });
-  const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS });
+  const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS, guard: new Guard() });
   const tag = randomTag();
   const ada = (await ids.createHuman(`ada${tag}`)).identity;
   const bob = (await ids.registerAgent({ name: `bob${tag}` }, null)).identity;

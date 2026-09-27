@@ -12,6 +12,7 @@ import { randomTag, waitFor } from '../lib/testing';
 import { EventBus } from './bus';
 import { CommunicationManager } from './communication';
 import { GameManager } from './games';
+import { Guard } from './guard';
 import { IdentityManager } from './identity';
 import { PresenceManager } from './presence';
 
@@ -22,9 +23,9 @@ async function setup() {
   const clock = new FakeClock();
   const bus = new EventBus();
   const ids = new IdentityManager(database.db, clock, { houseKey: null });
-  const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS });
+  const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS, guard: new Guard() });
   const presence = new PresenceManager(bus, clock);
-  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], {
+  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], new Guard(), {
     countdownMs: 3000,
     seed: () => 12345,
   });

@@ -14,6 +14,7 @@ import type { Clock } from '../lib/clock';
 import { badRequest, forbidden, notFound, tooMany } from '../lib/errors';
 import { RateLimiter } from '../lib/ratelimit';
 import type { EventBus } from './bus';
+import type { Guard } from './guard';
 import { toPublic, type IdentityManager } from './identity';
 
 const INBOX_SIZE = 500;
@@ -34,7 +35,7 @@ export class CommunicationManager {
     private bus: EventBus,
     private clock: Clock,
     private identities: IdentityManager,
-    private opts: { publicChannels: readonly string[] },
+    private opts: { publicChannels: readonly string[]; guard: Guard },
   ) {
     this.flood = new RateLimiter(clock, 5, 1 / 2000);
   }
@@ -53,6 +54,7 @@ export class CommunicationManager {
   async post(author: IdentityPublic, channel: string, rawText: unknown): Promise<ChatMessage> {
     const kind = this.channelKind(channel);
     if (!kind) throw notFound('NO_CHANNEL', `There is no channel "${channel}".`);
+    this.opts.guard.assert(author, 'chat');
     if (kind === 'diary' && author.role !== 'admin') throw forbidden('READ_ONLY', "#diary is the Proprietor's channel.");
     if (kind === 'table') {
       const table = this.tableAccess(channel.slice('match:'.length));

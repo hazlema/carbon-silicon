@@ -11,6 +11,7 @@ import { Guard } from './guard';
 import { IdentityManager } from './identity';
 import { InviteManager } from './invites';
 import { LeaderboardManager } from './leaderboard';
+import { ModerationManager } from './moderation';
 import { PresenceManager } from './presence';
 import { ProfileService } from './profiles';
 
@@ -38,6 +39,7 @@ export interface Core {
   comms: CommunicationManager;
   games: GameManager;
   invites: InviteManager;
+  moderation: ModerationManager;
   leaderboard: LeaderboardManager;
   diary: DiaryService;
   close(): Promise<void>;
@@ -52,14 +54,18 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const accounts = new AccountManager(database.db, clock, identities, guard);
   const profiles = new ProfileService(database.db, identities);
   const presence = new PresenceManager(bus, clock);
-  const comms = new CommunicationManager(database.db, bus, clock, identities, { publicChannels: PUBLIC_CHANNELS });
+  const comms = new CommunicationManager(database.db, bus, clock, identities, { publicChannels: PUBLIC_CHANNELS, guard });
   const gameOpts: Partial<GameManagerOptions> = {};
   if (opts.countdownMs !== undefined) gameOpts.countdownMs = opts.countdownMs;
   if (opts.seed) gameOpts.seed = opts.seed;
-  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], gameOpts);
-  const invites = new InviteManager(games, presence, bus, clock, { houseFallbackMs: opts.houseFallbackMs ?? 8000 });
+  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], guard, gameOpts);
+  const invites = new InviteManager(games, presence, bus, clock, guard, { houseFallbackMs: opts.houseFallbackMs ?? 8000 });
   const leaderboard = new LeaderboardManager(database.db);
   const diary = new DiaryService(opts.diaryDir);
+
+  const moderation = new ModerationManager(database.db, bus, clock, { identities, accounts, profiles, comms, games, invites });
+  guard.install((identity, action) => moderation.check(identity, action));
+  await moderation.load();
 
   const abandoned = await games.recoverOnBoot();
   if (abandoned > 0) console.log(`[core] marked ${abandoned} interrupted match(es) as abandoned`);
@@ -96,6 +102,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     comms,
     games,
     invites,
+    moderation,
     leaderboard,
     diary,
     close: async () => {
