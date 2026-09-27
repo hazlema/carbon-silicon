@@ -29,6 +29,8 @@
   --r-panel: 14px;
   --r-control: 10px;
   --nav-h: 3.75rem;
+  /* Space the right-hand column leaves for the element tiles in the corner (Lattice.svelte). */
+  --lattice-room: 9.25rem;
 
   color-scheme: dark;
 }
@@ -90,11 +92,19 @@ button {
   cursor: not-allowed;
 }
 .btn.primary {
+  background: var(--carbon);
+  border-color: var(--carbon);
+  color: var(--ink);
+}
+.btn.primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--carbon) 88%, white);
+}
+.btn.light {
   background: var(--chalk);
   border-color: var(--chalk);
   color: var(--ink);
 }
-.btn.primary:hover:not(:disabled) {
+.btn.light:hover:not(:disabled) {
   background: #ffffff;
 }
 .btn.quiet {

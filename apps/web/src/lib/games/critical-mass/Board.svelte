@@ -1,14 +1,16 @@
 <script lang="ts">
   import { cellIndex, neighbors, type CMBoardCell, type CMView } from '@cs/critical-mass';
-  import { seatColor } from '$lib/seats';
+  import { colorOf, type TableColors } from '$lib/seats';
   import { burstDuration, cellOrigin, layout, orbOffsets, rgba, waveSchedule } from './render';
 
   let {
     view,
+    colors,
     legal,
     interactive,
     onMove,
-  }: { view: CMView; legal: string[]; interactive: boolean; onMove: (cell: string) => void } = $props();
+  }: { view: CMView; colors: TableColors; legal: string[]; interactive: boolean; onMove: (cell: string) => void } = $props();
+  const seatColor = (seat: string | null | undefined) => colorOf(colors, seat);
 
   const WAVE_MS = 150;
   const BURST_MS = 420;
@@ -83,13 +85,22 @@
     view.board.forEach((b, i) => {
       const o = cellOrigin(l, i);
       const isLegal = interactive && legalSet.has(b.cell);
+      const owner = b.owner && b.orbs > 0 ? seatColor(b.owner) : null;
+      const critical = owner !== null && b.orbs >= b.critical - 1;
+      ctx.save();
       ctx.beginPath();
       ctx.roundRect(o.x + pad, o.y + pad, l.cell - 2 * pad, l.cell - 2 * pad, l.cell * 0.14);
-      ctx.fillStyle = isLegal && hover === i ? rgba(mine, 0.22) : b.owner ? rgba(seatColor(b.owner), 0.09) : 'rgba(255,255,255,0.025)';
+      ctx.fillStyle = isLegal && hover === i ? rgba(mine, 0.22) : owner ? rgba(owner, critical ? 0.14 : 0.09) : 'rgba(255,255,255,0.025)';
       ctx.fill();
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = isLegal ? rgba(mine, 0.4) : '#262a52';
+      // One orb from exploding: the cell lights up in its owner's colour.
+      if (critical) {
+        ctx.shadowColor = owner;
+        ctx.shadowBlur = l.cell * 0.22;
+      }
+      ctx.lineWidth = critical ? 1.5 : 1;
+      ctx.strokeStyle = critical ? rgba(owner, 0.75) : owner ? rgba(owner, 0.3) : isLegal ? rgba(mine, 0.16) : '#262a52';
       ctx.stroke();
+      ctx.restore();
     });
 
     view.board.forEach((b, i) => {
@@ -144,7 +155,7 @@
   });
   $effect(() => {
     if (!reduced) return;
-    void [view, size, hover, legalSet, interactive, canvas];
+    void [view, colors, size, hover, legalSet, interactive, canvas];
     draw(0);
   });
 

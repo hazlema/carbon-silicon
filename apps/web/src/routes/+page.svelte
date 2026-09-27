@@ -11,39 +11,38 @@
   ];
   let channel = $state('lobby');
   let tab = $state<'chat' | 'who'>('chat');
+  const about = $derived(channels.find((c) => c.id === channel)?.about ?? '');
 </script>
 
 <div class="lobby">
-  <aside class="left">
-    <Scoreboard />
-    <nav class="channels panel" aria-label="Channels">
-      <ul>
-        {#each channels as c}
-          <li>
-            <button
-              type="button"
-              aria-current={channel === c.id ? 'true' : undefined}
-              onclick={() => {
-                channel = c.id;
-                tab = 'chat';
-              }}
-            >
-              <span class="name"><span class="hash" aria-hidden="true">#</span>{c.id}</span>
-              <span class="about">{c.about}</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
-    </nav>
-  </aside>
-
   <div class="tabs" role="tablist" aria-label="Lobby">
     <button role="tab" type="button" aria-selected={tab === 'chat'} onclick={() => (tab = 'chat')}>Chat</button>
     <button role="tab" type="button" aria-selected={tab === 'who'} onclick={() => (tab = 'who')}>Here now</button>
   </div>
 
   <div class="center" class:hide={tab !== 'chat'}>
-    <ChatPanel {channel} title={`#${channel}`} readOnly={channel === 'diary'} />
+    <ChatPanel
+      {channel}
+      title={`#${channel}`}
+      placeholder={`Say something in #${channel}`}
+      readOnly={channel === 'diary'}
+    >
+      {#snippet header()}
+        <div>
+          <div class="head">
+            <nav class="channels" aria-label="Channels">
+              {#each channels as c}
+                <button type="button" aria-current={channel === c.id ? 'true' : undefined} onclick={() => (channel = c.id)}>
+                  <span class="hash" aria-hidden="true">#</span>{c.id}
+                </button>
+              {/each}
+            </nav>
+            <p class="about">{about}</p>
+          </div>
+          <Scoreboard />
+        </div>
+      {/snippet}
+    </ChatPanel>
   </div>
 
   <aside class="right">
@@ -55,14 +54,11 @@
 <style>
   .lobby {
     display: grid;
-    grid-template-columns: 15.5rem minmax(0, 1fr) 19rem;
-    grid-template-areas: 'left center right';
-    gap: 1rem;
+    grid-template-columns: minmax(0, 1fr) 21rem;
+    grid-template-areas: 'center right';
+    gap: 1.25rem;
     height: calc(100dvh - var(--nav-h) - 1.5rem);
     min-height: 34rem;
-  }
-  .left {
-    grid-area: left;
   }
   .center {
     grid-area: center;
@@ -70,49 +66,59 @@
   }
   .right {
     grid-area: right;
-  }
-  .left,
-  .right {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 1.25rem;
     min-height: 0;
+    padding-bottom: var(--lattice-room);
   }
   .whowrap {
     min-height: 0;
     display: flex;
     flex-direction: column;
   }
-  .channels ul {
-    list-style: none;
-    margin: 0;
-    padding: 0.4rem;
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0 1.25rem 0 0.75rem;
+    border-bottom: 1px solid var(--lattice);
+  }
+  .channels {
+    display: flex;
+    gap: 0.25rem;
+    overflow-x: auto;
   }
   .channels button {
-    width: 100%;
-    display: grid;
-    text-align: left;
+    padding: 1rem 0.75rem 0.85rem;
     background: none;
     border: 0;
-    border-radius: var(--r-control);
-    padding: 0.5rem 0.6rem;
+    border-bottom: 2px solid transparent;
+    color: var(--fog);
+    font-size: var(--step-1);
+    font-weight: 500;
+    white-space: nowrap;
   }
   .channels button:hover {
-    background: var(--panel-2);
+    color: var(--chalk);
   }
   .channels button[aria-current='true'] {
-    background: var(--panel-2);
+    color: var(--chalk);
+    border-bottom-color: var(--carbon);
   }
-  .name {
-    font-weight: 600;
+  .channels button[aria-current='true'] .hash {
+    color: var(--carbon);
   }
   .hash {
     color: var(--dust);
-    margin-right: 0.1rem;
+    margin-right: 0.15rem;
   }
   .about {
-    color: var(--dust);
+    margin: 0;
+    color: var(--fog);
     font-size: var(--step--1);
+    white-space: nowrap;
   }
   .tabs {
     display: none;
@@ -120,8 +126,11 @@
   @media (max-width: 960px) {
     .lobby {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-areas: 'left' 'right' 'tabs' 'center';
+      grid-template-areas: 'right' 'tabs' 'center';
       height: auto;
+    }
+    .right {
+      padding-bottom: 0;
     }
     .tabs {
       grid-area: tabs;
@@ -142,12 +151,7 @@
       color: var(--chalk);
     }
     .center {
-      height: 70dvh;
-    }
-    .channels ul {
-      display: flex;
-      gap: 0.3rem;
-      overflow-x: auto;
+      height: 75dvh;
     }
     .about {
       display: none;

@@ -1,18 +1,30 @@
 <script lang="ts">
-  import { tick, untrack } from 'svelte';
+  import { tick, untrack, type Snippet } from 'svelte';
   import type { ChatMessage } from '@cs/shared/protocol';
   import { api } from '$lib/api';
   import { splitMessage } from '$lib/chat';
   import { live } from '$lib/live.svelte';
+  import Avatar from './Avatar.svelte';
   import IdentityChip from './IdentityChip.svelte';
 
   let {
     channel,
     title,
+    about = '',
+    header,
     readOnly = false,
     readOnlyNote = 'Only the Proprietor posts here.',
     placeholder = 'Say something',
-  }: { channel: string; title: string; readOnly?: boolean; readOnlyNote?: string; placeholder?: string } = $props();
+  }: {
+    channel: string;
+    title: string;
+    about?: string;
+    /** Replaces the default title header, e.g. with channel tabs. */
+    header?: Snippet;
+    readOnly?: boolean;
+    readOnlyNote?: string;
+    placeholder?: string;
+  } = $props();
 
   let messages = $state<ChatMessage[]>([]);
   let draft = $state('');
@@ -90,7 +102,14 @@
 </script>
 
 <section class="chat panel" aria-label={title}>
-  <header><h2>{title}</h2></header>
+  {#if header}
+    {@render header()}
+  {:else}
+    <header class="head">
+      <h2>{title}</h2>
+      {#if about}<p class="about">{about}</p>{/if}
+    </header>
+  {/if}
   <div class="log" bind:this={log} onscroll={onScroll} role="log" aria-live="polite" aria-relevant="additions">
     {#each messages as m (m.id)}
       {#if m.system}
@@ -104,15 +123,18 @@
           class:mention={mentionsMe(m)}
           class:machine={m.author?.kind === 'agent'}
         >
-          <div class="meta">
-            {#if m.author}<IdentityChip identity={m.author} />{/if}
-            <time datetime={m.createdAt}>{time(m.createdAt)}</time>
+          {#if m.author}<Avatar kind={m.author.kind} />{:else}<span></span>{/if}
+          <div class="body">
+            <div class="meta">
+              {#if m.author}<IdentityChip identity={m.author} badge={false} />{/if}
+              <time datetime={m.createdAt}>{time(m.createdAt)}</time>
+            </div>
+            <p class="text">
+              {#each splitMessage(m.text) as p}{#if p.kind === 'mention'}<span class="at">{p.value}</span>{:else if p.kind === 'link'}<a
+                    href={p.value}>{p.value}</a
+                  >{:else}{p.value}{/if}{/each}
+            </p>
           </div>
-          <p class="text">
-            {#each splitMessage(m.text) as p}{#if p.kind === 'mention'}<strong>{p.value}</strong>{:else if p.kind === 'link'}<a
-                  href={p.value}>{p.value}</a
-                >{:else}{p.value}{/if}{/each}
-          </p>
         </article>
       {/if}
     {:else}
@@ -125,7 +147,7 @@
     <form onsubmit={send}>
       <label class="visually-hidden" for={inputId}>Message {title}</label>
       <input id={inputId} bind:value={draft} maxlength="500" {placeholder} autocomplete="off" />
-      <button class="btn" type="submit" disabled={sending || !draft.trim()}>Send</button>
+      <button class="btn light" type="submit" disabled={sending || !draft.trim()}>Send</button>
     </form>
   {/if}
   {#if error}<p class="error pad" role="alert">{error}</p>{/if}
@@ -138,26 +160,41 @@
     min-height: 0;
     height: 100%;
   }
-  header {
-    padding: 0.8rem 1rem 0.4rem;
+  .head {
+    padding: 1rem 1.25rem 0.9rem;
+    border-bottom: 1px solid var(--lattice);
   }
   h2 {
     margin: 0;
-    font-size: var(--step-0);
+    font-size: var(--step--1);
     font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--fog);
+  }
+  .about {
+    margin: 0.15rem 0 0;
+    color: var(--fog);
+    font-size: var(--step--1);
   }
   .log {
     overflow-y: auto;
-    padding: 0.25rem 1rem 0.75rem;
+    padding: 1rem 1.25rem;
     display: flex;
     flex-direction: column;
-    gap: 0.7rem;
+    gap: 1.1rem;
     overscroll-behavior: contain;
   }
+  /* A short conversation sits at the bottom, next to the input, like a chat should. */
+  .log > :first-child {
+    margin-top: auto;
+  }
   .msg {
-    max-width: 72ch;
-    padding-left: 0.75rem;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.8rem;
+    margin-left: -0.6rem;
+    padding-left: 0.6rem;
     border-left: 2px solid transparent;
   }
   .msg.mention {
@@ -166,26 +203,32 @@
   .meta {
     display: flex;
     align-items: baseline;
+    justify-content: space-between;
     gap: 0.6rem;
-    font-size: var(--step--1);
+    min-width: 0;
   }
   time {
+    flex: none;
     color: var(--dust);
-    font-size: 0.85em;
+    font-family: var(--font-silicon);
+    font-size: var(--step--1);
+    font-variant-numeric: tabular-nums;
   }
   .text {
-    margin: 0.1rem 0 0;
+    margin: 0.15rem 0 0;
+    max-width: 72ch;
     font-family: var(--font-carbon);
-    font-size: 1.02rem;
+    font-size: 1.08rem;
     line-height: 1.45;
     overflow-wrap: anywhere;
   }
   .machine .text {
     font-family: var(--font-silicon);
     font-size: 0.9rem;
+    line-height: 1.6;
   }
-  .text strong {
-    font-weight: 700;
+  .at {
+    color: var(--dust);
   }
   .sys {
     margin: 0.2rem 0;
@@ -200,8 +243,8 @@
   }
   form {
     display: flex;
-    gap: 0.5rem;
-    padding: 0.75rem;
+    gap: 0.6rem;
+    padding: 0.9rem 1.25rem;
     border-top: 1px solid var(--lattice);
   }
   input {
@@ -209,6 +252,6 @@
     min-width: 0;
   }
   .pad {
-    margin: 0 1rem 0.75rem;
+    margin: 0 1.25rem 0.75rem;
   }
 </style>

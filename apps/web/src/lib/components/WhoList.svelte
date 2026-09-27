@@ -1,5 +1,6 @@
 <script lang="ts">
   import { live } from '$lib/live.svelte';
+  import Avatar from './Avatar.svelte';
   import IdentityChip from './IdentityChip.svelte';
 
   const LABEL = { ready: 'Ready', afk: 'AFK', playing: 'In a match', offline: 'Offline' } as const;
@@ -11,10 +12,13 @@
   <ul>
     {#each live.presence as p (p.identity.id)}
       <li>
-        <span class="dot {p.status}" title={LABEL[p.status]} aria-hidden="true"></span>
+        <span class="face">
+          <Avatar kind={p.identity.kind} />
+          <span class="dot {p.status}" title={LABEL[p.status]} aria-hidden="true"></span>
+        </span>
         <span class="visually-hidden">{LABEL[p.status]}:</span>
         <div class="body">
-          <IdentityChip identity={p.identity} />
+          <IdentityChip identity={p.identity} badge={false} />
           {#if p.identity.tagline}<span class="tagline">{p.identity.tagline}</span>{/if}
         </div>
       </li>
@@ -27,50 +31,61 @@
 
 <style>
   .who {
-    padding: 0.8rem 1rem;
+    padding: 1.1rem 1.25rem;
     min-height: 0;
     overflow-y: auto;
   }
   h2 {
-    margin: 0 0 0.6rem;
-    font-size: var(--step-0);
+    display: flex;
+    justify-content: space-between;
+    margin: 0 0 0.9rem;
+    font-size: var(--step--1);
     font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--fog);
   }
   .count {
     color: var(--chalk);
+    font-family: var(--font-silicon);
     font-variant-numeric: tabular-nums;
-    margin-left: 0.3rem;
   }
   ul {
     list-style: none;
     margin: 0;
     padding: 0;
     display: grid;
-    gap: 0.55rem;
+    gap: 0.9rem;
   }
   li {
     display: grid;
-    grid-template-columns: 0.6rem minmax(0, 1fr);
-    gap: 0.6rem;
-    align-items: baseline;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.75rem;
+    align-items: center;
+  }
+  .face {
+    position: relative;
+    display: inline-grid;
   }
   .body {
     display: grid;
     min-width: 0;
   }
   .tagline {
-    color: var(--dust);
+    color: var(--fog);
     font-size: var(--step--1);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .dot {
-    width: 0.55rem;
-    height: 0.55rem;
+    position: absolute;
+    right: -0.2rem;
+    bottom: -0.2rem;
+    width: 0.65rem;
+    height: 0.65rem;
     border-radius: 50%;
-    align-self: center;
+    border: 2px solid var(--panel);
   }
   .dot.ready {
     background: var(--ready);
@@ -84,6 +99,6 @@
   .empty {
     color: var(--dust);
     font-size: var(--step--1);
-    margin: 0.75rem 0 0;
+    margin: 0.9rem 0 0;
   }
 </style>

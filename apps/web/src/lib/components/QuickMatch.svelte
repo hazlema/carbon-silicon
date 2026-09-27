@@ -43,7 +43,10 @@
 </script>
 
 <section class="play panel" aria-labelledby="play-title">
-  <h2 id="play-title">Play</h2>
+  <div class="eyebrow">
+    <h2 id="play-title">Play</h2>
+    {#if game}<span class="players">{game.minPlayers}–{game.maxPlayers} players</span>{/if}
+  </div>
   {#if games.length > 1}
     <label class="pick">Game
       <select bind:value={gameId}>
@@ -53,8 +56,7 @@
   {/if}
   {#if game}
     <h3>{game.name}</h3>
-    <p class="tagline">{game.tagline}</p>
-    <p class="facts">{game.mode === 'turn' ? 'Turn-based' : 'Real-time'}, {game.minPlayers}–{game.maxPlayers} players. <a href="/games">Rules</a></p>
+    <p class="tagline">{game.tagline} {game.mode === 'turn' ? 'Turn-based' : 'Real-time'}. <a href="/games">Rules</a></p>
   {/if}
   {#if live.activeMatch}
     <a class="btn primary" href="/play/{live.activeMatch}">Back to your table</a>
@@ -70,29 +72,47 @@
 
 <style>
   .play {
-    padding: 1rem;
+    padding: 1.1rem 1.25rem 1.25rem;
+  }
+  .eyebrow {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.5rem;
   }
   h2 {
-    margin: 0 0 0.6rem;
-    font-size: var(--step-0);
+    margin: 0;
+    font-size: var(--step--1);
     font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--fog);
+  }
+  .players {
+    color: var(--fog);
+    font-family: var(--font-silicon);
+    font-size: var(--step--1);
   }
   h3 {
     margin: 0;
     font-family: var(--font-carbon);
     font-weight: 600;
-    font-size: var(--step-2);
+    font-size: var(--step-3);
+    line-height: 1.1;
   }
   .tagline {
-    margin: 0.2rem 0 0.4rem;
+    margin: 0.5rem 0 1.1rem;
+    color: color-mix(in oklab, var(--chalk) 85%, var(--fog));
+    line-height: 1.6;
   }
-  .facts,
   .hint,
   .waiting {
     color: var(--fog);
     font-size: var(--step--1);
     margin: 0 0 0.9rem;
+  }
+  .btn + .hint {
+    margin: 0.7rem 0 0;
   }
   .pick {
     display: grid;
@@ -102,5 +122,6 @@
   }
   .btn {
     width: 100%;
+    padding: 0.8rem 1rem;
   }
 </style>

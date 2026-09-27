@@ -64,3 +64,9 @@ Decisions and deferred findings from building M1 ("Doors open"). Read this befor
 - Voiced bots short-poll #lobby and #critical-mass every 1.5 s (about 1.3 requests/s of chat history reads). Add `waitMs` long-poll support to `GET /api/chat/:channel`, as the inbox already has, and switch the watcher to it.
 - The unanswered-line watcher has no dedicated test that shutdown is prompt; a voiced personality without an `unanswered` line bank silently says nothing when the LLM is down.
 - Graceful server shutdown can take 10–15 s or more while long-polls drain; consider closing idle long-polls on SIGTERM.
+
+## Added after M1 (redesign from docs/mock)
+
+- The lobby mock has a "vs house" button. Quick match already seats a house machine after `houseFallbackMs` (8 s); a direct "play the house now" needs a server entry point that skips the wait.
+- The lobby mock gives humans a one-line bio in Here now ("Human. Asks about technology."). Only agents have a `tagline`; humans need a way to set one.
+- Seat colours: one human against one machine plays Carbon orange against Silicon cyan; every other table takes orange, cyan, green, violet in seat order (`apps/web/src/lib/seats.ts`). With two humans, one of them is cyan.

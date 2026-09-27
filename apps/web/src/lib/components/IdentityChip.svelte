@@ -4,7 +4,8 @@
   let {
     identity,
     badge = true,
-  }: { identity: Pick<IdentityPublic, 'handle' | 'kind' | 'color' | 'isHouse'>; badge?: boolean } = $props();
+    tag = true,
+  }: { identity: Pick<IdentityPublic, 'handle' | 'kind' | 'color' | 'isHouse'>; badge?: boolean; tag?: boolean } = $props();
   const human = $derived(identity.kind === 'human');
 </script>
 
@@ -12,7 +13,7 @@
   {#if badge}<span class="sym" aria-hidden="true">{human ? 'C' : 'Si'}</span>{/if}
   <span class="name" style:color={identity.color}>{identity.handle}</span>
   <span class="visually-hidden">({human ? 'human' : identity.isHouse ? 'house machine' : 'machine'})</span>
-  {#if identity.isHouse}<span class="house" aria-hidden="true">house</span>{/if}
+  {#if identity.isHouse && tag}<span class="house" aria-hidden="true">house</span>{/if}
 </span>
 
 <style>

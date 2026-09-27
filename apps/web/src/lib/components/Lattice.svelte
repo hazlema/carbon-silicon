@@ -1,66 +1,85 @@
 <script lang="ts">
-  const W = 40;
-  const GAP = 4;
-  const STEP = W + GAP;
-  type Cell = { x: number; y: number; el?: 'C' | 'Si' };
-
-  const cells: Cell[] = [];
-  const add = (period: number, group: number) =>
-    cells.push({
-      x: group - 1,
-      y: period - 1,
-      el: group === 14 && period === 2 ? 'C' : group === 14 && period === 3 ? 'Si' : undefined,
-    });
-  add(1, 1);
-  add(1, 18);
-  for (const period of [2, 3]) for (const group of [1, 2, 13, 14, 15, 16, 17, 18]) add(period, group);
-  for (const period of [4, 5, 6, 7]) for (let group = 1; group <= 18; group++) add(period, group);
-  for (const y of [7.5, 8.5]) for (let group = 3; group <= 17; group++) cells.push({ x: group - 1, y });
+  /** A corner of the periodic table: carbon sits directly above silicon, group 14. */
+  const tiles = [
+    { n: 5, sym: 'B' },
+    { n: 6, sym: 'C', el: 'c' },
+    { n: 7, sym: 'N' },
+    { n: 13, sym: 'Al' },
+    { n: 14, sym: 'Si', el: 'si' },
+    { n: 15, sym: 'P' },
+  ];
 </script>
 
-<svg class="lattice" viewBox="0 0 {18 * STEP} {9.5 * STEP}" aria-hidden="true" focusable="false">
-  {#each cells as cell}
-    <rect x={cell.x * STEP} y={cell.y * STEP} width={W} height={W} rx="4" class={cell.el ?? ''} />
-    {#if cell.el}
-      <text x={cell.x * STEP + W / 2} y={cell.y * STEP + W / 2 + 6} text-anchor="middle" class="sym {cell.el}">{cell.el}</text>
-    {/if}
+<div class="lattice" aria-hidden="true">
+  {#each tiles as t}
+    <div class="tile {t.el ?? ''}">
+      <span class="n">{t.n}</span>
+      <span class="sym">{t.sym}</span>
+    </div>
   {/each}
-</svg>
+</div>
 
 <style>
   .lattice {
     position: fixed;
-    right: -3vw;
-    bottom: -4vh;
-    width: min(1100px, 110vw);
-    opacity: 0.55;
+    right: clamp(0.75rem, 2vw, 1.5rem);
+    bottom: 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(3, 4rem);
+    gap: 0.4rem;
     pointer-events: none;
     z-index: 0;
   }
-  rect {
-    fill: none;
-    stroke: var(--lattice);
-    stroke-width: 1;
+  .tile {
+    height: 4rem;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    padding: 0.35rem 0.45rem;
+    border: 1px solid var(--lattice);
+    border-radius: var(--r-tile);
+    color: var(--dust);
+    opacity: 0.7;
   }
-  rect.C {
-    stroke: var(--carbon);
-    fill: color-mix(in oklab, var(--carbon) 10%, transparent);
-  }
-  rect.Si {
-    stroke: var(--silicon);
-    fill: color-mix(in oklab, var(--silicon) 10%, transparent);
+  .n {
+    font-family: var(--font-silicon);
+    font-size: 0.65rem;
   }
   .sym {
-    font-size: 17px;
-    font-weight: 600;
+    align-self: end;
+    font-family: var(--font-silicon);
+    font-size: var(--step-1);
+    line-height: 1;
   }
-  .sym.C {
-    fill: var(--carbon);
+  .tile.c,
+  .tile.si {
+    opacity: 1;
+  }
+  .tile.c {
+    color: var(--carbon);
+    border-color: var(--carbon);
+    background: color-mix(in oklab, var(--carbon) 8%, transparent);
+    box-shadow: 0 0 1.4rem color-mix(in oklab, var(--carbon) 25%, transparent);
+  }
+  .tile.c .sym {
     font-family: var(--font-carbon);
     font-style: italic;
+    font-weight: 600;
+    font-size: var(--step-2);
   }
-  .sym.Si {
-    fill: var(--silicon);
-    font-family: var(--font-silicon);
+  .tile.si {
+    color: var(--silicon);
+    border-color: var(--silicon);
+    background: color-mix(in oklab, var(--silicon) 8%, transparent);
+    box-shadow: 0 0 1.4rem color-mix(in oklab, var(--silicon) 25%, transparent);
+  }
+  .tile.si .sym {
+    font-weight: 600;
+    font-size: var(--step-2);
+  }
+  /* On narrow screens the page scrolls and the corner would sit on top of content. */
+  @media (max-width: 960px) {
+    .lattice {
+      display: none;
+    }
   }
 </style>
