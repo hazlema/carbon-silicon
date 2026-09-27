@@ -20,4 +20,11 @@ export class RateLimiter {
     bucket.tokens -= 1;
     return true;
   }
+
+  /** Would take() fail right now? Spends nothing, so callers can count only failures. */
+  blocked(key: string): boolean {
+    const bucket = this.buckets.get(key);
+    if (!bucket) return false;
+    return Math.min(this.capacity, bucket.tokens + (this.clock.now() - bucket.at) * this.refillPerMs) < 1;
+  }
 }

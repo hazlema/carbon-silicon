@@ -1,12 +1,14 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { seasonOf, type IdentityPublic } from '@cs/shared/protocol';
+import { seasonOf, type IdentityPublic, type MeResponse } from '@cs/shared/protocol';
 import type { Core } from '../core/core';
+import type { SessionMeta } from '../core/identity';
 import { AppError, badRequest, notFound, tooMany, unauthorized } from '../lib/errors';
 import { RateLimiter } from '../lib/ratelimit';
+import { sessionLabel } from '../lib/ua';
 import { apiIndex } from './index-doc';
 
-export type AppEnv = { Bindings: { ip?: string }; Variables: { identity: IdentityPublic | null } };
+export type AppEnv = { Bindings: { ip?: string }; Variables: { identity: IdentityPublic | null; sessionId: string | null } };
 export interface AppOptions {
   apiDocs: string;
   llmsTxt: string;
@@ -20,6 +22,9 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   const registrations = new RateLimiter(core.clock, 5, 5 / 3_600_000);
   const sessions = new RateLimiter(core.clock, 10, 10 / 3_600_000);
+  // Failed sign-ins and recoveries only: 5 per handle and 20 per IP per 15 minutes.
+  const loginsByHandle = new RateLimiter(core.clock, 5, 5 / 900_000);
+  const loginsByIp = new RateLimiter(core.clock, 20, 20 / 900_000);
 
   app.onError((err, c) => {
     if (err instanceof AppError) return c.json({ error: { code: err.code, message: err.message } }, err.status);
@@ -30,10 +35,16 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     c.json({ error: { code: 'NOT_FOUND', message: `No route ${c.req.method} ${c.req.path}. Try GET /api.` } }, 404),
   );
 
+  const clientIp = (c: Context<AppEnv>) =>
+    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || c.env?.ip || 'local';
+
   app.use('*', async (c, next) => {
     const bearer = c.req.header('authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1];
-    const identity = await core.identities.authenticate(bearer ?? getCookie(c, COOKIE));
+    const auth = await core.identities.authenticateSession(bearer ?? getCookie(c, COOKIE));
+    const identity = auth?.identity ?? null;
     c.set('identity', identity);
+    c.set('sessionId', auth?.sessionId ?? null);
+    if (auth) core.identities.touch(auth.identity.id, clientIp(c), auth.sessionId);
     if (identity?.kind === 'agent') core.presence.agentSeen(identity);
     else if (identity && c.req.method !== 'GET') core.presence.humanActivity(identity.id);
     await next();
@@ -56,14 +67,41 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw badRequest('BAD_JSON', 'The body must be a JSON object.');
     return data as Record<string, unknown>;
   };
+  /** For DELETE requests, whose body is optional. */
+  const optionalBody = async (c: Context<AppEnv>): Promise<Record<string, unknown>> =>
+    c.req.header('content-type')?.includes('application/json') ? body(c) : {};
   const int = (raw: string | undefined, fallback: number, min: number, max: number): number => {
     if (raw === undefined || raw === '') return fallback;
     const n = Number(raw);
     if (!Number.isFinite(n)) throw badRequest('BAD_QUERY', `"${raw}" is not a number.`);
     return Math.min(max, Math.max(min, Math.floor(n)));
   };
-  const clientIp = (c: Context<AppEnv>) =>
-    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || c.env?.ip || 'local';
+  const meta = (c: Context<AppEnv>): SessionMeta => ({ label: sessionLabel(c.req.header('user-agent')), ip: clientIp(c) });
+  const setSessionCookie = (c: Context<AppEnv>, key: string) =>
+    setCookie(c, COOKIE, key, {
+      httpOnly: true,
+      sameSite: 'Lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 365,
+      secure: opts.secureCookies ?? false,
+    });
+  /** Runs a sign-in attempt under the failure limits; only a wrong password or code spends a token. */
+  const limitedSignIn = async <T>(c: Context<AppEnv>, handle: unknown, attempt: () => Promise<T>): Promise<T> => {
+    const ip = clientIp(c);
+    const who = typeof handle === 'string' ? handle.trim().toLowerCase() : '';
+    if (loginsByIp.blocked(ip) || loginsByHandle.blocked(who)) {
+      throw tooMany('SLOW_DOWN', 'Too many sign-in attempts. Try again in a few minutes.');
+    }
+    try {
+      return await attempt();
+    } catch (e) {
+      if (e instanceof AppError && (e.code === 'BAD_PASSWORD' || e.code === 'BAD_CODE')) {
+        loginsByIp.take(ip);
+        loginsByHandle.take(who);
+      }
+      throw e;
+    }
+  };
 
   // ── discovery ──
   app.get('/api', (c) => c.json(apiIndex(core)));
@@ -83,31 +121,44 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     if (current?.kind === 'human') return c.json({ identity: current }, 200);
     if (!sessions.take(clientIp(c))) throw tooMany('SLOW_DOWN', 'Too many new names from here. Try again later.');
     const b = await body(c);
-    const { identity, key } = await core.identities.createHuman(b.handle);
-    setCookie(c, COOKIE, key, {
-      httpOnly: true,
-      sameSite: 'Lax',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 365,
-      secure: opts.secureCookies ?? false,
-    });
+    const { identity, key } = await core.identities.createHuman(b.handle, meta(c));
+    setSessionCookie(c, key);
     return c.json({ identity }, 201);
   });
-  app.delete('/api/session', (c) => {
+  app.post('/api/session/login', async (c) => {
+    const b = await body(c);
+    const { identity, key } = await limitedSignIn(c, b.handle, () => core.accounts.login(b.handle, b.password, meta(c)));
+    setSessionCookie(c, key);
+    return c.json({ identity });
+  });
+  app.post('/api/session/recover', async (c) => {
+    const b = await body(c);
+    const { identity, key, recoveryCode } = await limitedSignIn(c, b.handle, () =>
+      core.accounts.recover(b.handle, b.code, b.password, meta(c)),
+    );
+    setSessionCookie(c, key);
+    return c.json({ identity, recoveryCode });
+  });
+  app.delete('/api/session', async (c) => {
+    const who = c.get('identity');
+    const sessionId = c.get('sessionId');
+    if (who && sessionId) await core.accounts.revokeSession(who.id, sessionId);
     deleteCookie(c, COOKIE, { path: '/' });
     return c.body(null, 204);
   });
   app.get('/api/me', (c) => {
     const who = me(c);
-    return c.json({
+    const out: MeResponse = {
       identity: who,
       presence: core.presence.get(who.id),
       activeMatch: core.games.activeMatchOf(who.id),
       queued: core.invites.queuedFor(who.id),
-    });
+      sanction: null,
+    };
+    return c.json(out);
   });
   app.patch('/api/me', async (c) => {
-    const who = me(c);
+    let who = me(c);
     const b = await body(c);
     if (b.status !== undefined) {
       if (b.status !== 'ready' && b.status !== 'afk') {
@@ -115,8 +166,45 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
       }
       core.presence.setManualStatus(who, b.status);
     }
-    return c.json({ presence: core.presence.get(who.id) });
+    if (b.tagline !== undefined) who = await core.accounts.setBio(who, b.tagline);
+    return c.json({ identity: who, presence: core.presence.get(who.id) });
   });
+  app.delete('/api/me', async (c) => {
+    const who = me(c);
+    const b = await optionalBody(c);
+    await core.accounts.deleteSelf(who, b.password); // guard and password come first: a refusal touches nothing
+    // Only once deletion actually happens: leave the queue and resign any match in progress,
+    // exactly like a moderator's release (ModerationManager's benchNow does the same two calls).
+    core.invites.leave(who.id);
+    const matchId = core.games.activeMatchOf(who.id);
+    if (matchId) await core.games.resign(matchId, who).catch((e) => console.error('[app] resign on self-delete failed', e));
+    deleteCookie(c, COOKIE, { path: '/' });
+    return c.body(null, 204);
+  });
+  app.post('/api/me/lock', async (c) => {
+    const b = await body(c);
+    return c.json(await core.accounts.lock(me(c), b.password));
+  });
+  app.post('/api/me/password', async (c) => {
+    const who = me(c);
+    const b = await body(c);
+    await core.accounts.changePassword(who, b.current, b.next, c.get('sessionId'));
+    return c.body(null, 204);
+  });
+  app.get('/api/me/sessions', async (c) => {
+    const who = me(c);
+    return c.json({ sessions: await core.accounts.sessions(who.id, c.get('sessionId')) });
+  });
+  app.delete('/api/me/sessions', async (c) => {
+    const who = me(c);
+    return c.json({ revoked: await core.accounts.revokeOthers(who.id, c.get('sessionId')) });
+  });
+  app.delete('/api/me/sessions/:id', async (c) => {
+    const who = me(c);
+    if (!(await core.accounts.revokeSession(who.id, c.req.param('id')))) throw notFound('NO_SESSION', 'No such session.');
+    return c.body(null, 204);
+  });
+  app.get('/api/users/:handle', async (c) => c.json(await core.profiles.profile(c.req.param('handle'))));
   app.get('/api/who', (c) => c.json({ presence: core.presence.list() }));
 
   // ── inbox and chat ──

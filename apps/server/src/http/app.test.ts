@@ -37,6 +37,19 @@ async function agent(prefix = 'bot') {
   return { token: r.data.token as string, id: r.data.identity.id as string, handle: r.data.identity.handle as string };
 }
 
+const cookieOf = (r: { headers: Headers }) => (r.headers.get('set-cookie') ?? '').split(';')[0];
+const PW = 'correct horse battery';
+
+/** A human with a locked name, signed in from one browser. */
+async function lockedHuman(prefix = 'acct') {
+  const handle = `${prefix}${tag()}`;
+  const joined = await call('POST', '/api/session', { body: { handle } });
+  const cookie = cookieOf(joined);
+  const locked = await call('POST', '/api/me/lock', { cookie, body: { password: PW } });
+  expect(locked.status).toBe(200);
+  return { handle, cookie, id: joined.data.identity.id as string, recoveryCode: locked.data.recoveryCode as string };
+}
+
 describe('discovery', () => {
   test('GET /api describes the door', async () => {
     const r = await call('GET', '/api');
@@ -161,6 +174,100 @@ describe('human auto-AFK', () => {
     } finally {
       await afkCore.close();
     }
+  });
+});
+
+describe('accounts over HTTP', () => {
+  test('lock a name, sign in from a second browser, see both, sign the other out', async () => {
+    const { handle, cookie: first, id, recoveryCode } = await lockedHuman();
+    expect(recoveryCode).toMatch(/^csr_/);
+    expect((await call('GET', '/api/me', { cookie: first })).data.identity.locked).toBe(true);
+    const login = await call('POST', '/api/session/login', { body: { handle: ` ${handle.toUpperCase()} `, password: PW } });
+    expect(login.status).toBe(200);
+    expect(login.data.identity.id).toBe(id);
+    const second = cookieOf(login);
+    expect(second).toContain('cs_key=csk_');
+    const listed = await call('GET', '/api/me/sessions', { cookie: second });
+    expect(listed.data.sessions).toHaveLength(2);
+    expect(listed.data.sessions.filter((s: { current: boolean }) => s.current)).toHaveLength(1);
+    expect((await call('DELETE', '/api/me/sessions', { cookie: second })).data).toEqual({ revoked: 1 });
+    expect((await call('GET', '/api/me', { cookie: first })).status).toBe(401);
+    expect((await call('GET', '/api/me', { cookie: second })).status).toBe(200);
+  });
+  test('GET /api/me carries the sanction slot', async () => {
+    const { cookie } = await lockedHuman('me');
+    const me = await call('GET', '/api/me', { cookie });
+    expect(Object.keys(me.data).sort()).toEqual(['activeMatch', 'identity', 'presence', 'queued', 'sanction']);
+    expect(me.data.sanction).toBeNull();
+  });
+  test('changing the password keeps this browser and signs out the rest', async () => {
+    const { handle, cookie: first } = await lockedHuman('pw');
+    const second = cookieOf(await call('POST', '/api/session/login', { body: { handle, password: PW } }));
+    await call('GET', '/api/me', { cookie: second }); // warm the auth cache
+    const wrong = await call('POST', '/api/me/password', { cookie: first, body: { current: 'nope nope nope', next: 'a whole new one' } });
+    expect([wrong.status, wrong.data.error.code]).toEqual([401, 'BAD_PASSWORD']);
+    expect((await call('POST', '/api/me/password', { cookie: first, body: { current: PW, next: 'a whole new one' } })).status).toBe(204);
+    expect((await call('GET', '/api/me', { cookie: first })).status).toBe(200);
+    expect((await call('GET', '/api/me', { cookie: second })).status).toBe(401);
+    expect((await call('POST', '/api/session/login', { body: { handle, password: 'a whole new one' } })).status).toBe(200);
+  });
+  test('the recovery code gets a player back in and signs every old browser out', async () => {
+    const { handle, cookie, recoveryCode } = await lockedHuman('lost');
+    const r = await call('POST', '/api/session/recover', { body: { handle, code: recoveryCode, password: 'found it again' } });
+    expect(r.status).toBe(200);
+    expect(r.data.recoveryCode).toMatch(/^csr_/);
+    expect((await call('GET', '/api/me', { cookie })).status).toBe(401);
+    expect((await call('GET', '/api/me', { cookie: cookieOf(r) })).status).toBe(200);
+    const again = await call('POST', '/api/session/recover', { body: { handle, code: recoveryCode, password: 'found it twice' } });
+    expect([again.status, again.data.error.code]).toEqual([401, 'BAD_CODE']);
+  });
+  test('failed sign-ins are limited per handle and per IP; successes do not count', async () => {
+    const { handle } = await lockedHuman('limit');
+    for (let i = 0; i < 3; i++) expect((await call('POST', '/api/session/login', { body: { handle, password: PW } })).status).toBe(200);
+    for (let i = 0; i < 5; i++) expect((await call('POST', '/api/session/login', { body: { handle, password: 'wrong wrong wrong' } })).status).toBe(401);
+    const locked = await call('POST', '/api/session/login', { body: { handle, password: PW } });
+    expect([locked.status, locked.data.error.code]).toEqual([429, 'SLOW_DOWN']);
+
+    const ip = '192.168.44.44';
+    for (let i = 0; i < 20; i++) {
+      expect((await call('POST', '/api/session/login', { ip, body: { handle: `ghost${tag()}`, password: PW } })).status).toBe(401);
+    }
+    expect((await call('POST', '/api/session/login', { ip, body: { handle: `ghost${tag()}`, password: PW } })).status).toBe(429);
+  });
+  test('signing out revokes this browser only', async () => {
+    const { handle, cookie: first } = await lockedHuman('out');
+    const second = cookieOf(await call('POST', '/api/session/login', { body: { handle, password: PW } }));
+    const out = await call('DELETE', '/api/session', { cookie: first });
+    expect(out.status).toBe(204);
+    expect(out.headers.get('set-cookie')).toContain('cs_key=;');
+    expect((await call('GET', '/api/me', { cookie: first })).status).toBe(401);
+    expect((await call('GET', '/api/me', { cookie: second })).status).toBe(200);
+  });
+});
+
+describe('profiles over HTTP', () => {
+  test('set a bio and read the profile; unknown names are 404', async () => {
+    const { handle, cookie } = await lockedHuman('bio');
+    const patched = await call('PATCH', '/api/me', { cookie, body: { tagline: 'Human. Asks about technology.' } });
+    expect(patched.data.identity.tagline).toBe('Human. Asks about technology.');
+    const p = await call('GET', `/api/users/${handle}`);
+    expect(p.status).toBe(200);
+    expect(p.data).toMatchObject({ identity: { handle, tagline: 'Human. Asks about technology.', locked: true }, matches: [] });
+    const missing = await call('GET', '/api/users/nobody-at-all');
+    expect([missing.status, missing.data.error.code]).toEqual([404, 'NO_USER']);
+  });
+  test('a guest deletes their account; the name is free again', async () => {
+    const handle = `short${tag()}`;
+    const cookie = cookieOf(await call('POST', '/api/session', { body: { handle } }));
+    expect((await call('DELETE', '/api/me', { cookie })).status).toBe(204);
+    expect((await call('GET', '/api/me', { cookie })).status).toBe(401);
+    expect((await call('POST', '/api/session', { body: { handle } })).status).toBe(201);
+  });
+  test('a locked name needs its password to delete', async () => {
+    const { cookie } = await lockedHuman('keep');
+    const refused = await call('DELETE', '/api/me', { cookie, body: { password: 'not the password' } });
+    expect([refused.status, refused.data.error.code]).toEqual([401, 'BAD_PASSWORD']);
+    expect((await call('DELETE', '/api/me', { cookie, body: { password: PW } })).status).toBe(204);
   });
 });
 

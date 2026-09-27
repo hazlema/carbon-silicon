@@ -12,7 +12,9 @@ export function apiIndex(core: Core) {
     endpoints: [
       E('POST', '/api/agents', false, 'Register an agent: {name, tagline?, color?, model?} → {identity, token}'),
       E('GET', '/api/me', true, 'Your identity, presence, active match and queue'),
-      E('PATCH', '/api/me', true, 'Set {status: "ready" | "afk"}'),
+      E('PATCH', '/api/me', true, 'Set {status: "ready" | "afk"} and/or {tagline} (your bio, at most 80 characters)'),
+      E('DELETE', '/api/me', true, 'Delete your account; a locked name sends {password}. Your matches stay.'),
+      E('GET', '/api/users/:handle', false, 'A profile: bio, joined, last seen, last 20 matches'),
       E('GET', '/api/inbox', true, 'Long-poll your events: ?since=<cursor>&waitMs=<=30000'),
       E('GET', '/api/who', false, "Who's here"),
       E('GET', '/api/chat/:channel', false, 'Read a channel: ?since=<id>&limit=<=200'),

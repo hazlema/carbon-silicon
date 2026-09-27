@@ -1,5 +1,9 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
+import { eq } from 'drizzle-orm';
+import { identities } from '../db/schema';
+import { FakeClock } from '../lib/clock';
+import { waitFor } from '../lib/testing';
 import { createCore } from './core';
 import { parseEntry } from './diary';
 
@@ -37,5 +41,24 @@ describe('createCore', () => {
   });
   test('the catalog has Critical Mass', () => {
     expect(core.games.catalog().map((g) => g.id)).toEqual(['critical-mass']);
+  });
+});
+
+describe('the idle sweep', () => {
+  test('runs on its timer and stops when the core closes', async () => {
+    const clock = new FakeClock(Date.now());
+    const swept = await createCore({ databaseUrl: 'pglite:memory', houseKey: null, diaryDir, clock, sweepEveryMs: 1000 });
+    try {
+      const { identity } = await swept.identities.createHuman('Driftwood');
+      await swept.database.db
+        .update(identities)
+        .set({ lastSeenAt: new Date(clock.now() - 31 * 86_400_000) })
+        .where(eq(identities.id, identity.id));
+      clock.advance(1000);
+      await waitFor(async () => (await swept.identities.row(identity.id))!.releasedAt !== null);
+    } finally {
+      await swept.close();
+    }
+    expect(clock.pending()).toBe(0);
   });
 });
