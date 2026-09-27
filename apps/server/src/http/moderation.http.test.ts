@@ -109,7 +109,7 @@ describe('the mod door', () => {
 
   test('a suspended account is read-only across the HTTP door (S231-235)', async () => {
     const mod = await makeStaff('mod');
-    const bob = await signUp('bob');
+    const bob = await lockedPlayer('bob');
     const bot = (await core.identities.registerAgent({ name: `bot${randomTag()}` }, null)).identity;
     const line = await core.comms.post(mod.identity, 'lobby', 'a line to report');
     const suspend = await call('POST', `/api/mod/people/${bob.identity.handle}/suspend`, { cookie: mod.cookie, body: { reason: 'cool off', minutes: 60 } });
@@ -132,6 +132,14 @@ describe('the mod door', () => {
     // still allowed while suspended: resigning and reading
     expect((await call('POST', `/api/matches/${match.id}/resign`, { cookie: bob.cookie })).status).toBe(200);
     expect((await call('GET', '/api/me', { cookie: bob.cookie })).data.sanction).toMatchObject({ kind: 'suspend' });
+
+    // still allowed while suspended: changing your password...
+    expect(
+      (await call('POST', '/api/me/password', { cookie: bob.cookie, body: { current: 'correct horse battery', next: 'a new secure password' } })).status,
+    ).toBe(204);
+    // ...and signing out, which then invalidates that very cookie
+    expect((await call('DELETE', '/api/session', { cookie: bob.cookie })).status).toBe(204);
+    expect((await call('GET', '/api/me', { cookie: bob.cookie })).status).toBe(401);
   });
 
   test('admins manage roles, passwords, releases and IP bans', async () => {
