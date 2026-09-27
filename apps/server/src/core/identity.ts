@@ -71,6 +71,8 @@ export class IdentityManager {
   /** Key hash → who it signs in. Anything that changes who a key belongs to or what they may do evicts. */
   private cache = new Map<string, Cached>();
   private touchedAt = new Map<string, number>();
+  /** Bumped by every evict() call, so a DB read racing an eviction never writes a stale entry back in. */
+  private evictions = 0;
 
   constructor(
     private db: DB,
@@ -197,6 +199,7 @@ export class IdentityManager {
     const hash = hashSecret(secret);
     const cached = this.cache.get(hash);
     if (cached) return cached;
+    const gen = this.evictions; // captured before the read: a concurrent evict() must not be undone below
     let found: Cached | null = null;
     if (secret.startsWith('csk_')) {
       const [hit] = await this.db
@@ -214,12 +217,15 @@ export class IdentityManager {
         .limit(1);
       if (row && row.releasedAt === null) found = { identity: toPublic(row), sessionId: null };
     }
-    if (found) this.cache.set(hash, found);
+    if (found && gen === this.evictions) this.cache.set(hash, found);
     return found;
   }
 
-  /** Forgets every cached key of this identity; the next request re-reads the database. */
+  /** Forgets every cached key of this identity; the next request re-reads the database. Also bumps the
+   *  eviction generation, so an authenticateSession() read already in flight for this identity — or for
+   *  a key that hadn't been cached yet — can't write a now-stale result back into the cache afterward. */
   evict(identityId: string): void {
+    this.evictions++;
     for (const [hash, entry] of this.cache) {
       if (entry.identity.id === identityId) this.cache.delete(hash);
     }

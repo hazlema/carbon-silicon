@@ -4,6 +4,7 @@ import { openDatabase } from '../db';
 import { identities, sessions } from '../db/schema';
 import { FakeClock } from '../lib/clock';
 import { AppError } from '../lib/errors';
+import { hashSecret } from '../lib/ids';
 import { randomTag, waitFor } from '../lib/testing';
 import { IdentityManager } from './identity';
 
@@ -55,11 +56,19 @@ describe('humans', () => {
     const [row] = await database.db.select().from(sessions).where(eq(sessions.id, b!.sessionId!));
     expect(row).toMatchObject({ label: 'Firefox on Linux', ip: '10.9.9.9' });
   });
-  test("a human's identity secret is never a way in", async () => {
+  test("a human's identity secret hash is never a way in, whatever its prefix", async () => {
     const { identity } = await ids.createHuman(`Nosecret${randomTag()}`);
-    const [row] = await database.db.select().from(identities).where(eq(identities.id, identity.id));
-    // Only the hash is stored, so the best an attacker could send is the hash itself; it must not work.
-    expect(await ids.authenticate(row.secretHash)).toBeNull();
+    // A csk_-shaped secret whose hash lands on a human's identities.secretHash, but backs no session
+    // row (the M1 carry-over shape: humans' secretHash is a leftover, not a live credential).
+    const sessionShaped = `csk_leftover${randomTag()}`;
+    await database.db.update(identities).set({ secretHash: hashSecret(sessionShaped) }).where(eq(identities.id, identity.id));
+    expect(await ids.authenticate(sessionShaped)).toBeNull(); // csk_ only ever resolves through sessions, never identities.secretHash
+
+    // A non-csk_ secret whose hash also lands on identities.secretHash: it takes the agent lookup path,
+    // which must still refuse a human row (kind !== 'agent'), even though the hash matches exactly.
+    const agentShaped = `not-a-real-token-${randomTag()}`;
+    await database.db.update(identities).set({ secretHash: hashSecret(agentShaped) }).where(eq(identities.id, identity.id));
+    expect(await ids.authenticate(agentShaped)).toBeNull();
   });
 });
 
@@ -84,6 +93,19 @@ describe('the cache', () => {
     await ids.authenticate(key);
     await database.db.update(identities).set({ releasedAt: new Date(clock.now()) }).where(eq(identities.id, identity.id));
     expect((await ids.refresh(identity.id))?.released).toBe(true);
+    expect(await ids.authenticate(key)).toBeNull();
+  });
+  test('an eviction racing an in-flight read cannot resurrect a revoked key in the cache', async () => {
+    const { identity, key } = await ids.createHuman(`Race${randomTag()}`);
+    // Cache miss: authenticateSession starts its DB read and yields at the first await, unresolved.
+    const racing = ids.authenticateSession(key);
+    // Both run synchronously before the read above resolves, so the eviction generation is bumped —
+    // and the session is gone — before that in-flight read gets a chance to write the cache.
+    ids.evict(identity.id);
+    await database.db.delete(sessions).where(eq(sessions.identityId, identity.id));
+    await racing; // whatever this found, it must not have been written back into the cache
+    // If the race had resurrected the stale entry, this would return the cached identity instead of
+    // hitting the (now session-less) database.
     expect(await ids.authenticate(key)).toBeNull();
   });
 });
