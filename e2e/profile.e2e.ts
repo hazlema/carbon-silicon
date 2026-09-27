@@ -18,12 +18,30 @@ test('your profile edits your bio, locks your name, and lists your browsers', as
   await p.getByLabel('Confirm password', { exact: true }).fill(PASSWORD);
   await p.getByRole('button', { name: 'Lock my name' }).click();
   await expect(p.getByTestId('recovery-code')).toContainText('csr_');
+  // Locking flips `me.locked`, but the recovery-code section must stay first (prominent) until it's
+  // dismissed — no jump while someone's mid-read of the one-time code.
+  await expect(p.locator('aside h2').first()).toHaveText('Your recovery code');
   await p.getByRole('button', { name: 'I saved it' }).click();
   await expect(p.locator('.badge', { hasText: 'locked name' })).toBeVisible();
   await expect(p.getByRole('heading', { name: 'Password', exact: true })).toBeVisible();
+  // Dismissing the code is the deliberate moment the order changes: Bio first, Password second.
+  await expect(p.locator('aside h2').first()).toHaveText('Bio');
 
   const browsers = p.getByRole('region', { name: 'Signed in' });
   await expect(browsers.getByText('This browser')).toBeVisible();
+
+  // Delete flow: focus goes to the handle field on open, and back to the toggle on cancel.
+  // (Located by the stable aria-controls attribute, not its name — that label itself toggles.)
+  const deleteToggle = p.locator('button[aria-controls="delete-form"]');
+  await expect(deleteToggle).toHaveAttribute('aria-expanded', 'false');
+  await deleteToggle.click();
+  await expect(p.getByLabel('Type your handle to confirm')).toBeFocused();
+  await expect(deleteToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(deleteToggle).toHaveText('Cancel');
+  await deleteToggle.click();
+  await expect(deleteToggle).toBeFocused();
+  await expect(deleteToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(deleteToggle).toHaveText('Delete…');
 
   await p.goto('/u/Sprocket');
   await expect(p.getByRole('heading', { name: 'Sprocket', level: 1 })).toBeVisible();

@@ -1,5 +1,5 @@
 import { alias } from 'drizzle-orm/pg-core';
-import { and, count, desc, eq, exists, inArray, ne, notExists, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, exists, inArray, ne, notExists, sql } from 'drizzle-orm';
 import type { Profile, ProfileRecord, ProfileRival } from '@cs/shared/protocol';
 import type { DB } from '../db';
 import { identities, matches, matchPlayers } from '../db/schema';
@@ -82,6 +82,8 @@ export class ProfileService {
         and(
           eq(self.identityId, row.id),
           eq(matches.status, 'over'),
+          // Keep `games` in lockstep with `played`: both count exactly the win/loss/draw rows.
+          inArray(self.result, ['win', 'loss', 'draw']),
           notExists(
             this.db
               .select({ one: sql`1` })
@@ -147,7 +149,11 @@ export class ProfileService {
         ),
       )
       .groupBy(opp.identityId)
-      .orderBy(desc(played), desc(lastEndedAt))
+      // Ties (same play count, same last-played instant — FakeClock in tests, or same millisecond in
+      // real life) still need one deterministic winner.
+      // Ties (same play count, same last-played instant — FakeClock in tests, or same millisecond in
+      // real life) still need one deterministic winner.
+      .orderBy(desc(played), desc(lastEndedAt), asc(opp.identityId))
       .limit(1);
     if (!top) return null;
     const opponentRow = await this.identities.row(top.opponentId);

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { IdentityPublic, ProfileRecord, ProfileRival } from '@cs/shared/protocol';
-import { displayName, gameName, matchEndingText, recordSummaryLine, recordWinSharePercent, resultChip, rivalrySentence } from './profile';
+import { displayName, gameName, matchEndingText, recordScoreText, recordShares, recordSummaryLine, resultChip, rivalrySentence } from './profile';
 
 const who = (over: Partial<IdentityPublic>): IdentityPublic => ({
   id: 'id_1',
@@ -81,13 +81,22 @@ describe('recordSummaryLine', () => {
   });
 });
 
-describe('recordWinSharePercent', () => {
-  test('the share of played matches that were wins', () => {
-    expect(recordWinSharePercent(record({ wins: 3, losses: 1, played: 4 }))).toBe(75);
-    expect(recordWinSharePercent(record({ wins: 0, losses: 4, played: 4 }))).toBe(0);
+describe('recordShares', () => {
+  test('wins, draws and losses each as a share (0–100) of played matches', () => {
+    expect(recordShares(record({ wins: 2, draws: 1, losses: 1, played: 4 }))).toEqual({ wins: 50, draws: 25, losses: 25 });
+    expect(recordShares(record({ wins: 0, draws: 0, losses: 4, played: 4 }))).toEqual({ wins: 0, draws: 0, losses: 100 });
   });
-  test('zero with nothing played, not NaN', () => {
-    expect(recordWinSharePercent(record({}))).toBe(0);
+  test('all zero with nothing played, not NaN', () => {
+    expect(recordShares(record({}))).toEqual({ wins: 0, draws: 0, losses: 0 });
+  });
+});
+
+describe('recordScoreText', () => {
+  test('an accessible reading of the score, singular/plural, draws only when there are any', () => {
+    expect(recordScoreText(record({ wins: 2, losses: 1, draws: 0 }))).toBe('2 wins, 1 loss');
+    expect(recordScoreText(record({ wins: 1, losses: 1, draws: 0 }))).toBe('1 win, 1 loss');
+    expect(recordScoreText(record({ wins: 2, losses: 1, draws: 3 }))).toBe('2 wins, 1 loss, 3 draws');
+    expect(recordScoreText(record({ wins: 0, losses: 0, draws: 1 }))).toBe('0 wins, 0 losses, 1 draw');
   });
 });
 
@@ -95,17 +104,27 @@ describe('rivalrySentence', () => {
   const opponent = who({ id: 'id_2', handle: 'OLD_IRON', kind: 'agent' });
   const rival = (over: Partial<ProfileRival>): ProfileRival => ({ opponent, wins: 0, losses: 0, draws: 0, ...over });
 
-  test('the owner ahead, viewed by the owner, reads "You\'re"', () => {
-    expect(rivalrySentence(rival({ wins: 3, losses: 1 }), { mine: true, ownerHandle: 'Ada' })).toBe("You're up 3–1.");
+  test('the owner ahead, viewed by the owner, reads "You\'re" and names the rival', () => {
+    expect(rivalrySentence(rival({ wins: 3, losses: 1 }), { mine: true, ownerHandle: 'Ada' })).toBe("You're up 3–1 on OLD_IRON.");
   });
-  test('the owner ahead, viewed by a visitor, uses the owner\'s handle', () => {
-    expect(rivalrySentence(rival({ wins: 3, losses: 1 }), { mine: false, ownerHandle: 'Ada' })).toBe('Ada is up 3–1.');
+  test('the owner ahead, viewed by a visitor, uses the owner\'s handle and names the rival', () => {
+    expect(rivalrySentence(rival({ wins: 3, losses: 1 }), { mine: false, ownerHandle: 'Ada' })).toBe('Ada is up 3–1 on OLD_IRON.');
   });
   test('the rival ahead names the rival, regardless of viewer', () => {
     expect(rivalrySentence(rival({ wins: 0, losses: 4 }), { mine: true, ownerHandle: 'Ada' })).toBe('OLD_IRON is up 4–0.');
     expect(rivalrySentence(rival({ wins: 0, losses: 4 }), { mine: false, ownerHandle: 'Ada' })).toBe('OLD_IRON is up 4–0.');
   });
+  test('a released rival ahead is named capitalised, sentence-initial', () => {
+    const released = who({ id: 'id_3', handle: '~id_3', kind: 'agent', released: true });
+    expect(rivalrySentence({ opponent: released, wins: 0, losses: 4, draws: 0 }, { mine: true, ownerHandle: 'Ada' })).toBe(
+      'A former player is up 4–0.',
+    );
+  });
   test('level is "all square", not "up 0"', () => {
     expect(rivalrySentence(rival({ wins: 2, losses: 2 }), { mine: true, ownerHandle: 'Ada' })).toBe('All square at 2–2.');
+  });
+  test('a draws-only rivalry reads as draws, not "0–0"', () => {
+    expect(rivalrySentence(rival({ wins: 0, losses: 0, draws: 3 }), { mine: true, ownerHandle: 'Ada' })).toBe('All square — 3 draws.');
+    expect(rivalrySentence(rival({ wins: 0, losses: 0, draws: 1 }), { mine: true, ownerHandle: 'Ada' })).toBe('All square — 1 draw.');
   });
 });

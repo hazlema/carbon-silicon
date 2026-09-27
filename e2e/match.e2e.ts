@@ -31,7 +31,9 @@ test('changing your mind after "Play again" does not start another match behind 
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
   await page.getByRole('button', { name: 'Find a match' }).click();
   await page.waitForURL(/\/play\/m_/, { timeout: 20_000 });
-  await expect(page.getByRole('status')).not.toHaveText('Starting…');
+  // Scoped to the table: the page's own live-region wrapper (UpdateBanner, always in the DOM) is a
+  // second role="status" element now, so an unscoped getByRole('status') would be ambiguous.
+  await expect(page.getByRole('region', { name: 'Critical Mass' }).getByRole('status')).not.toHaveText('Starting…');
 
   await page.getByRole('button', { name: 'Resign' }).click();
   await page.getByRole('button', { name: 'Yes, resign' }).click();

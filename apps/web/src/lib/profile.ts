@@ -52,20 +52,43 @@ export function recordSummaryLine(record: ProfileRecord): string {
   return `${gameName(top.gameId)} · ${top.played} played`;
 }
 
-/** The share (0–100) of played matches that were wins, for the record card's bar. */
-export function recordWinSharePercent(record: ProfileRecord): number {
-  if (record.played === 0) return 0;
-  return (record.wins / record.played) * 100;
+/** Wins, draws and losses each as a share (0–100) of played matches, for the record card's three-segment
+ *  bar — draws get their own neutral segment rather than being folded into the loss share. */
+export function recordShares(record: ProfileRecord): { wins: number; draws: number; losses: number } {
+  if (record.played === 0) return { wins: 0, draws: 0, losses: 0 };
+  return {
+    wins: (record.wins / record.played) * 100,
+    draws: (record.draws / record.played) * 100,
+    losses: (record.losses / record.played) * 100,
+  };
 }
 
-/** "You're up 3–1.", "Ada is up 3–1." on someone else's profile, "OLD_IRON is up 4–0." when the rival leads,
- *  or "All square at 2–2." when tied. */
+/** An accessible reading of the record score for screen readers, e.g. "2 wins, 1 loss" — draws only
+ *  mentioned when there are any, so "2 wins, 1 loss" stays plain in the common case. */
+export function recordScoreText(record: ProfileRecord): string {
+  const part = (n: number, singular: string, plural: string) => `${n} ${n === 1 ? singular : plural}`;
+  const parts = [part(record.wins, 'win', 'wins'), part(record.losses, 'loss', 'losses')];
+  if (record.draws > 0) parts.push(part(record.draws, 'draw', 'draws'));
+  return parts.join(', ');
+}
+
+/** A released opponent reads as "a former player" mid-sentence, but capitalised when it opens one — a
+ *  real handle keeps its own casing regardless. */
+function rivalName(opponent: IdentityPublic): string {
+  const name = displayName(opponent);
+  return opponent.released ? name.charAt(0).toUpperCase() + name.slice(1) : name;
+}
+
+/** "You're up 3–1 on OLD_IRON.", "Ada is up 3–1 on OLD_IRON." on someone else's profile, "OLD_IRON is up
+ *  4–0." when the rival leads, "All square at 2–2." when tied, or "All square — 3 draws." when the only
+ *  finished matches between them were draws. */
 export function rivalrySentence(rival: ProfileRival, opts: { mine: boolean; ownerHandle: string }): string {
-  const { wins, losses } = rival;
+  const { wins, losses, draws } = rival;
+  if (wins === 0 && losses === 0 && draws > 0) return `All square — ${draws} ${draws === 1 ? 'draw' : 'draws'}.`;
   if (wins === losses) return `All square at ${wins}–${losses}.`;
   if (wins > losses) {
     const who = opts.mine ? "You're" : `${opts.ownerHandle} is`;
-    return `${who} up ${wins}–${losses}.`;
+    return `${who} up ${wins}–${losses} on ${rivalName(rival.opponent)}.`;
   }
-  return `${displayName(rival.opponent)} is up ${losses}–${wins}.`;
+  return `${rivalName(rival.opponent)} is up ${losses}–${wins}.`;
 }

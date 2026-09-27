@@ -10,6 +10,24 @@
   let deleteError = $state('');
   const canDelete = $derived(!!me && confirmHandle.trim().toLowerCase() === me.handle.toLowerCase());
 
+  // The toggle button stays in the DOM in both states (never `{#if}`-removed) so focus always has
+  // somewhere reliable to land: the handle field on open, back to this button on cancel.
+  let toggleBtn: HTMLButtonElement | undefined = $state();
+  let handleInput: HTMLInputElement | undefined = $state();
+
+  $effect(() => {
+    if (open) handleInput?.focus();
+  });
+
+  function toggle() {
+    if (open) {
+      open = false;
+      toggleBtn?.focus();
+    } else {
+      open = true;
+    }
+  }
+
   async function remove(e: SubmitEvent) {
     e.preventDefault();
     deleteError = '';
@@ -29,21 +47,20 @@
         <h2 id="delete-title">Delete account</h2>
         <p>Matches stay, credited to &ldquo;a former player&rdquo;.</p>
       </div>
-      {#if !open}
-        <button class="btn danger" type="button" onclick={() => (open = true)}>Delete&hellip;</button>
-      {/if}
+      <button class="btn danger" type="button" bind:this={toggleBtn} aria-expanded={open} aria-controls="delete-form" onclick={toggle}>
+        {open ? 'Cancel' : 'Delete…'}
+      </button>
     </div>
     {#if open}
-      <form onsubmit={remove}>
+      <form id="delete-form" onsubmit={remove}>
         <label for="del-handle">Type your handle to confirm</label>
-        <input id="del-handle" bind:value={confirmHandle} autocomplete="off" placeholder={me.handle} />
+        <input id="del-handle" bind:this={handleInput} bind:value={confirmHandle} autocomplete="off" placeholder={me.handle} />
         {#if me.locked}
           <label for="del-pw">Password</label>
           <input id="del-pw" type="password" bind:value={deletePassword} autocomplete="current-password" maxlength="200" />
         {/if}
         <div class="actions">
           <button class="btn" type="submit" disabled={!canDelete}>Delete my account</button>
-          <button class="btn quiet" type="button" onclick={() => (open = false)}>Cancel</button>
         </div>
         {#if deleteError}<p class="error" role="alert">{deleteError}</p>{/if}
       </form>

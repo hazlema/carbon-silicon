@@ -171,4 +171,55 @@ describe('ProfileService', () => {
     const p = await profiles.profile(me.handle);
     expect(p.rival).toEqual({ opponent: expect.objectContaining({ id: gone.id, released: true }), wins: 1, losses: 0, draws: 0 });
   });
+
+  test('a true tie (same play count, same instant) breaks on the opponent id, deterministically', async () => {
+    const me = (await ids.createHuman(`tieid${randomTag()}`)).identity;
+    const a = (await ids.registerAgent({ name: `tiea${randomTag()}` }, null)).identity;
+    const b = (await ids.registerAgent({ name: `tieb${randomTag()}` }, null)).identity;
+    const at = clock.now();
+    await play({ endedAt: at, players: [{ identity: me, result: 'win' }, { identity: a, result: 'loss' }] });
+    await play({ endedAt: at, players: [{ identity: me, result: 'win' }, { identity: b, result: 'loss' }] });
+    const expectedId = [a.id, b.id].sort()[0];
+    const p = await profiles.profile(me.handle);
+    expect(p.rival?.opponent.id).toBe(expectedId);
+  });
+
+  test('a solo finished match (no opponent) does not count toward the record', async () => {
+    const me = (await ids.createHuman(`solo${randomTag()}`)).identity;
+    await play({ endedAt: clock.now(), players: [{ identity: me, result: 'win' }] });
+    const p = await profiles.profile(me.handle);
+    expect(p.record).toEqual({ versus: 'machines', wins: 0, losses: 0, draws: 0, played: 0, games: [] });
+  });
+
+  test('an abandoned two-player match does not count toward rival', async () => {
+    const me = (await ids.createHuman(`aband${randomTag()}`)).identity;
+    const opp = (await ids.registerAgent({ name: `abandopp${randomTag()}` }, null)).identity;
+    await play({ status: 'abandoned', endedAt: clock.now(), players: [{ identity: me, result: 'abandoned' }, { identity: opp, result: 'abandoned' }] });
+    const p = await profiles.profile(me.handle);
+    expect(p.rival).toBeNull();
+  });
+
+  test('games stays in lockstep with played, even for a finished match with no result recorded', async () => {
+    const me = (await ids.createHuman(`gp${randomTag()}`)).identity;
+    const opp = (await ids.registerAgent({ name: `gpopp${randomTag()}` }, null)).identity;
+    const id = newId('m');
+    await database.db.insert(matches).values({ id, gameId: 'critical-mass', status: 'over', seed: 1, season: '2026-09', endedAt: new Date(clock.now()) });
+    await database.db.insert(matchPlayers).values([
+      { matchId: id, seat: 's0', identityId: me.id, kind: 'human', result: null },
+      { matchId: id, seat: 's1', identityId: opp.id, kind: 'agent', result: null },
+    ]);
+    const p = await profiles.profile(me.handle);
+    expect(p.record.played).toBe(0);
+    expect(p.record.games).toEqual([]);
+  });
+
+  test("an agent's \"vs humans\" record ignores an agent-vs-agent match", async () => {
+    const agent = (await ids.registerAgent({ name: `avsh${randomTag()}` }, null)).identity;
+    const otherAgent = (await ids.registerAgent({ name: `avsh2${randomTag()}` }, null)).identity;
+    const human = (await ids.createHuman(`avsh3${randomTag()}`)).identity;
+    await play({ endedAt: clock.now(), players: [{ identity: agent, result: 'win' }, { identity: otherAgent, result: 'loss' }] });
+    await play({ endedAt: clock.now() + 1, players: [{ identity: agent, result: 'win' }, { identity: human, result: 'loss' }] });
+    const p = await profiles.profileById(agent.id);
+    expect(p.record).toEqual({ versus: 'humans', wins: 1, losses: 0, draws: 0, played: 1, games: [{ gameId: 'critical-mass', played: 1 }] });
+  });
 });

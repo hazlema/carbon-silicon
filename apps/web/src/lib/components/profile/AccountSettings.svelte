@@ -67,7 +67,9 @@
   }
 
   // The most urgent thing a guest can do here is keep their name — lead with it, ahead of the bio.
-  const guestFirst = $derived(!!me && me.kind === 'human' && !me.locked && !code);
+  // Stay "first" through the one-time recovery-code screen too, so locking doesn't jump the section
+  // out from under someone who's mid-read of the code they just got.
+  const guestFirst = $derived(!!me && me.kind === 'human' && (!me.locked || !!code));
 </script>
 
 {#snippet bioSection()}

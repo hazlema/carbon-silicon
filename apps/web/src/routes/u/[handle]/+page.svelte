@@ -10,7 +10,7 @@
   import SessionList from '$lib/components/profile/SessionList.svelte';
   import { relativeTime } from '$lib/format';
   import { live } from '$lib/live.svelte';
-  import { displayName, gameName, matchEndingText, recordSummaryLine, recordWinSharePercent, resultChip, rivalrySentence } from '$lib/profile';
+  import { displayName, gameName, matchEndingText, recordScoreText, recordShares, recordSummaryLine, resultChip, rivalrySentence } from '$lib/profile';
 
   let profile = $state<Profile | null>(null);
   let missing = $state(false);
@@ -83,9 +83,17 @@
           {#if profile.record.played === 0}
             <p class="no-games">{recordSummaryLine(profile.record)}</p>
           {:else}
-            <p class="score"><span class="self">{profile.record.wins}</span> <span aria-hidden="true">–</span> <span class="opp">{profile.record.losses}</span></p>
+            {@const shares = recordShares(profile.record)}
+            <p class="score">
+              <span class="visually-hidden">{recordScoreText(profile.record)}</span>
+              <span class="self" aria-hidden="true">{profile.record.wins}</span>
+              <span class="dash" aria-hidden="true">–</span>
+              <span class="opp" aria-hidden="true">{profile.record.losses}</span>
+            </p>
             <div class="bar" role="presentation">
-              <span class="fill" style:width="{recordWinSharePercent(profile.record)}%"></span>
+              <span class="fill wins" style:width="{shares.wins}%"></span>
+              <span class="fill draws" style:width="{shares.draws}%"></span>
+              <span class="fill losses" style:width="{shares.losses}%"></span>
             </div>
             <p class="summary">{recordSummaryLine(profile.record)}</p>
           {/if}
@@ -132,7 +140,7 @@
 
     {#if mine}
       <aside class="settings-col" aria-labelledby="settings-title">
-        <p id="settings-title" class="settings-title">SETTINGS <span>only you see this</span></p>
+        <p id="settings-title" class="settings-title">Settings <span>only you see this</span></p>
         <AccountSettings />
         {#if live.me?.kind === 'human'}<SessionList />{/if}
         <RelationList />
@@ -281,7 +289,7 @@
   .record.human .score .opp {
     color: var(--carbon);
   }
-  .record .score span[aria-hidden] {
+  .record .score .dash {
     color: var(--dust);
     font-weight: 400;
   }
@@ -290,22 +298,27 @@
     height: 3px;
     border-radius: 999px;
     overflow: hidden;
-  }
-  .record.machine .bar {
-    background: var(--silicon);
-  }
-  .record.human .bar {
-    background: var(--carbon);
+    display: flex;
+    background: var(--lattice);
   }
   .record .bar .fill {
     display: block;
     height: 100%;
   }
-  .record.machine .bar .fill {
+  .record .bar .fill.draws {
+    background: var(--dust);
+  }
+  .record.machine .bar .fill.wins {
     background: var(--carbon);
   }
-  .record.human .bar .fill {
+  .record.machine .bar .fill.losses {
     background: var(--silicon);
+  }
+  .record.human .bar .fill.wins {
+    background: var(--silicon);
+  }
+  .record.human .bar .fill.losses {
+    background: var(--carbon);
   }
   .record .summary,
   .record .no-games {
