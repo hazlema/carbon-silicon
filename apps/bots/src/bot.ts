@@ -1,10 +1,11 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { stateFromView, type CMView } from '@cs/critical-mass';
-import type { MatchEnvelope } from '@cs/shared/protocol';
+import type { ChatMessage, MatchEnvelope, PresenceInfo } from '@cs/shared/protocol';
 import { ApiError, Client } from './client';
-import { line, type Personality } from './personality';
+import { DEFAULT_STRATEGY, line, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
+import type { ChatLine, Moment, MomentKind, Voice } from './voice';
 
 export interface BotOptions {
   base: string;
@@ -15,7 +16,19 @@ export interface BotOptions {
   pollWaitMs?: number;
   signal?: AbortSignal;
   log?: (msg: string) => void;
+  /** Where the bot's words come from; without one it only uses its canned line bank. */
+  voice?: Voice;
+  /** How often a bot with a voice considers livening up a quiet lobby (default 12 min; 0 disables). */
+  ambientEveryMs?: number;
+  /** Chance that a bot with a voice answers its opponent's table talk (default 0.6). */
+  tableTalkChance?: number;
+  /** At most one mention or table-talk reply per channel per this long (default 20 s). */
+  replyCooldownMs?: number;
 }
+
+/** Ambient chatter needs the lobby to have been quiet for at least this long. */
+const LOBBY_QUIET_MS = 8 * 60_000;
+const AMBIENT_CHANCE = 0.5;
 
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -25,6 +38,75 @@ const sleep = (ms: number, signal?: AbortSignal) =>
       resolve();
     }, { once: true });
   });
+
+/** Line-bank key used when the voice has nothing for a moment. Table talk has no canned answer:
+ *  "you rang?" lines make no sense mid-match, so a silent voice just stays silent there. */
+const BANK: Record<MomentKind, keyof Personality['lines'] | null> = {
+  mention: 'mentioned',
+  tableTalk: null,
+  hello: 'hello',
+  win: 'win',
+  lose: 'lose',
+  draw: 'draw',
+  bigCascade: 'bigCascade',
+  gotHit: 'gotHit',
+  ambient: 'ambient',
+};
+
+/** Should a bot with a voice speak up in the lobby now? (The coin flip happens elsewhere.) */
+export function ambientDue(s: { humansPresent: boolean; inMatch: boolean; newestLobbyAt: number | null; now: number }): boolean {
+  return s.humansPresent && !s.inMatch && (s.newestLobbyAt === null || s.now - s.newestLobbyAt >= LOBBY_QUIET_MS);
+}
+
+const toChatLine = (m: ChatMessage): ChatLine => ({
+  author: m.author?.handle ?? 'house',
+  kind: m.system || !m.author ? 'system' : m.author.kind === 'human' ? 'human' : 'agent',
+  text: m.text,
+});
+
+async function recentLines(client: Client, channel: string): Promise<ChatMessage[]> {
+  const r = await client.call<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(channel)}?limit=8`);
+  return r.messages;
+}
+
+/**
+ * Say something about a moment in a channel: ask the voice if the bot has one, fall back to the
+ * canned line bank when it has nothing, and post the result. Never throws. Bots without a voice
+ * make exactly the calls they always did (no history fetch).
+ */
+async function speak(
+  client: Client,
+  opts: BotOptions,
+  kind: MomentKind,
+  channel: string,
+  extra: { opponent?: string; addressedBy?: string } = {},
+): Promise<void> {
+  try {
+    let text: string | null = null;
+    if (opts.voice) {
+      const recent = await recentLines(client, channel).catch(() => [] as ChatMessage[]);
+      const moment: Moment = { kind, channel, recent: recent.map(toChatLine), ...extra };
+      text = await opts.voice.say(moment).catch(() => null);
+    }
+    const bank = BANK[kind];
+    text ||= bank ? line(opts.personality.lines[bank]) : null;
+    if (!text) return;
+    if (extra.addressedBy && !text.includes(`@${extra.addressedBy}`)) text = `@${extra.addressedBy} ${text}`;
+    for (let attempt = 0; attempt < 2 && !opts.signal?.aborted; attempt++) {
+      try {
+        await client.chat(channel, text);
+        return;
+      } catch (e) {
+        // The parlor's flood limit (one line per two seconds after a short burst) can bite after a
+        // busy match; wait for a token and try once more rather than silently losing the line.
+        if (!(e instanceof ApiError && e.status === 429)) return;
+        await sleep(2100, opts.signal);
+      }
+    }
+  } catch {
+    // Chat is best-effort: a failed line must never disturb play.
+  }
+}
 
 async function connect(client: Client, opts: BotOptions, log: (m: string) => void): Promise<void> {
   const file = Bun.file(opts.tokenFile);
@@ -46,9 +128,10 @@ async function connect(client: Client, opts: BotOptions, log: (m: string) => voi
   log(`registered as @${reg.identity.handle}`);
 }
 
-function chooseMove(env: MatchEnvelope, think: { rng: () => number }): unknown {
+function chooseMove(env: MatchEnvelope, strategy: Personality['strategy'], think: { rng: () => number }): unknown {
   if (env.match.gameId === 'critical-mass' && env.you) {
-    return chooseCriticalMassMove(stateFromView(env.view as CMView), env.you, { depth: 2, randomness: 0.15, rng: think.rng });
+    const { depth, randomness } = strategy ?? DEFAULT_STRATEGY;
+    return chooseCriticalMassMove(stateFromView(env.view as CMView), env.you, { depth, randomness, rng: think.rng });
   }
   return env.legal[Math.floor(think.rng() * env.legal.length)];
 }
@@ -72,25 +155,26 @@ async function alreadyGreeted(client: Client, table: string, identityId: string 
 }
 
 async function playMatch(client: Client, opts: BotOptions, matchId: string, identityId: string | null, log: (m: string) => void): Promise<void> {
-  const p = opts.personality;
   const table = `match:${matchId}`;
-  const say = (text: string) => client.chat(table, text).catch(() => {});
   let env = await client.match(matchId);
-  if (!(await alreadyGreeted(client, table, identityId))) await say(line(p.lines.hello));
+  const opponent = env.match.seats.find((s) => s.seat !== env.you)?.identity.handle;
+  const say = (kind: MomentKind) => speak(client, opts, kind, table, { opponent });
+  if (!(await alreadyGreeted(client, table, identityId))) await say('hello');
   let lastSeenMove = -1;
   while (!opts.signal?.aborted && (env.match.status === 'countdown' || env.match.status === 'live')) {
     const view = env.view as { lastMove?: { seat: string; waves: string[][] } | null; moveCount?: number };
     if (view.lastMove && view.moveCount !== lastSeenMove) {
       lastSeenMove = view.moveCount ?? -1;
       const big = view.lastMove.waves.length >= 3;
-      if (big && view.lastMove.seat === env.you && Math.random() < 0.6) await say(line(p.lines.bigCascade));
-      if (big && view.lastMove.seat !== env.you && Math.random() < 0.5) await say(line(p.lines.gotHit));
+      // Not awaited: a voice may take seconds to answer, and the game clock doesn't wait for it.
+      if (big && view.lastMove.seat === env.you && Math.random() < 0.6) void say('bigCascade');
+      if (big && view.lastMove.seat !== env.you && Math.random() < 0.5) void say('gotHit');
     }
     if (env.match.status === 'live' && env.you && env.match.toMove.includes(env.you) && env.legal.length > 0) {
       const [lo, hi] = opts.thinkMs;
       await sleep(lo + Math.random() * Math.max(0, hi - lo), opts.signal);
       try {
-        env = await client.move(matchId, env.match.revision, chooseMove(env, { rng: Math.random }));
+        env = await client.move(matchId, env.match.revision, chooseMove(env, opts.personality.strategy, { rng: Math.random }));
       } catch (e) {
         if (e instanceof ApiError && (e.status === 409 || e.status === 400)) {
           env = await client.match(matchId);
@@ -117,8 +201,8 @@ async function playMatch(client: Client, opts: BotOptions, matchId: string, iden
   }
   const outcome = env.match.outcome;
   if (!outcome || !env.you) return;
-  if (outcome.winners.length === 0) await say(line(p.lines.draw));
-  else await say(line(outcome.winners.includes(env.you) ? p.lines.win : p.lines.lose));
+  if (outcome.winners.length === 0) await say('draw');
+  else await say(outcome.winners.includes(env.you) ? 'win' : 'lose');
   log(`match ${matchId} over: ${outcome.reason}`);
 }
 
@@ -151,6 +235,16 @@ export async function runBot(opts: BotOptions): Promise<void> {
   }
   if (!opts.signal?.aborted) myId = (await client.me()).identity.id;
 
+  /** One reply per channel per cooldown; claims the slot if it's free. */
+  const cooldown = opts.replyCooldownMs ?? 20_000;
+  const mayReply = (channel: string) => {
+    const now = Date.now();
+    if (lastReply.has(channel) && lastReply.get(channel)! + cooldown > now) return false;
+    lastReply.set(channel, now);
+    return true;
+  };
+  const ambient = opts.voice && (opts.ambientEveryMs ?? 12 * 60_000) > 0 ? ambientLoop(client, opts, () => playing.size > 0, log) : null;
+
   let cursor = 0;
   while (!opts.signal?.aborted) {
     try {
@@ -161,20 +255,52 @@ export async function runBot(opts: BotOptions): Promise<void> {
       cursor = poll.cursor;
       for (const event of poll.events) {
         if (event.type === 'match.started') play(event.match.id);
-        if (event.type === 'chat.mention' && !event.message.channel.startsWith('match:')) {
-          const channel = event.message.channel;
-          const now = Date.now();
-          if ((lastReply.get(channel) ?? 0) + 15_000 < now) {
-            lastReply.set(channel, now);
-            const who = event.message.author ? `@${event.message.author.handle} ` : '';
-            await client.chat(channel, who + line(opts.personality.lines.mentioned)).catch(() => {});
-          }
+        const { message } = event.type === 'chat.mention' || event.type === 'chat.table' ? event : { message: null };
+        // Other house bots are ignored: two residents mentioning each other would chat forever.
+        if (!message || !message.author || message.author.id === myId || message.author.isHouse) continue;
+        const channel = message.channel;
+        if (event.type === 'chat.mention' && !channel.startsWith('match:') && mayReply(channel)) {
+          // Not awaited: the inbox keeps flowing while the voice thinks.
+          void speak(client, opts, 'mention', channel, { addressedBy: message.author.handle });
+        }
+        if (
+          event.type === 'chat.table' &&
+          opts.voice &&
+          playing.has(channel.slice('match:'.length)) &&
+          Math.random() < (opts.tableTalkChance ?? 0.6) &&
+          mayReply(channel)
+        ) {
+          void speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle });
         }
       }
     } catch (e) {
       if (opts.signal?.aborted) break;
       log(`inbox error: ${(e as Error).message}`);
       await sleep(2000, opts.signal);
+    }
+  }
+  await ambient;
+}
+
+/** Every `ambientEveryMs`, maybe liven up a quiet lobby. Only runs for bots with a voice. */
+async function ambientLoop(client: Client, opts: BotOptions, inMatch: () => boolean, log: (m: string) => void): Promise<void> {
+  const every = opts.ambientEveryMs ?? 12 * 60_000;
+  while (!opts.signal?.aborted) {
+    await sleep(every, opts.signal);
+    if (opts.signal?.aborted) return;
+    try {
+      const who = await client.call<{ presence: PresenceInfo[] }>('GET', '/api/who');
+      const lobby = await recentLines(client, 'lobby');
+      const newest = lobby.at(-1);
+      const due = ambientDue({
+        humansPresent: who.presence.some((p) => p.identity.kind === 'human'),
+        inMatch: inMatch(),
+        newestLobbyAt: newest ? Date.parse(newest.createdAt) : null,
+        now: Date.now(),
+      });
+      if (due && Math.random() < AMBIENT_CHANCE) await speak(client, opts, 'ambient', 'lobby');
+    } catch (e) {
+      if (!opts.signal?.aborted) log(`ambient check failed: ${(e as Error).message}`);
     }
   }
 }

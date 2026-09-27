@@ -38,5 +38,6 @@ export const sprocket: Personality = {
       'Sprocket here! Up for a round of Critical Mass?',
       "Beep boop. That's hello in bot.",
     ],
+    ambient: [],
   },
 };
