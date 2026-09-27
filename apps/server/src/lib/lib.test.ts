@@ -48,6 +48,30 @@ describe('RateLimiter', () => {
     expect(rl.take('a')).toBe(true);
     expect(rl.take('a')).toBe(false);
   });
+  test('refund gives a spent token back, capped at capacity, and no-ops on an unknown key', () => {
+    const clock = new FakeClock(0);
+    const rl = new RateLimiter(clock, 3, 0);
+    rl.refund('never-taken'); // no bucket yet: nothing to do, and it must not create one that grants a free token
+    expect(rl.take('never-taken')).toBe(true);
+    expect(rl.take('never-taken')).toBe(true);
+    expect(rl.take('never-taken')).toBe(true);
+    expect(rl.take('never-taken')).toBe(false);
+
+    for (let i = 0; i < 3; i++) expect(rl.take('a')).toBe(true);
+    expect(rl.take('a')).toBe(false);
+    rl.refund('a');
+    expect(rl.take('a')).toBe(true);
+    expect(rl.take('a')).toBe(false);
+    // refunding past capacity doesn't overfill the bucket
+    rl.refund('a');
+    rl.refund('a');
+    rl.refund('a');
+    rl.refund('a');
+    expect(rl.take('a')).toBe(true);
+    expect(rl.take('a')).toBe(true);
+    expect(rl.take('a')).toBe(true);
+    expect(rl.take('a')).toBe(false);
+  });
 });
 
 describe('EventBus', () => {

@@ -21,10 +21,10 @@ export class RateLimiter {
     return true;
   }
 
-  /** Would take() fail right now? Spends nothing, so callers can count only failures. */
-  blocked(key: string): boolean {
+  /** Gives a spent token back, capped at capacity. No effect on a key with no bucket (nothing was ever taken). */
+  refund(key: string): void {
     const bucket = this.buckets.get(key);
-    if (!bucket) return false;
-    return Math.min(this.capacity, bucket.tokens + (this.clock.now() - bucket.at) * this.refillPerMs) < 1;
+    if (!bucket) return;
+    bucket.tokens = Math.min(this.capacity, bucket.tokens + 1);
   }
 }

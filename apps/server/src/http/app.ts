@@ -85,20 +85,30 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
       maxAge: 60 * 60 * 24 * 365,
       secure: opts.secureCookies ?? false,
     });
-  /** Runs a sign-in attempt under the failure limits; only a wrong password or code spends a token. */
+  /**
+   * Runs a sign-in attempt under the failure limits; only a wrong password or code spends a token.
+   * Both tokens are reserved up front (synchronously, so concurrent requests can't all slip past the
+   * check before any of them spends one) and refunded unless the attempt ends in a counted failure.
+   */
   const limitedSignIn = async <T>(c: Context<AppEnv>, handle: unknown, attempt: () => Promise<T>): Promise<T> => {
     const ip = clientIp(c);
     const who = typeof handle === 'string' ? handle.trim().toLowerCase() : '';
-    if (loginsByIp.blocked(ip) || loginsByHandle.blocked(who)) {
+    const ipReserved = loginsByIp.take(ip);
+    const handleReserved = loginsByHandle.take(who);
+    if (!ipReserved || !handleReserved) {
+      if (ipReserved) loginsByIp.refund(ip);
+      if (handleReserved) loginsByHandle.refund(who);
       throw tooMany('SLOW_DOWN', 'Too many sign-in attempts. Try again in a few minutes.');
     }
     try {
-      return await attempt();
+      const result = await attempt();
+      loginsByIp.refund(ip);
+      loginsByHandle.refund(who);
+      return result;
     } catch (e) {
-      if (e instanceof AppError && (e.code === 'BAD_PASSWORD' || e.code === 'BAD_CODE')) {
-        loginsByIp.take(ip);
-        loginsByHandle.take(who);
-      }
+      if (e instanceof AppError && (e.code === 'BAD_PASSWORD' || e.code === 'BAD_CODE')) throw e; // counted: keep the spent token
+      loginsByIp.refund(ip);
+      loginsByHandle.refund(who);
       throw e;
     }
   };

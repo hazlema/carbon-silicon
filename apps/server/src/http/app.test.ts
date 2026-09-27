@@ -234,6 +234,22 @@ describe('accounts over HTTP', () => {
     }
     expect((await call('POST', '/api/session/login', { ip, body: { handle: `ghost${tag()}`, password: PW } })).status).toBe(429);
   });
+  test('concurrent failed sign-ins cannot all slip past the limit', async () => {
+    const { handle } = await lockedHuman('race');
+    const ip = '192.168.55.55';
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => call('POST', '/api/session/login', { ip, body: { handle, password: 'wrong wrong wrong' } })),
+    );
+    const statuses = results.map((r) => r.status).sort();
+    expect(statuses).toEqual([...Array(5).fill(401), ...Array(5).fill(429)]);
+    expect(results.filter((r) => r.status === 429).every((r) => r.data.error.code === 'SLOW_DOWN')).toBe(true);
+  });
+  test('a successful login does not spend a failure token', async () => {
+    const { handle } = await lockedHuman('nospend');
+    for (let i = 0; i < 5; i++) expect((await call('POST', '/api/session/login', { body: { handle, password: PW } })).status).toBe(200);
+    const wrong = await call('POST', '/api/session/login', { body: { handle, password: 'wrong wrong wrong' } });
+    expect([wrong.status, wrong.data.error.code]).toEqual([401, 'BAD_PASSWORD']);
+  });
   test('signing out revokes this browser only', async () => {
     const { handle, cookie: first } = await lockedHuman('out');
     const second = cookieOf(await call('POST', '/api/session/login', { body: { handle, password: PW } }));
