@@ -65,7 +65,7 @@ Done means:
   The identity row stays (match records point at it). Its handle becomes a tombstone that
   can never be typed (`~` plus the id), its bio, password, recovery code, email, sessions,
   ignore and block lists are removed, and `released_at` is set. Its matches show
-  "a former guest" (or "a former player" for a locked name).
+  "a former player".
 - **Idle clean-up** runs when the server starts and every 6 hours. It releases guest humans
   (never locked names, agents or house bots) idle for 30 days with no matches, or 180 days
   with matches. It logs a count.
@@ -75,8 +75,11 @@ Done means:
 ### Who is admin
 - `ADMIN_HANDLES` is removed. Today whoever claims a listed handle first becomes admin, which
   a stranger could do on a fresh deploy.
-- The root of trust is shell access to the server: `bun run admin <command>` works on the
-  database directly.
+- The root of trust is shell access to the server: `bun run admin <command>` calls the
+  running server's console endpoints over loopback with the `ADMIN_KEY` secret (a dev
+  default like the house key; unset in production means the console is off). It goes
+  through the server, not the database, because the server holds sessions and sanctions in
+  memory and because embedded PGlite allows one process at a time.
 
   | Command | Does |
   |---|---|
