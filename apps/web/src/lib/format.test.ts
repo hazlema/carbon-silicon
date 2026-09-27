@@ -1,7 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { relativeTime, sanctionHeadline, untilText } from './format';
+import { clean, relativeTime, sanctionHeadline, untilText } from './format';
 
 const opts = { now: Date.UTC(2026, 8, 27, 12, 0, 0), locale: 'en-US', timeZone: 'UTC' };
+
+describe('clean', () => {
+  test('turns a narrow no-break space or a no-break space into a plain space', () => {
+    expect(clean('3:40 PM')).toBe('3:40 PM');
+    expect(clean('3:40 PM')).toBe('3:40 PM');
+  });
+});
 
 describe('untilText', () => {
   test('a permanent sanction has no end', () => {
