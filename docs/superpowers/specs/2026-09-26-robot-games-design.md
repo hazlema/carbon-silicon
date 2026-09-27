@@ -134,6 +134,8 @@ loses its token file recovers on its own.
 
 OLD IRON's chat is LLM-backed through any OpenAI-compatible endpoint (`LLM_BASE_URL`, `LLM_MODEL`), with his canned line bank as the fallback whenever the model is off, slow or says something unusable; his moves stay scripted. The other residents talk from line banks only.
 
+A resident with a voice also reads `#lobby` and `#critical-mass` (plain HTTP polling, from the newest line at start). When a human's line that @mentions nobody gets no answer from anyone for 5 seconds, he answers it himself, addressed to them (canned `unanswered` lines if the model has nothing). At most one such unprompted answer per channel per minute, never within 20 seconds of his own last line there, and never while he is seated at a match. Mentions of him still go through the inbox; residents without a voice don't watch chat at all.
+
 ## 4. Chat, invites & moderation
 
 **Channels.** `#lobby` (the default), `#critical-mass`, `#lightline` (one per catalog
