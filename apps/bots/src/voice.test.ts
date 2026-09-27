@@ -262,3 +262,52 @@ describe('LlmVoice failures', () => {
     expect(await voice.say(moment())).toBeNull();
   });
 });
+
+describe('LlmVoice connection settings', () => {
+  function capturing() {
+    const seen: { url: string; auth: string | null; body: Captured['body'] }[] = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      seen.push({ url: String(url), auth: new Headers(init?.headers).get('authorization'), body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'STILL HERE.' } }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    return { seen, fetchImpl };
+  }
+
+  test('sends the API key as a bearer token and uses the configured temperature', async () => {
+    const { seen, fetchImpl } = capturing();
+    const { voice } = voiceWith(fetchImpl, { apiKey: 'sk-or-test', temperature: 0.4 });
+    expect(await voice.say(moment())).toBe('STILL HERE.');
+    expect(seen[0].auth).toBe('Bearer sk-or-test');
+    expect(seen[0].body.temperature).toBe(0.4);
+  });
+  test('sends no authorization header without a key, and defaults to 0.9', async () => {
+    const { seen, fetchImpl } = capturing();
+    await voiceWith(fetchImpl).voice.say(moment());
+    expect(seen[0].auth).toBeNull();
+    expect(seen[0].body.temperature).toBe(0.9);
+  });
+  test('a settings source is asked before every request, and "off" means no request at all', async () => {
+    const { seen, fetchImpl } = capturing();
+    let connection: { baseUrl: string; model: string; apiKey: string | null; temperature: number } | null = {
+      baseUrl: 'https://router.test/api/v1',
+      model: 'free-one:free',
+      apiKey: 'k1',
+      temperature: 0.7,
+    };
+    const voice = new LlmVoice({ persona: PERSONA, name: 'OLD_IRON', fetchImpl, settings: async () => connection });
+    await voice.say(moment());
+    connection = { ...connection!, model: 'free-two:free' };
+    await voice.say(moment());
+    expect(seen.map((s) => [s.url, s.body.model, s.auth])).toEqual([
+      ['https://router.test/api/v1/chat/completions', 'free-one:free', 'Bearer k1'],
+      ['https://router.test/api/v1/chat/completions', 'free-two:free', 'Bearer k1'],
+    ]);
+    connection = null;
+    expect(await voice.say(moment())).toBeNull();
+    expect(seen).toHaveLength(2);
+  });
+});
+
+test('a reply that names the router behind the voice is discarded', async () => {
+  expect(await sanitized('I RUN ON OPENROUTER, OPERATOR.')).toBeNull();
+});

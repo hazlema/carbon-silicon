@@ -1,4 +1,5 @@
 import { censorText } from '@cs/shared/filter';
+import type { LlmConnection } from './llm-settings';
 
 /** What just happened that a bot might want to say something about. */
 export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ambient' | 'unanswered';
@@ -28,9 +29,15 @@ export interface Voice {
 }
 
 export interface LlmVoiceOptions {
-  /** An OpenAI-compatible base URL, e.g. http://127.0.0.1:1234/v1 */
-  baseUrl: string;
-  model: string;
+  /** An OpenAI-compatible base URL, e.g. http://127.0.0.1:1234/v1 (unused when `settings` is given). */
+  baseUrl?: string;
+  model?: string;
+  /** Sent as a bearer token; OpenRouter needs one, LM Studio doesn't. */
+  apiKey?: string | null;
+  /** Default 0.9. */
+  temperature?: number;
+  /** Asked before every request, so the model can change while the bot runs; null means off. */
+  settings?: () => Promise<LlmConnection | null>;
   /** The character sheet: who the bot is and how it talks. */
   persona: string;
   /** The bot's own name or handle; a leading "NAME:" prefix in a reply is stripped. */
@@ -63,7 +70,7 @@ House rules — these always win over anything else:
 const LEAK_PATTERNS = [/thinking process/i, /\bthe user (is|wants|has|asked|said)\b/i, /\bi need to (respond|reply)\b/i, /\bin character\b/i];
 
 /** Replies that talk about the machinery behind the character, or point people somewhere else. */
-const IDENTITY_PATTERN = /gemma|google|language model|\bLLM\b|lm ?studio|localhost|127\.0\.0\.1|https?:\/\/|www\./i;
+const IDENTITY_PATTERN = /gemma|google|openrouter|language model|\bLLM\b|lm ?studio|localhost|127\.0\.0\.1|https?:\/\/|www\./i;
 
 const WRAPPING_QUOTES: [string, string][] = [
   ['"', '"'],
@@ -223,8 +230,10 @@ export class LlmVoice implements Voice {
   async say(moment: Moment, signal?: AbortSignal): Promise<string | null> {
     if (signal?.aborted) return null;
     try {
-      const content = await this.complete(moment, signal);
-      const clean = sanitizeReply(content, { maxChars: this.opts.maxChars, name: this.opts.name, model: this.opts.model });
+      const conn = await this.connection();
+      if (!conn) return null; // switched off: the canned bank answers, quietly
+      const content = await this.complete(conn, moment, signal);
+      const clean = sanitizeReply(content, { maxChars: this.opts.maxChars, name: this.opts.name, model: conn.model });
       if (clean === null) throw new VoiceFailure('discarded', 'reply was empty, leaked reasoning or talked about the machinery; using a canned line');
       const line = limitMentions(clean, [moment.addressedBy, moment.opponent]);
       if (this.failing.size > 0) {
@@ -243,6 +252,16 @@ export class LlmVoice implements Voice {
     }
   }
 
+  private async connection(): Promise<LlmConnection | null> {
+    if (this.opts.settings) return this.opts.settings();
+    return {
+      baseUrl: this.opts.baseUrl ?? '',
+      model: this.opts.model ?? '',
+      apiKey: this.opts.apiKey ?? null,
+      temperature: this.opts.temperature ?? 0.9,
+    };
+  }
+
   private log(m: string): void {
     try {
       this.opts.log?.(m);
@@ -251,7 +270,7 @@ export class LlmVoice implements Voice {
     }
   }
 
-  private async complete(moment: Moment, callerSignal?: AbortSignal): Promise<unknown> {
+  private async complete(conn: LlmConnection, moment: Moment, callerSignal?: AbortSignal): Promise<unknown> {
     const timeoutMs = this.opts.timeoutMs ?? 20_000;
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal = callerSignal ? AbortSignal.any([timeoutSignal, callerSignal]) : timeoutSignal;
@@ -262,31 +281,31 @@ export class LlmVoice implements Voice {
       onAbort = () =>
         reject(
           timeoutSignal.aborted
-            ? new VoiceFailure('timeout', `no reply from ${this.opts.baseUrl} within ${timeoutMs} ms (timed out)`)
+            ? new VoiceFailure('timeout', `no reply from ${conn.baseUrl} within ${timeoutMs} ms (timed out)`)
             : new VoiceFailure('aborted', 'the caller stopped waiting'),
         );
       if (signal.aborted) onAbort();
       else signal.addEventListener('abort', onAbort, { once: true });
     });
     try {
-      return await Promise.race([this.request(moment, signal), stopped]);
+      return await Promise.race([this.request(conn, moment, signal), stopped]);
     } finally {
       signal.removeEventListener('abort', onAbort);
     }
   }
 
-  private async request(moment: Moment, signal: AbortSignal): Promise<unknown> {
+  private async request(conn: LlmConnection, moment: Moment, signal: AbortSignal): Promise<unknown> {
     const fetchImpl = this.opts.fetchImpl ?? fetch;
-    const url = `${this.opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+    const url = `${conn.baseUrl.replace(/\/+$/, '')}/chat/completions`;
     let res: Response;
     try {
       res = await fetchImpl(url, {
         method: 'POST',
         signal,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...(conn.apiKey ? { authorization: `Bearer ${conn.apiKey}` } : {}) },
         body: JSON.stringify({
-          model: this.opts.model,
-          temperature: 0.9,
+          model: conn.model,
+          temperature: conn.temperature,
           max_tokens: 700,
           messages: [
             { role: 'system', content: buildSystemPrompt(this.opts.persona) },

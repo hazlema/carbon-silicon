@@ -9718,7 +9718,7 @@ EOF
 **Interfaces:**
 - Consumes (server, over HTTP): `POST /api/agents` with `x-house-key`; `GET /api/me`; `PATCH /api/me {status}`; `GET /api/inbox`; `GET /api/mod/reports?status=open` → `{reports: ReportInfo[]}` (403 `FORBIDDEN_ROLE` without the mod role); `POST /api/mod/reports/:id/resolve {resolution, reason, minutes?}`; `POST /api/mod/reports/:id/notes {text}`. Wire types `ReportInfo`, `ReportSnapshot`, `ReportNote` from `@cs/shared/protocol` (Task 2). In tests: `core.identities.createHuman(handle, meta)`, `core.comms.post`, `core.comms.message`, `core.reports.create`, `core.reports.get`, `core.moderation.setRole`, `core.moderation.sanctionOf` (Tasks 3–7).
 - Produces:
-  - `judge.ts`: `type VerdictAction = 'dismiss' | 'delete' | 'mute' | 'escalate'`; `interface Verdict { action: VerdictAction; reason: string; minutes?: number }`; `interface Judge { judge(report: ReportInfo, signal?: AbortSignal): Promise<Verdict | null> }`; `parseVerdict(content: unknown): Verdict | null`; `buildJudgePrompt(report: ReportInfo): string`; `JUDGE_RULES: string`; `class LlmJudge implements Judge` with options `{ baseUrl; model; timeoutMs?; fetchImpl?; log? }`.
+  - `judge.ts`: `type VerdictAction = 'dismiss' | 'delete' | 'mute' | 'escalate'`; `interface Verdict { action: VerdictAction; reason: string; minutes?: number }`; `interface Judge { judge(report: ReportInfo, signal?: AbortSignal): Promise<Verdict | null> }`; `parseVerdict(content: unknown): Verdict | null`; `buildJudgePrompt(report: ReportInfo): string`; `JUDGE_RULES: string`; `class LlmJudge implements Judge` with options `{ baseUrl?; model?; apiKey?; connection?: () => Promise<LlmConnection | null>; timeoutMs?; fetchImpl?; log? }` — the same shape as `LlmVoiceOptions`: `connection` (from `apps/bots/src/llm-settings.ts`, which already exists) is asked before every request, and null means the model is off (the judge returns null, so the report is escalated).
   - `bouncer.ts`: `BOUNCER` profile; `type Decision`; `decide(v: Verdict | null): Decision`; `interface BouncerOptions`; `runBouncer(opts): Promise<void>`.
   - `bot.ts`: `export async function connect(client: Client, profile: { name: string; tagline: string; color: string; model: string | null }, houseKey: string, tokenFile: string, log: (m: string) => void): Promise<void>`.
 
@@ -9813,6 +9813,26 @@ describe('LlmJudge', () => {
     expect(sent.temperature).toBe(0.2);
     expect(sent.messages[0].content).toContain('Be conservative');
   });
+  test('a live connection is asked each time: its key is sent, its temperature ignored, and null means no request', async () => {
+    const seen: { model: string; auth: string | null; temperature: number }[] = [];
+    const capture = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      seen.push({ model: body.model, auth: new Headers(init.headers).get('authorization'), temperature: body.temperature });
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"action":"dismiss","reason":"ok"}' } }] }));
+    }) as unknown as typeof fetch;
+    let conn: { baseUrl: string; model: string; apiKey: string | null; temperature: number } | null = {
+      baseUrl: 'https://router.test/api/v1',
+      model: 'safety:free',
+      apiKey: 'sk-or-1',
+      temperature: 1.4,
+    };
+    const judge = new LlmJudge({ connection: async () => conn, fetchImpl: capture });
+    expect((await judge.judge(report()))?.action).toBe('dismiss');
+    expect(seen).toEqual([{ model: 'safety:free', auth: 'Bearer sk-or-1', temperature: 0.2 }]);
+    conn = null;
+    expect(await judge.judge(report())).toBeNull();
+    expect(seen).toHaveLength(1);
+  });
 });
 ```
 
@@ -9901,15 +9921,19 @@ export function parseVerdict(content: unknown): Verdict | null {
 }
 
 export interface LlmJudgeOptions {
-  /** An OpenAI-compatible base URL, e.g. http://127.0.0.1:1234/v1 */
-  baseUrl: string;
-  model: string;
+  /** An OpenAI-compatible base URL, e.g. http://127.0.0.1:1234/v1 (unused when `connection` is given). */
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string | null;
+  /** Asked before every request (the shared .data/llm.json via SettingsFile); null means off. */
+  connection?: () => Promise<LlmConnection | null>;
   /** Give up on the model after this long (default 20 s). */
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   log?: (m: string) => void;
 }
 
+// judge.ts imports: import type { LlmConnection } from './llm-settings';
 export class LlmJudge implements Judge {
   constructor(private readonly opts: LlmJudgeOptions) {}
 
@@ -9922,7 +9946,14 @@ export class LlmJudge implements Judge {
       if (signal.aborted) onAbort();
       else signal.addEventListener('abort', onAbort, { once: true });
     });
-    const request = this.request(report, signal);
+    const conn = this.opts.connection
+      ? await this.opts.connection()
+      : { baseUrl: this.opts.baseUrl ?? '', model: this.opts.model ?? '', apiKey: this.opts.apiKey ?? null, temperature: 0.2 };
+    if (!conn) {
+      signal.removeEventListener('abort', onAbort);
+      return null; // the model is switched off: every report goes to a human
+    }
+    const request = this.request(conn, report, signal);
     request.catch(() => {}); // if `stopped` wins the race, the aborted fetch rejects later; nobody listens
     try {
       const verdict = parseVerdict(await Promise.race([request, stopped]));
@@ -9936,15 +9967,15 @@ export class LlmJudge implements Judge {
     }
   }
 
-  private async request(report: ReportInfo, signal: AbortSignal): Promise<unknown> {
-    const url = `${this.opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  private async request(conn: LlmConnection, report: ReportInfo, signal: AbortSignal): Promise<unknown> {
+    const url = `${conn.baseUrl.replace(/\/+$/, '')}/chat/completions`;
     const res = await (this.opts.fetchImpl ?? fetch)(url, {
       method: 'POST',
       signal,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...(conn.apiKey ? { authorization: `Bearer ${conn.apiKey}` } : {}) },
       body: JSON.stringify({
-        model: this.opts.model,
-        temperature: 0.2,
+        model: conn.model,
+        temperature: 0.2, // a judge should be steady whatever the voice's temperature is
         max_tokens: 700,
         messages: [
           { role: 'system', content: JUDGE_RULES },
@@ -10276,20 +10307,21 @@ import { LlmJudge } from './judge';
 2. After the `ironLog(…)` line, add:
 
 ```ts
-const bouncerModel = env.BOUNCER_MODEL?.trim() || llmModel;
+// The Bouncer reads the same settings file as OLD IRON (bouncerModel, else model), live.
 const bouncerLog = (m: string) => console.log(`[Bouncer] ${m}`);
-const judge = voiceOff ? null : new LlmJudge({ baseUrl: llmBase, model: bouncerModel, log: bouncerLog });
-bouncerLog(`judge: ${judge ? `llm ${bouncerModel} @ ${llmBase}` : 'off — every report goes to a human'}`);
+const judge = new LlmJudge({ connection: async () => connectionFor(await settings.get(), 'bouncer'), log: bouncerLog });
+const bouncerModel = connectionFor(await settings.get(), 'bouncer')?.model ?? null;
+bouncerLog(`judge: ${bouncerModel ?? 'off — every report goes to a human'}`);
 ```
 
 3. Add to the `Promise.all([...])` list:
 
 ```ts
-  runBouncer({ base: common.base, houseKey: common.houseKey, tokenFile: join(tokenDir, 'bouncer.token'), judge, model: judge ? bouncerModel : null, signal: controller.signal, log: bouncerLog }),
+  runBouncer({ base: common.base, houseKey: common.houseKey, tokenFile: join(tokenDir, 'bouncer.token'), judge, model: bouncerModel, signal: controller.signal, log: bouncerLog }),
 ```
 
 Run: `bun run start` in one terminal, `bun run bots` in another.
-Expected: the bots log `[Bouncer] judge: llm google/gemma-4-e2b @ http://127.0.0.1:1234/v1` (or `off — …`), `registered as @Bouncer`, then `no powers yet — run: bun run admin grant-mod Bouncer`. Run `bun run admin grant-mod Bouncer` (Task 9); the next sweep logs `powers granted; reading the reports`. Stop both with Ctrl-C.
+Expected: the bots log `[Bouncer] judge: google/gemma-4-e2b` (or `off — …`), `registered as @Bouncer`, then `no powers yet — run: bun run admin grant-mod Bouncer`. Run `bun run admin grant-mod Bouncer` (Task 9); the next sweep logs `powers granted; reading the reports`. Stop both with Ctrl-C.
 
 - [ ] **Step 11: Verify and commit**
 
