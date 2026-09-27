@@ -3,6 +3,7 @@ import type { ChatMessage, InboxEvent, PresenceInfo } from '@cs/shared/protocol'
 export interface BusEvents {
   'presence.changed': PresenceInfo;
   'chat.message': ChatMessage;
+  'chat.removed': { channel: string; id: number; by: string };
   inbox: { identityId: string; event: InboxEvent };
   'match.updated': { matchId: string; revision: number };
 }

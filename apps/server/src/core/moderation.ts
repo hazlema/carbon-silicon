@@ -1,6 +1,7 @@
 import { and, desc, eq, gt, ilike, inArray, isNull, lt, or, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type {
+  ChatMessage,
   IdentityPublic,
   ModActionKind,
   ModLogEntry,
@@ -71,7 +72,10 @@ export function peopleFilterOf(raw: unknown): PeopleFilter {
   throw badRequest('BAD_FILTER', `filter is one of: ${PEOPLE_FILTERS.join(', ')}.`);
 }
 
-function minutesOf(raw: unknown, permanentAllowed: boolean): number | null {
+/** Exported so `ReportManager.resolve` can validate minutes the same way before checkPower runs
+ *  (checkPower's resolve-report branch defaults an absent `minutes` to 0/null for its recursive
+ *  call, which would otherwise pass every cap instead of being refused). */
+export function minutesOf(raw: unknown, permanentAllowed: boolean): number | null {
   if (raw === undefined || raw === null) {
     if (permanentAllowed) return null;
     throw badRequest('BAD_MINUTES', 'Send minutes: a whole number from 1.');
@@ -294,6 +298,20 @@ export class ModerationManager {
     // Recorded first, so the log keeps the handle the tombstone is about to erase.
     await this.record(actor, 'release', target.id, why, { handle: target.handle });
     await this.deps.accounts.release(target.id);
+  }
+
+  /** The one way a message is removed: validated, checked against the power table, and logged. */
+  async deleteMessage(actor: Actor, messageId: unknown, reason: unknown): Promise<ChatMessage> {
+    const why = reasonOf(reason);
+    if (typeof messageId !== 'number' || !Number.isInteger(messageId) || messageId < 1) {
+      throw badRequest('BAD_MESSAGE', 'Send the id of a message.');
+    }
+    const message = await this.deps.comms.message(messageId);
+    if (!message || message.system) throw notFound('NO_MESSAGE', 'There is no such message.');
+    checkPower(actor, { action: 'delete-message' }, message.author);
+    const removed = await this.deps.comms.remove(messageId, actor.kind === 'console' ? null : actor.identity);
+    await this.record(actor, 'delete-message', message.author?.id ?? null, why, { messageId, channel: message.channel });
+    return removed;
   }
 
   async banIp(actor: Actor, ip: unknown, reason: unknown): Promise<void> {

@@ -14,6 +14,8 @@ import { LeaderboardManager } from './leaderboard';
 import { ModerationManager } from './moderation';
 import { PresenceManager } from './presence';
 import { ProfileService } from './profiles';
+import { RelationManager } from './relations';
+import { ReportManager } from './reports';
 
 export interface CoreOptions {
   databaseUrl?: string;
@@ -40,6 +42,8 @@ export interface Core {
   games: GameManager;
   invites: InviteManager;
   moderation: ModerationManager;
+  relations: RelationManager;
+  reports: ReportManager;
   leaderboard: LeaderboardManager;
   diary: DiaryService;
   close(): Promise<void>;
@@ -66,6 +70,11 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const moderation = new ModerationManager(database.db, bus, clock, { identities, accounts, profiles, comms, games, invites });
   guard.install((identity, action) => moderation.check(identity, action));
   await moderation.load();
+
+  const relations = new RelationManager(database.db, identities);
+  comms.setMentionFilter((ownerId, authorId) => relations.mutes(ownerId, authorId));
+  accounts.onRelease((identityId) => relations.forget(identityId));
+  const reports = new ReportManager(database.db, clock, { identities, comms, moderation, guard });
 
   const abandoned = await games.recoverOnBoot();
   if (abandoned > 0) console.log(`[core] marked ${abandoned} interrupted match(es) as abandoned`);
@@ -103,6 +112,8 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     games,
     invites,
     moderation,
+    relations,
+    reports,
     leaderboard,
     diary,
     close: async () => {

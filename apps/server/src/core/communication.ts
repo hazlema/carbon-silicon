@@ -1,5 +1,5 @@
-import { and, asc, desc, eq, gt, isNull } from 'drizzle-orm';
-import { censorText } from '@cs/shared/filter';
+import { and, asc, desc, eq, gt, lt } from 'drizzle-orm';
+import { censorText, containsSlur } from '@cs/shared/filter';
 import {
   DIARY_CHANNEL,
   type ChatMessage,
@@ -23,12 +23,35 @@ const TABLE_RE = /^match:([A-Za-z0-9_]+)$/;
 const MENTION_RE = /@([A-Za-z0-9_-]{3,20})/g;
 
 type TableAccess = (matchId: string) => { playerIds: string[] } | null;
+/** True means "don't deliver": the mentioned person ignores or blocks the author. */
+type MentionFilter = (ownerId: string, authorId: string) => Promise<boolean>;
+type Row = { m: typeof messages.$inferSelect; i: typeof identities.$inferSelect | null };
+
+/**
+ * A stored row as the wire sees it: a removed message keeps its place but loses its words —
+ * unless `viewer` is a mod or admin, who gets the original text back (S145-146: it stays visible
+ * to mods). `viewer` is undefined or null for an anonymous or non-staff reader.
+ */
+function toMessage({ m, i }: Row, viewer?: IdentityPublic | null): ChatMessage {
+  const removed = m.deletedAt ? { by: m.deletedBy ?? 'a moderator' } : null;
+  const staff = viewer?.role === 'mod' || viewer?.role === 'admin';
+  return {
+    id: m.id,
+    channel: m.channel,
+    author: i ? toPublic(i) : null,
+    text: removed && !staff ? '' : m.text,
+    createdAt: m.createdAt.toISOString(),
+    system: m.system,
+    removed,
+  };
+}
 
 export class CommunicationManager {
   private inboxes = new Map<string, { cursor: number; events: InboxEvent[] }>();
   private waiters = new Map<string, Set<() => void>>();
   private flood: RateLimiter;
   private tableAccess: TableAccess = () => null;
+  private mentionFilter: MentionFilter = async () => false;
 
   constructor(
     private db: DB,
@@ -42,6 +65,10 @@ export class CommunicationManager {
 
   setTableAccess(fn: TableAccess): void {
     this.tableAccess = fn;
+  }
+
+  setMentionFilter(fn: MentionFilter): void {
+    this.mentionFilter = fn;
   }
 
   channelKind(channel: string): 'public' | 'diary' | 'table' | null {
@@ -65,6 +92,8 @@ export class CommunicationManager {
     const text = typeof rawText === 'string' ? rawText.trim() : '';
     if (!text) throw badRequest('EMPTY', 'Say something.');
     if (text.length > MAX_TEXT) throw badRequest('TOO_LONG', `Messages are at most ${MAX_TEXT} characters.`);
+    // Slurs are refused everywhere, table chat included; trash talk stays, cruelty does not.
+    if (containsSlur(text)) throw badRequest('FILTERED', 'That message contains a slur. Not here, not ever.');
     if (!this.flood.take(author.id)) throw tooMany('SLOW_DOWN', 'Easy there — one message every two seconds.');
     return this.insert(channel, author, kind === 'public' ? censorText(text) : text, false);
   }
@@ -98,35 +127,64 @@ export class CommunicationManager {
     for (const m of message.text.matchAll(MENTION_RE)) {
       const target = await this.identities.getByHandle(m[1]);
       if (!target || notified.has(target.id)) continue;
-      this.deliver(target.id, { type: 'chat.mention', message });
       notified.add(target.id);
+      if (message.author && (await this.mentionFilter(target.id, message.author.id))) continue;
+      this.deliver(target.id, { type: 'chat.mention', message });
     }
   }
 
-  async history(channel: string, opts: { since?: number; limit?: number } = {}): Promise<ChatMessage[]> {
+  private select() {
+    return this.db.select({ m: messages, i: identities }).from(messages).leftJoin(identities, eq(messages.authorId, identities.id));
+  }
+
+  async history(
+    channel: string,
+    opts: { since?: number; limit?: number; viewer?: IdentityPublic | null } = {},
+  ): Promise<ChatMessage[]> {
     if (!this.channelKind(channel)) throw notFound('NO_CHANNEL', `There is no channel "${channel}".`);
     const limit = Math.min(200, Math.max(1, opts.limit ?? 50));
     const where =
-      opts.since !== undefined
-        ? and(eq(messages.channel, channel), isNull(messages.deletedAt), gt(messages.id, opts.since))
-        : and(eq(messages.channel, channel), isNull(messages.deletedAt));
-    const rows = await this.db
-      .select({ m: messages, i: identities })
-      .from(messages)
-      .leftJoin(identities, eq(messages.authorId, identities.id))
+      opts.since !== undefined ? and(eq(messages.channel, channel), gt(messages.id, opts.since)) : eq(messages.channel, channel);
+    const rows = await this.select()
       .where(where)
       .orderBy(opts.since !== undefined ? asc(messages.id) : desc(messages.id))
       .limit(limit);
     const ordered = opts.since !== undefined ? rows : rows.reverse();
-    return ordered.map(({ m, i }) => ({
-      id: m.id,
-      channel: m.channel,
-      author: i ? toPublic(i) : null,
-      text: m.text,
-      createdAt: m.createdAt.toISOString(),
-      system: m.system,
-      removed: null,
-    }));
+    return ordered.map((row) => toMessage(row, opts.viewer));
+  }
+
+  async message(messageId: number, viewer?: IdentityPublic | null): Promise<ChatMessage | null> {
+    const [row] = await this.select().where(eq(messages.id, messageId)).limit(1);
+    return row ? toMessage(row, viewer) : null;
+  }
+
+  /** Up to `span` lines either side of a message in its channel, plus the message; oldest first. */
+  async around(messageId: number, span: number): Promise<ChatMessage[]> {
+    const center = await this.message(messageId);
+    if (!center) return [];
+    const before = await this.select()
+      .where(and(eq(messages.channel, center.channel), lt(messages.id, messageId)))
+      .orderBy(desc(messages.id))
+      .limit(span);
+    const after = await this.select()
+      .where(and(eq(messages.channel, center.channel), gt(messages.id, messageId)))
+      .orderBy(asc(messages.id))
+      .limit(span);
+    return [...before.reverse().map((row) => toMessage(row)), center, ...after.map((row) => toMessage(row))];
+  }
+
+  /** Blanks a message for everyone (the caller has already checked the power). Idempotent. */
+  async remove(messageId: number, remover: IdentityPublic | null): Promise<ChatMessage> {
+    const found = await this.message(messageId);
+    if (!found || found.system) throw notFound('NO_MESSAGE', 'There is no such message.');
+    if (found.removed) return found;
+    const by = remover ? remover.handle : 'console';
+    await this.db
+      .update(messages)
+      .set({ deletedAt: new Date(this.clock.now()), deletedBy: by })
+      .where(eq(messages.id, messageId));
+    this.bus.emit('chat.removed', { channel: found.channel, id: messageId, by });
+    return { ...found, text: '', removed: { by } };
   }
 
   deliver(identityId: string, input: InboxEventInput): InboxEvent {

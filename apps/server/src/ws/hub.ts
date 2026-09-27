@@ -27,6 +27,9 @@ export class WsHub {
       core.bus.on('chat.message', (message) => {
         for (const ws of this.all) if (ws.data.channels.has(message.channel)) send(ws, { type: 'chat', message });
       }),
+      core.bus.on('chat.removed', (removed) => {
+        for (const ws of this.all) if (ws.data.channels.has(removed.channel)) send(ws, { type: 'chat.removed', ...removed });
+      }),
       core.bus.on('inbox', ({ identityId, event }) => {
         for (const ws of this.byIdentity.get(identityId) ?? []) send(ws, { type: 'inbox', event });
       }),
