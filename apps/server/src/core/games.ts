@@ -160,18 +160,20 @@ export class GameManager {
       this.goLive(id).catch((e) => console.error('[games] goLive failed', e));
     }, this.opts.countdownMs);
     try {
-      await this.db.insert(matches).values({
-        id,
-        gameId,
-        status: 'countdown',
-        seed,
-        season: seasonOf(now),
-        rated: seats.every((s) => s.identity.kind === 'agent' || s.identity.locked),
-        createdAt: new Date(now),
+      await this.db.transaction(async (tx) => {
+        await tx.insert(matches).values({
+          id,
+          gameId,
+          status: 'countdown',
+          seed,
+          season: seasonOf(now),
+          rated: seats.every((s) => s.identity.kind === 'agent' || s.identity.locked),
+          createdAt: new Date(now),
+        });
+        await tx.insert(matchPlayers).values(
+          seats.map((s) => ({ matchId: id, seat: s.seat, identityId: s.identity.id, kind: s.identity.kind })),
+        );
       });
-      await this.db.insert(matchPlayers).values(
-        seats.map((s) => ({ matchId: id, seat: s.seat, identityId: s.identity.id, kind: s.identity.kind })),
-      );
     } catch (e) {
       this.clock.clearTimeout(m.timer);
       this.matches.delete(id);
@@ -312,18 +314,24 @@ export class GameManager {
     for (const s of m.seats) this.release(m, s.identity.id);
     this.changed(m);
     m.timer = this.clock.setTimeout(() => this.matches.delete(m.id), this.opts.retainMs);
-    await this.db.transaction(async (tx) => {
-      await tx
-        .update(matches)
-        .set({ status: 'over', outcome, endReason: outcome.reason, endedAt: new Date(this.clock.now()) })
-        .where(eq(matches.id, m.id));
-      for (const s of m.seats) {
+    try {
+      await this.db.transaction(async (tx) => {
         await tx
-          .update(matchPlayers)
-          .set({ result: resultFor(outcome, s.seat) })
-          .where(and(eq(matchPlayers.matchId, m.id), eq(matchPlayers.seat, s.seat)));
-      }
-    });
+          .update(matches)
+          .set({ status: 'over', outcome, endReason: outcome.reason, endedAt: new Date(this.clock.now()) })
+          .where(eq(matches.id, m.id));
+        for (const s of m.seats) {
+          await tx
+            .update(matchPlayers)
+            .set({ result: resultFor(outcome, s.seat) })
+            .where(and(eq(matchPlayers.matchId, m.id), eq(matchPlayers.seat, s.seat)));
+        }
+      });
+    } catch (e) {
+      // The match is over whether or not the database heard about it; a row left in `live` is
+      // marked abandoned at the next boot. The players must still get their verdict.
+      console.error(`[games] could not record the result of ${m.id}`, e);
+    }
     for (const s of m.seats) {
       this.comms.deliver(s.identity.id, { type: 'match.over', matchId: m.id, outcome, result: resultFor(outcome, s.seat) });
     }

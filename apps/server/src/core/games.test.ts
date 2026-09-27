@@ -4,6 +4,7 @@ import { criticalMassGame, type CMCommand, type CMView } from '@cs/critical-mass
 import { createRng } from '@cs/game-api';
 import { PUBLIC_CHANNELS, type IdentityPublic } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
+import type { DB } from '../db';
 import { matches, matchPlayers } from '../db/schema';
 import { FakeClock } from '../lib/clock';
 import type { AppError } from '../lib/errors';
@@ -19,13 +20,13 @@ import { PresenceManager } from './presence';
 const database = await openDatabase('pglite:memory');
 afterAll(() => database.close());
 
-async function setup() {
+async function setup(gameDb: DB = database.db) {
   const clock = new FakeClock();
   const bus = new EventBus();
   const ids = new IdentityManager(database.db, clock, { houseKey: null });
   const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS, guard: new Guard() });
   const presence = new PresenceManager(bus, clock);
-  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], new Guard(), {
+  const games = new GameManager(gameDb, bus, clock, comms, presence, [criticalMassGame], new Guard(), {
     countdownMs: 3000,
     seed: () => 12345,
   });
@@ -54,6 +55,20 @@ async function errorOf(p: Promise<unknown>): Promise<AppError> {
   }
   throw new Error('expected a rejection');
 }
+
+/** A view of the database whose transactions fail on demand, for "the database went away" tests. */
+function flaky(db: DB) {
+  const state = { failTransactions: false };
+  const proxy = new Proxy(db, {
+    get(target, prop, receiver) {
+      if (prop === 'transaction' && state.failTransactions) return () => Promise.reject(new Error('database went away'));
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  return { db: proxy as DB, state };
+}
+const matchRows = async () => (await database.db.select({ id: matches.id }).from(matches)).length;
 
 const firstLegal = (ctx: Ctx, id: string, who: IdentityPublic) => ctx.games.envelope(id, who.id).legal[0] as CMCommand;
 
@@ -84,7 +99,9 @@ describe('creating a match', () => {
   test('a DB failure while creating a match leaves no ghost: both players freed, error rethrown', async () => {
     const ctx = await setup();
     const ghost: IdentityPublic = { ...ctx.outsider, id: newId('id') }; // no row in `identities` — the match_players FK insert fails
+    const before = await matchRows();
     await expect(ctx.games.createMatch('critical-mass', [ctx.red, ghost])).rejects.toThrow();
+    expect(await matchRows()).toBe(before); // the matches row went back out with the failed player insert
     expect(ctx.games.activeMatchOf(ctx.red.id)).toBeNull();
     expect(ctx.games.activeMatchOf(ghost.id)).toBeNull();
     expect(ctx.presence.get(ctx.red.id)?.status).toBe('ready');
@@ -146,6 +163,18 @@ describe('playing', () => {
     const idle = ctx.games.wait(id, 3, 25_000);
     ctx.clock.advance(25_000);
     await idle;
+  });
+  test('a failed result write still ends the match for everyone', async () => {
+    const f = flaky(database.db);
+    const ctx = await setup(f.db);
+    const id = await liveMatch(ctx);
+    f.state.failTransactions = true;
+    await ctx.games.resign(id, ctx.blue);
+    expect(ctx.games.summary(id).status).toBe('over');
+    expect(ctx.games.activeMatchOf(ctx.red.id)).toBeNull();
+    const events = (await ctx.comms.poll(ctx.red.id, 0, 0)).events;
+    expect(events.some((e) => e.type === 'match.over' && e.result === 'win')).toBe(true);
+    expect((await ctx.comms.history(`match:${id}`)).some((m) => m.text.includes('GG'))).toBe(true);
   });
 });
 

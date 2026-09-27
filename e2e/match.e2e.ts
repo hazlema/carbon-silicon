@@ -49,3 +49,25 @@ test('changing your mind after "Play again" does not start another match behind 
   await expect(page).toHaveURL('/');
   await expect(page.getByRole('button', { name: 'Find a match' })).toBeVisible();
 });
+
+test('keyboard players can reach every cell, and only legal cells act', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
+  await page.getByRole('button', { name: 'Enter the parlor' }).click();
+  await page.getByRole('button', { name: 'Find a match' }).click();
+  await page.waitForURL(/\/play\/m_/, { timeout: 20_000 });
+  const cells = page.locator('button[data-cell]');
+  await expect(cells).toHaveCount(54);
+  await expect(page.locator('button[data-cell][disabled]')).toHaveCount(0);
+  await cells.first().focus();
+  await expect(cells.first()).toHaveAttribute('data-cell', 'a9');
+  // The e2e tsconfig has no DOM lib, so `document`/`HTMLElement` aren't ambient names here;
+  // route through `globalThis` to keep the check without widening the project's lib globally.
+  const focusedCell = () => page.evaluate(() => (globalThis as any).document.activeElement.dataset.cell);
+  await page.keyboard.press('ArrowRight');
+  expect(await focusedCell()).toBe('b9');
+  await page.keyboard.press('ArrowDown');
+  expect(await focusedCell()).toBe('b8');
+  await page.getByRole('button', { name: 'Resign' }).click();
+  await page.getByRole('button', { name: 'Yes, resign' }).click();
+});

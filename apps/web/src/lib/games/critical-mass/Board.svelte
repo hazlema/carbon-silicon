@@ -22,6 +22,18 @@
   let hover = $state<number | null>(null);
   const legalSet = $derived(new Set(legal));
 
+  let cellsEl: HTMLDivElement | undefined = $state();
+
+  /** Arrow keys move focus across the grid; every cell is focusable, legal or not. */
+  function step(e: KeyboardEvent, k: number) {
+    const d = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, [number, number]>)[e.key];
+    if (!d || !cellsEl) return;
+    e.preventDefault();
+    const col = Math.min(view.cols - 1, Math.max(0, (k % view.cols) + d[0]));
+    const row = Math.min(view.rows - 1, Math.max(0, Math.floor(k / view.cols) + d[1]));
+    (cellsEl.children[row * view.cols + col] as HTMLElement | undefined)?.focus();
+  }
+
   let bursts: { index: number; start: number }[] = [];
   let burstsAt = 0;
   let burstsUntil = 0;
@@ -178,17 +190,18 @@
   style:width="min(100%, calc(68dvh * {view.cols} / {view.rows}))"
 >
   <canvas bind:this={canvas} aria-hidden="true"></canvas>
-  <div class="cells" role="group" aria-label="Board" style:grid-template-columns="repeat({view.cols}, 1fr)">
-    {#each order as i (i)}
+  <div class="cells" role="group" aria-label="Board" bind:this={cellsEl} style:grid-template-columns="repeat({view.cols}, 1fr)">
+    {#each order as i, k (i)}
       {@const b = view.board[i]}
       {@const ok = interactive && legalSet.has(b.cell)}
       <button
         type="button"
         data-cell={b.cell}
         data-legal={ok ? 'true' : 'false'}
-        disabled={!ok}
+        aria-disabled={!ok}
         aria-label={label(b)}
-        onclick={() => onMove(b.cell)}
+        onclick={() => ok && onMove(b.cell)}
+        onkeydown={(e) => step(e, k)}
         onpointerenter={() => (hover = i)}
         onpointerleave={() => hover === i && (hover = null)}
         onfocus={() => (hover = i)}
@@ -225,7 +238,7 @@
     padding: 0;
     border-radius: 12%;
   }
-  button:disabled {
+  button[aria-disabled='true'] {
     cursor: default;
   }
   button:focus-visible {

@@ -55,6 +55,8 @@ export class WsHub {
       set.add(ws);
       this.byIdentity.set(id, set);
       this.core.presence.humanConnected(ws.data.identity);
+      // Back after the grace period: presence forgot the match, the game manager didn't.
+      if (this.core.games.activeMatchOf(id)) this.core.presence.setPlaying(id, true);
       send(ws, { type: 'hello', identity: ws.data.identity, presence: this.core.presence.list() });
     },
     message: (ws: Socket, raw: string | Buffer) => {
