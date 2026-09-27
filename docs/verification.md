@@ -15,6 +15,22 @@ Rule 13: a feature exists only when it is tested and verified running. Each run 
 | `bun run build` | adapter-static `Wrote site to "build"` |
 | `playwright test` | `19 passed (40.8s)` |
 
+### Live
+
+Run by the controller against a copy of the dev PGlite database on port 3200 (a scratch bot-token dir, the running `:3000` site untouched). Booting M2a on the real dev database runs migration 0001, which is the Foreman's call at merge.
+
+- Setup: `bun run build`; `DATABASE_URL=pglite:<copy of .data/pglite> PORT=3200 ADMIN_KEY=<scratch> bun apps/server/src/main.ts` → `Carbon & Silicon is open at http://127.0.0.1:3200` (migration 0001 applied to the copy without errors).
+- `GET /api` → 40 endpoints, 16 of them under `/api/mod/`.
+- `CS_BASE=http://127.0.0.1:3200 BOT_TOKEN_DIR=<scratch> bun apps/bots/src/main.ts` →
+  - `[Bouncer] judge: openai/gpt-6-luna`
+  - `[Bouncer] registered as @Bouncer`
+  - `[Bouncer] no powers yet — run: bun run admin grant-mod Bouncer`
+- `CS_BASE=http://127.0.0.1:3200 ADMIN_KEY=<scratch> bun run admin grant-mod Bouncer` → `@Bouncer is now a moderator.`, then the bot log shows `[Bouncer] powers granted; reading the reports`.
+- A guest posted "everyone in this lobby is a brainless loser and should uninstall their life" (message 170). A second guest reported it (report `r_5b03917640ea4fab`, open). Within seconds the report was `resolved`, resolution `delete`, resolvedBy `Bouncer`, with the note `Bouncer: deleted: The message insults the lobby and tells people to end their lives.`
+- `GET /api/chat/lobby?since=169` → message 170 reads `text: ''`, `removed: {by: 'Bouncer'}`.
+- OLD IRON (voiced by `openai/gpt-6-luna`) also answered the guest unprompted: "@rudeguest25804 KEEP THE STATIC OFF THE OPERATORS."
+- Server and bots stopped afterwards; the copy was discarded.
+
 ### What broke, and how it was fixed
 
 1. **A Bouncer test raced its own background bot, and only Postgres's latency made it lose.** `apps/bots/src/bouncer.test.ts`'s "a resolve that permanently fails" test creates a report, then releases its target, expecting the Bouncer's mute to land on the tombstoned identity and get `404 NO_USER`. Nothing ordered those two calls against the Bouncer's own concurrent sweep loop: on PGlite the test's three direct DB calls reliably beat the Bouncer's multi-hop HTTP round trip, so the release always won; the same test failed the same way on every run against real Postgres (`Expected: "open"`, `Received: "resolved"` — the mute succeeded because the release hadn't landed yet). Not flaky — deterministic in both directions, just a different winner per backend.
