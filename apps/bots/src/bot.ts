@@ -29,6 +29,8 @@ export interface BotOptions {
 /** Ambient chatter needs the lobby to have been quiet for at least this long. */
 const LOBBY_QUIET_MS = 8 * 60_000;
 const AMBIENT_CHANCE = 0.5;
+/** At most one cascade remark per this long at a table. */
+const CHATTER_GAP_MS = 8000;
 
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -160,15 +162,23 @@ async function playMatch(client: Client, opts: BotOptions, matchId: string, iden
   const opponent = env.match.seats.find((s) => s.seat !== env.you)?.identity.handle;
   const say = (kind: MomentKind) => speak(client, opts, kind, table, { opponent });
   if (!(await alreadyGreeted(client, table, identityId))) await say('hello');
+  // Cascade commentary is spaced out: in a fast game every other move is a chain reaction, and
+  // narrating each one would spam the table and spend the parlor's chat allowance (a short burst,
+  // then one line per two seconds), leaving none for the next match's hello.
+  let lastChatter = -Infinity;
+  const chatter = (kind: MomentKind) => {
+    if (Date.now() - lastChatter < CHATTER_GAP_MS) return;
+    lastChatter = Date.now();
+    void say(kind); // not awaited: a voice may take seconds, and the game clock doesn't wait
+  };
   let lastSeenMove = -1;
   while (!opts.signal?.aborted && (env.match.status === 'countdown' || env.match.status === 'live')) {
     const view = env.view as { lastMove?: { seat: string; waves: string[][] } | null; moveCount?: number };
     if (view.lastMove && view.moveCount !== lastSeenMove) {
       lastSeenMove = view.moveCount ?? -1;
       const big = view.lastMove.waves.length >= 3;
-      // Not awaited: a voice may take seconds to answer, and the game clock doesn't wait for it.
-      if (big && view.lastMove.seat === env.you && Math.random() < 0.6) void say('bigCascade');
-      if (big && view.lastMove.seat !== env.you && Math.random() < 0.5) void say('gotHit');
+      if (big && view.lastMove.seat === env.you && Math.random() < 0.6) chatter('bigCascade');
+      if (big && view.lastMove.seat !== env.you && Math.random() < 0.5) chatter('gotHit');
     }
     if (env.match.status === 'live' && env.you && env.match.toMove.includes(env.you) && env.legal.length > 0) {
       const [lo, hi] = opts.thinkMs;
@@ -245,7 +255,12 @@ export async function runBot(opts: BotOptions): Promise<void> {
   };
   const ambient = opts.voice && (opts.ambientEveryMs ?? 12 * 60_000) > 0 ? ambientLoop(client, opts, () => playing.size > 0, log) : null;
 
+  // Start from the inbox's current end. The server keeps a bot's inbox across bot restarts, so
+  // reading from 0 would replay old mentions (answering them again, long after the fact) and old
+  // match.started events (re-saying win/lose lines for finished matches). A match that is still
+  // live is picked up through me().activeMatch below.
   let cursor = 0;
+  if (!opts.signal?.aborted) cursor = await client.inbox(0, 0).then((p) => p.cursor, () => 0);
   while (!opts.signal?.aborted) {
     try {
       const me = await client.me();

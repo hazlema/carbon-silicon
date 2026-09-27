@@ -164,12 +164,15 @@ describe('OLD IRON (a bot with a voice)', () => {
     const who = new Client(ironServer.url);
     await until(async () => (await who.call<{ presence: { identity: { handle: string; isHouse: boolean } }[] }>('GET', '/api/who')).presence.find((p) => p.identity.handle === 'OLD_IRON'));
   };
-  const guest = async () => {
-    const g = new Client(ironServer.url);
-    const reg = await g.register({ name: `guest${randomTag()}` });
-    g.token = reg.token;
-    return { client: g, handle: reg.identity.handle };
-  };
+  // One guest for the whole block: the server allows only five registrations per address per hour.
+  let theGuest: Promise<{ client: Client; handle: string }> | null = null;
+  const guest = () =>
+    (theGuest ??= (async () => {
+      const g = new Client(ironServer.url);
+      const reg = await g.register({ name: `guest${randomTag()}` });
+      g.token = reg.token;
+      return { client: g, handle: reg.identity.handle };
+    })());
   const ironSaid = async (client: Client, channel: string, pred: (text: string) => boolean) =>
     until(async () => {
       const r = await client.call<Said>('GET', `/api/chat/${encodeURIComponent(channel)}?since=0&limit=200`);
@@ -193,10 +196,15 @@ describe('OLD IRON (a bot with a voice)', () => {
     voiceMode = 'silent';
     try {
       const { client, handle } = await guest();
-      await client.chat('lobby', '@OLD_IRON are you awake?');
-      const reply = await ironSaid(client, 'lobby', (t) => t.startsWith(`@${handle} `));
+      const before = heard.length;
+      const posted = (await client.chat('lobby', '@OLD_IRON are you awake?')) as { message: { id: number } };
+      const reply = await until(async () => {
+        const r = await client.call<Said>('GET', `/api/chat/lobby?since=${posted.message.id}`);
+        return r.messages.find((m) => m.author?.handle === 'OLD_IRON')?.text;
+      });
+      expect(reply.startsWith(`@${handle} `)).toBe(true);
       expect(oldIron.lines.mentioned).toContain(reply.slice(`@${handle} `.length));
-      expect(heard.some((m) => m.kind === 'mention' && m.addressedBy === handle)).toBe(true);
+      expect(heard.slice(before).some((m) => m.kind === 'mention' && m.addressedBy === handle)).toBe(true);
     } finally {
       voiceMode = 'talk';
     }
@@ -234,6 +242,34 @@ describe('OLD IRON (a bot with a voice)', () => {
     const later = r.messages.filter((m) => m.id > (posted as { message: { id: number } }).message.id && m.author?.handle === 'OLD_IRON');
     expect(later).toHaveLength(0);
     expect(heard.slice(before).filter((m) => m.kind === 'mention')).toHaveLength(0);
+  }, 30_000);
+
+  test('a restarted bot does not replay mentions it received before it went down', async () => {
+    const rivet = { ...oldIron, name: `Rivet${randomTag()}` };
+    const rivetTokenFile = join(root, `.data/test-bots/${crypto.randomUUID()}.token`);
+    const start = (signal: AbortSignal) =>
+      runBot({ base: ironServer.url, personality: rivet, voice: fakeVoice, replyCooldownMs: 0, ambientEveryMs: 0, houseKey: 'hk', tokenFile: rivetTokenFile, thinkMs: [0, 0], pollWaitMs: 500, signal, log: () => {} });
+    const { client, handle } = await guest();
+    const rivetSaid = async () =>
+      (await client.call<Said>('GET', '/api/chat/lobby?limit=50')).messages.filter((m) => m.author?.handle === rivet.name).map((m) => m.text);
+    const run = async (body: () => Promise<unknown>) => {
+      const c = new AbortController();
+      const done = start(c.signal);
+      try {
+        await body();
+      } finally {
+        c.abort();
+        await done;
+      }
+    };
+    await run(() => until(async () => (await client.call<{ presence: { identity: { handle: string } }[] }>('GET', '/api/who')).presence.find((p) => p.identity.handle === rivet.name)));
+    await client.chat('lobby', `@${rivet.name} anyone home?`); // lands in its inbox while it is down
+    await run(async () => {
+      await Bun.sleep(1500);
+      expect(await rivetSaid()).toEqual([]);
+      await client.chat('lobby', `@${rivet.name} how about now?`);
+      expect(await until(async () => (await rivetSaid())[0])).toBe(`@${handle} VOICE MENTION LINE.`);
+    });
   }, 30_000);
 });
 
