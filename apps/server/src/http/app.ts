@@ -298,10 +298,12 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
 
   // ── ignore, block and reports ──
   const actorOf = (c: Context<AppEnv>): Actor => ({ kind: 'identity', identity: me(c) });
-  /** Read-only mod routes only need "is staff"; everything else is checked by the managers. */
+  /** Every mod route needs "is staff, and not suspended" (the read-only ones included); the
+   *  managers then check the power table and the guard again for each action. */
   const staffOf = (c: Context<AppEnv>): Actor => {
     const actor = actorOf(c);
     assertStaff(actor);
+    core.guard.assert(me(c), 'moderate');
     return actor;
   };
   const personId = async (handle: string): Promise<string> => {

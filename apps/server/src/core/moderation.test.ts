@@ -257,6 +257,15 @@ describe('the power table, enforced by the manager', () => {
     expect(await codeOf(core.moderation.resetPassword(as(admin), (await person('nopw')).id, 'x'))).toBe('NOT_LOCKED');
   });
 
+  test('IP bans refuse loopback addresses: behind nginx every request is loopback', async () => {
+    const admin = await staff('admin');
+    for (const ip of ['127.0.0.1', '127.8.9.10', '::1', '::ffff:127.0.0.1', '::FFFF:127.1.2.3']) {
+      expect([ip, await codeOf(core.moderation.banIp(as(admin), ip, 'oops'))]).toEqual([ip, 'BAD_IP']);
+      expect(core.moderation.isIpBanned(ip)).toBe(false);
+    }
+    expect(await codeOf(core.moderation.banIp(CONSOLE, '127.0.0.1', 'oops'))).toBe('BAD_IP');
+  });
+
   test('IP bans: admins only, validated, and reversible', async () => {
     const admin = await staff('admin');
     const mod = await staff('mod');

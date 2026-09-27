@@ -17,7 +17,7 @@ import type { CommunicationManager } from './communication';
 import type { Guard } from './guard';
 import { toPublic, type IdentityManager } from './identity';
 import { minutesOf, reasonOf, type ModerationManager } from './moderation';
-import { actorName, checkPower, type Actor } from './powers';
+import { actorName, type Actor } from './powers';
 
 const RESOLUTIONS: readonly ReportResolution[] = ['dismiss', 'delete', 'mute', 'suspend'];
 const CONTEXT_SPAN = 5;
@@ -158,7 +158,7 @@ export class ReportManager {
     if (res === 'mute') minutesOf(minutes, false);
     if (res === 'suspend') minutesOf(minutes, true);
     // Dismissing acts on nobody, so a mod may dismiss a report about someone they couldn't touch.
-    checkPower(
+    this.deps.moderation.authorize(
       actor,
       { action: 'resolve-report', resolution: res, minutes: typeof minutes === 'number' ? minutes : undefined },
       res === 'dismiss' ? null : report.target,
@@ -178,7 +178,7 @@ export class ReportManager {
     const report = await this.get(id);
     if (report.status !== 'resolved') throw conflict('REPORT_OPEN', 'That report is still open.');
     const why = reasonOf(reason);
-    checkPower(actor, { action: 'reopen-report' }, null);
+    this.deps.moderation.authorize(actor, { action: 'reopen-report' }, null);
     await this.db
       .update(reports)
       .set({ status: 'open', resolution: null, resolvedBy: null, resolvedAt: null })
@@ -192,7 +192,7 @@ export class ReportManager {
     const report = await this.get(id);
     const note = typeof text === 'string' ? text.trim() : '';
     if (note.length < 1 || note.length > 300) throw badRequest('BAD_NOTE', 'A note is 1–300 characters.');
-    checkPower(actor, { action: 'note' }, null);
+    this.deps.moderation.authorize(actor, { action: 'note' }, null);
     const notes: ReportNote[] = [...report.notes, { by: actorName(actor), text: note, at: new Date(this.clock.now()).toISOString() }];
     await this.db.update(reports).set({ notes }).where(eq(reports.id, id));
     await this.deps.moderation.record(actor, 'note', report.target?.id ?? null, note, { report: id });

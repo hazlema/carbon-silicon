@@ -71,7 +71,7 @@ export class InviteManager {
     if (!entry) return;
     const bot = this.presence
       .list()
-      .find((p) => p.identity.isHouse && p.status === 'ready' && !this.games.activeMatchOf(p.identity.id));
+      .find((p) => p.identity.isHouse && p.status === 'ready' && !this.games.activeMatchOf(p.identity.id) && this.mayPlay(p.identity));
     if (!bot) {
       this.arm(entry);
       return;
@@ -83,6 +83,16 @@ export class InviteManager {
       console.error('[invites] could not start house match', e);
       this.queue.set(identityId, entry);
       this.arm(entry);
+    }
+  }
+
+  /** The same check quickMatch() makes of a player: a suspended house bot is never seated. */
+  private mayPlay(identity: IdentityPublic): boolean {
+    try {
+      this.guard.assert(identity, 'play');
+      return true;
+    } catch {
+      return false;
     }
   }
 

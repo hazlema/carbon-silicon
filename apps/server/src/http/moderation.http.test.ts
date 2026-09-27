@@ -143,6 +143,49 @@ describe('the mod door', () => {
     expect((await call('GET', '/api/me', { cookie: bob.cookie })).status).toBe(401);
   });
 
+  test('a suspended mod (or admin) loses every moderation power until the suspension is lifted', async () => {
+    const mod = await makeStaff('mod');
+    const admin = await makeStaff('admin');
+    const bob = await signUp('bob');
+    await core.moderation.suspend({ kind: 'console' }, mod.identity.id, 'staff misconduct', 60);
+    await core.moderation.suspend({ kind: 'console' }, admin.identity.id, 'staff misconduct', null);
+
+    const posted = await call('POST', '/api/chat/lobby', { cookie: bob.cookie, body: { text: 'hello there' } });
+    for (const who of [mod, admin]) {
+      const refused = [
+        await call('POST', `/api/mod/people/${bob.identity.handle}/mute`, { cookie: who.cookie, body: { reason: 'x', minutes: 5 } }),
+        await call('POST', `/api/mod/people/${bob.identity.handle}/suspend`, { cookie: who.cookie, body: { reason: 'x', minutes: 5 } }),
+        await call('DELETE', `/api/mod/messages/${posted.data.message.id}`, { cookie: who.cookie, body: { reason: 'x' } }),
+        await call('POST', '/api/mod/ip-bans', { cookie: who.cookie, body: { ip: '203.0.113.77', reason: 'x' } }),
+        // the read-only mod routes too
+        await call('GET', '/api/mod/reports', { cookie: who.cookie }),
+        await call('GET', '/api/mod/people', { cookie: who.cookie }),
+        await call('GET', `/api/mod/people/${bob.identity.handle}`, { cookie: who.cookie }),
+        await call('GET', '/api/mod/log', { cookie: who.cookie }),
+      ];
+      expect(refused.map((r) => [r.status, r.data.error?.code])).toEqual(Array(refused.length).fill([403, 'SUSPENDED']));
+    }
+    // the managers refuse too, whichever door the call comes through
+    const direct = await core.moderation
+      .mute({ kind: 'identity', identity: mod.identity }, bob.identity.id, 'x', 5)
+      .then(() => null, (e) => e.code);
+    expect(direct).toBe('SUSPENDED');
+    expect(core.moderation.sanctionOf(bob.identity.id)).toBeNull();
+
+    await core.moderation.lift({ kind: 'console' }, mod.identity.id, 'reinstated');
+    const muted = await call('POST', `/api/mod/people/${bob.identity.handle}/mute`, { cookie: mod.cookie, body: { reason: 'cool off', minutes: 5 } });
+    expect([muted.status, muted.data.sanction?.kind]).toEqual([200, 'mute']);
+  });
+
+  test('a muted mod still moderates (a mute only stops chat)', async () => {
+    const mod = await makeStaff('mod');
+    const bob = await signUp('bob');
+    await core.moderation.mute({ kind: 'console' }, mod.identity.id, 'hush', 60);
+    expect((await call('GET', '/api/mod/reports', { cookie: mod.cookie })).status).toBe(200);
+    const muted = await call('POST', `/api/mod/people/${bob.identity.handle}/mute`, { cookie: mod.cookie, body: { reason: 'cool off', minutes: 5 } });
+    expect(muted.status).toBe(200);
+  });
+
   test('admins manage roles, passwords, releases and IP bans', async () => {
     const admin = await makeStaff('admin');
     const mod = await makeStaff('mod');

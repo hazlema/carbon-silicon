@@ -4,7 +4,7 @@ import { criticalMassGame } from '@cs/critical-mass';
 import { PUBLIC_CHANNELS } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
 import { FakeClock } from '../lib/clock';
-import type { AppError } from '../lib/errors';
+import { forbidden, type AppError } from '../lib/errors';
 import { randomTag, waitFor } from '../lib/testing';
 import { EventBus } from './bus';
 import { CommunicationManager } from './communication';
@@ -17,14 +17,14 @@ import { PresenceManager } from './presence';
 const database = await openDatabase(await testDatabaseUrl());
 afterAll(() => database.close());
 
-async function setup() {
+async function setup(guard = new Guard()) {
   const clock = new FakeClock();
   const bus = new EventBus();
   const ids = new IdentityManager(database.db, clock, { houseKey: 'hk' });
   const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS, guard: new Guard() });
   const presence = new PresenceManager(bus, clock);
   const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], new Guard());
-  const invites = new InviteManager(games, presence, bus, clock, new Guard(), { houseFallbackMs: 8000 });
+  const invites = new InviteManager(games, presence, bus, clock, guard, { houseFallbackMs: 8000 });
   const tag = randomTag();
   const ann = (await ids.createHuman(`ann${tag}`)).identity;
   const ben = (await ids.createHuman(`ben${tag}`)).identity;
@@ -74,6 +74,26 @@ describe('quick match', () => {
     presence.agentSeen(house);
     clock.advance(8000);
     await waitFor(() => games.activeMatchOf(ann.id) !== null);
+  });
+  test('a suspended house bot is never seated by the fallback; once lifted, it is', async () => {
+    const suspended = new Set<string>();
+    const guard = new Guard();
+    guard.install((who, action) => {
+      if (suspended.has(who.id) && action !== 'chat') throw forbidden('SUSPENDED', 'Suspended.');
+    });
+    const { invites, games, presence, clock, ann, house } = await setup(guard);
+    presence.agentSeen(house);
+    suspended.add(house.id);
+    await invites.quickMatch(ann, 'critical-mass');
+    clock.advance(8000);
+    await Bun.sleep(20);
+    expect(games.activeMatchOf(ann.id)).toBeNull();
+    expect(games.activeMatchOf(house.id)).toBeNull();
+    expect(invites.queuedFor(ann.id)).toBe('critical-mass');
+    suspended.delete(house.id);
+    clock.advance(8000);
+    await waitFor(() => games.activeMatchOf(ann.id) !== null);
+    expect(games.activeMatchOf(house.id)).toBe(games.activeMatchOf(ann.id));
   });
   test('refusals: not ready, already playing, house bots, unknown games', async () => {
     const { invites, presence, ann, ben, house } = await setup();

@@ -55,7 +55,8 @@ export async function runBouncer(opts: BouncerOptions): Promise<void> {
   const log = opts.log ?? ((m: string) => console.log(`[${BOUNCER.name}] ${m}`));
   const client = new Client(opts.base, null, opts.signal);
   const handled = new Set<string>();
-  let powerless = false;
+  /** Why the last sweep couldn't read the queue: no mod role yet, or suspended. Logged once per spell. */
+  let blocked: 'role' | 'suspended' | null = null;
   let myHandle: string = BOUNCER.name;
 
   for (let attempt = 0; !opts.signal?.aborted; attempt++) {
@@ -94,10 +95,11 @@ export async function runBouncer(opts: BouncerOptions): Promise<void> {
     } catch (e) {
       // The server has the last word either way, and not just about its own caps: the world can
       // also have moved on since the report was filed (the target released, the message already
-      // gone). Only a rejected token (401) or a rate limit (429) are worth retrying — every other
+      // gone). Only a rejected token (401), a rate limit (429) or its own suspension are worth retrying — every other
       // 4xx means this report can never be acted on, so it goes to a human. Either way it gets a
       // note, its durable mark, so it is never re-judged again.
-      if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 429) {
+      // A suspension that lands mid-sweep (403 SUSPENDED) is the Bouncer's own state, not the report's: retry too.
+      if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 429 && e.code !== 'SUSPENDED') {
         const escalate = `escalate: could not act (${e.code})`;
         await note(report.id, escalate);
         log(`report ${report.id}: ${escalate}`);
@@ -119,15 +121,18 @@ export async function runBouncer(opts: BouncerOptions): Promise<void> {
     try {
       reports = (await client.call<{ reports: ReportInfo[] }>('GET', '/api/mod/reports?status=open')).reports;
     } catch (e) {
-      if (e instanceof ApiError && e.status === 403) {
-        if (!powerless) log('no powers yet — run: bun run admin grant-mod Bouncer');
-        powerless = true;
+      // Only a missing role needs the Proprietor's grant-mod; a suspension just runs out (or is lifted).
+      if (e instanceof ApiError && e.status === 403 && (e.code === 'FORBIDDEN_ROLE' || e.code === 'SUSPENDED')) {
+        const why = e.code === 'SUSPENDED' ? 'suspended' : 'role';
+        if (blocked !== why) log(why === 'suspended' ? 'suspended — waiting' : 'no powers yet — run: bun run admin grant-mod Bouncer');
+        blocked = why;
         return;
       }
       throw e;
     }
-    if (powerless) log('powers granted; reading the reports');
-    powerless = false;
+    if (blocked === 'role') log('powers granted; reading the reports');
+    if (blocked === 'suspended') log('suspension over; reading the reports');
+    blocked = null;
     for (const report of reports) {
       if (opts.signal?.aborted) return;
       if (handled.has(report.id) || report.notes.some((n) => n.by === myHandle)) continue;

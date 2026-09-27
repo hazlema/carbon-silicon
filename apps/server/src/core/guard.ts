@@ -1,6 +1,7 @@
 import type { IdentityPublic } from '@cs/shared/protocol';
 
-export type GuardedAction = 'chat' | 'play' | 'profile' | 'report';
+/** `moderate` is every moderation power, read-only mod routes included: a suspension blocks it, a mute does not. */
+export type GuardedAction = 'chat' | 'play' | 'profile' | 'report' | 'moderate';
 
 /**
  * The one moderation checkpoint. Core methods that both doors share call assert(); the

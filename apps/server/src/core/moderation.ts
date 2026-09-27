@@ -22,7 +22,7 @@ import type { GameManager } from './games';
 import type { GuardedAction } from './guard';
 import { toPublic, type IdentityManager } from './identity';
 import type { InviteManager } from './invites';
-import { actorName, checkPower, type Actor } from './powers';
+import { actorName, checkPower, type Actor, type PowerRequest } from './powers';
 import type { ProfileService } from './profiles';
 
 export type PeopleFilter = 'all' | 'suspended' | 'muted' | 'mods' | 'guests' | 'agents' | 'house';
@@ -87,9 +87,12 @@ export function minutesOf(raw: unknown, permanentAllowed: boolean): number | nul
 }
 
 const IP_RE = /^[0-9A-Fa-f:.]{2,64}$/;
+/** 127.0.0.0/8, ::1 and IPv4-mapped loopback. Behind nginx every request's socket address is loopback. */
+const LOOPBACK_RE = /^(?:127\.|::1$|::ffff:127\.)/i;
 function ipOf(raw: unknown): string {
   const ip = typeof raw === 'string' ? raw.trim() : '';
   if (!IP_RE.test(ip)) throw badRequest('BAD_IP', 'Send an IPv4 or IPv6 address, e.g. "203.0.113.7".');
+  if (LOOPBACK_RE.test(ip)) throw badRequest('BAD_IP', 'That is the server itself (loopback); banning it would lock everyone out.');
   return ip;
 }
 
@@ -174,6 +177,13 @@ export class ModerationManager {
     }
   }
 
+  /** Every moderation power goes through here: a suspended mod or admin (the Bouncer included)
+   *  has none until the suspension ends. The console is never guarded. Then the power table. */
+  authorize(actor: Actor, req: PowerRequest, target: IdentityPublic | null): void {
+    if (actor.kind === 'identity') this.check(actor.identity, 'moderate');
+    checkPower(actor, req, target);
+  }
+
   private async target(targetId: string): Promise<IdentityPublic> {
     const target = await this.deps.identities.get(targetId);
     if (!target || target.released) throw notFound('NO_USER', 'There is no such player.');
@@ -184,7 +194,7 @@ export class ModerationManager {
     const why = reasonOf(reason);
     const mins = minutesOf(minutes, false) as number;
     const target = await this.target(targetId);
-    checkPower(actor, { action: 'mute', minutes: mins }, target);
+    this.authorize(actor, { action: 'mute', minutes: mins }, target);
     return this.impose(actor, target, 'mute', why, mins);
   }
 
@@ -192,7 +202,7 @@ export class ModerationManager {
     const why = reasonOf(reason);
     const mins = minutesOf(minutes, true);
     const target = await this.target(targetId);
-    checkPower(actor, { action: 'suspend', minutes: mins }, target);
+    this.authorize(actor, { action: 'suspend', minutes: mins }, target);
     const info = await this.impose(actor, target, 'suspend', why, mins);
     await this.bench(target);
     return info;
@@ -238,7 +248,7 @@ export class ModerationManager {
   async lift(actor: Actor, targetId: string, reason: unknown): Promise<void> {
     const why = reasonOf(reason);
     const target = await this.target(targetId);
-    checkPower(actor, { action: 'lift' }, target);
+    this.authorize(actor, { action: 'lift' }, target);
     const suspend = this.current(target.id, 'suspend');
     const mute = this.current(target.id, 'mute');
     if (!suspend && !mute) throw conflict('NOT_SANCTIONED', `@${target.handle} has no active mute or suspension.`);
@@ -259,7 +269,7 @@ export class ModerationManager {
     const why = reasonOf(reason);
     if (role !== 'user' && role !== 'mod' && role !== 'admin') throw badRequest('BAD_ROLE', 'role is "user", "mod" or "admin".');
     const target = await this.target(targetId);
-    checkPower(actor, { action: 'role', role }, target);
+    this.authorize(actor, { action: 'role', role }, target);
     if (role === 'admin' && target.kind !== 'human') throw badRequest('BAD_ROLE', 'Only a human can be an admin.');
     if (role !== 'user' && target.kind === 'human' && !target.locked) {
       throw conflict('NOT_LOCKED', `@${target.handle} must lock their name before holding a role.`);
@@ -274,7 +284,7 @@ export class ModerationManager {
   async resetPassword(actor: Actor, targetId: string, reason: unknown): Promise<string> {
     const why = reasonOf(reason);
     const target = await this.target(targetId);
-    checkPower(actor, { action: 'reset-password' }, target);
+    this.authorize(actor, { action: 'reset-password' }, target);
     if (target.kind !== 'human' || !target.locked) throw conflict('NOT_LOCKED', `@${target.handle} has no password to reset.`);
     const code = await this.deps.accounts.issueResetCode(target.id);
     await this.deps.accounts.revokeOthers(target.id, null);
@@ -286,7 +296,7 @@ export class ModerationManager {
   async release(actor: Actor, targetId: string, reason: unknown): Promise<void> {
     const why = reasonOf(reason);
     const target = await this.target(targetId);
-    checkPower(actor, { action: 'release' }, target);
+    this.authorize(actor, { action: 'release' }, target);
     await this.bench(target);
     // Lift any active sanction in storage too (same update as lift()), or load() at the next boot
     // would find an un-lifted row and reinstate it as still active for a released identity.
@@ -308,7 +318,7 @@ export class ModerationManager {
     }
     const message = await this.deps.comms.message(messageId);
     if (!message || message.system) throw notFound('NO_MESSAGE', 'There is no such message.');
-    checkPower(actor, { action: 'delete-message' }, message.author);
+    this.authorize(actor, { action: 'delete-message' }, message.author);
     const removed = await this.deps.comms.remove(messageId, actor.kind === 'console' ? null : actor.identity);
     await this.record(actor, 'delete-message', message.author?.id ?? null, why, { messageId, channel: message.channel });
     return removed;
@@ -317,7 +327,7 @@ export class ModerationManager {
   async banIp(actor: Actor, ip: unknown, reason: unknown): Promise<void> {
     const why = reasonOf(reason);
     const addr = ipOf(ip);
-    checkPower(actor, { action: 'ip-ban' }, null);
+    this.authorize(actor, { action: 'ip-ban' }, null);
     await this.db
       .insert(ipBans)
       .values({ ip: addr, reason: why, actorId: actorIdOf(actor), createdAt: new Date(this.clock.now()) })
@@ -330,7 +340,7 @@ export class ModerationManager {
   async unbanIp(actor: Actor, ip: unknown, reason: unknown): Promise<void> {
     const why = reasonOf(reason);
     const addr = ipOf(ip);
-    checkPower(actor, { action: 'ip-unban' }, null);
+    this.authorize(actor, { action: 'ip-unban' }, null);
     const gone = await this.db.delete(ipBans).where(eq(ipBans.ip, addr)).returning({ ip: ipBans.ip });
     if (gone.length === 0) throw notFound('NO_BAN', `${addr} is not banned.`);
     this.bans.delete(addr);

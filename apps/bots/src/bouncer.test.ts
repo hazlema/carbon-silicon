@@ -212,3 +212,23 @@ test('a resolve that permanently fails (not 401/429) is noted instead of retried
   expect((await core.reports.get(report.id)).notes).toHaveLength(1);
   expect(judgeCalls.filter((t) => t === 'mute me please (release test)')).toHaveLength(1);
 }, 15_000);
+
+test('a suspended Bouncer says so and waits (it has its role, not its powers); lifted, it works again', async () => {
+  const bouncer = (await core.identities.getByHandle('Bouncer'))!;
+  const grantHints = logs.filter((l) => l.includes('grant-mod')).length;
+  await core.moderation.suspend({ kind: 'console' }, bouncer.id, 'test suspension', 60);
+
+  // While suspended, a new report wakes it; it notices it's suspended and does not act.
+  const reporter = await human('rep');
+  const message = await core.comms.post(await human('auth'), 'lobby', 'this one is fine');
+  const report = await core.reports.create(reporter, message.id, 'while suspended');
+  await until(() => logs.some((l) => l.includes('suspended — waiting')));
+  expect(logs.filter((l) => l.includes('grant-mod'))).toHaveLength(grantHints);
+  await Bun.sleep(600); // a few more sweeps: still one line, and the report untouched
+  expect(logs.filter((l) => l.includes('suspended — waiting'))).toHaveLength(1);
+  expect(await core.reports.get(report.id)).toMatchObject({ status: 'open', notes: [] });
+
+  await core.moderation.lift({ kind: 'console' }, bouncer.id, 'test over');
+  await until(async () => (await core.reports.get(report.id)).status === 'resolved');
+  expect(logs.filter((l) => l.includes('grant-mod'))).toHaveLength(grantHints);
+}, 15_000);
