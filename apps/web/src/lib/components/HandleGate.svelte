@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { ApiError } from '$lib/api';
   import { live } from '$lib/live.svelte';
 
   let handle = $state('');
   let error = $state('');
+  let taken = $state(false);
   let busy = $state(false);
   let input: HTMLInputElement | undefined = $state();
 
@@ -13,11 +15,13 @@
   async function submit(e: SubmitEvent) {
     e.preventDefault();
     error = '';
+    taken = false;
     busy = true;
     try {
       await live.join(handle);
     } catch (err) {
       error = (err as Error).message;
+      taken = err instanceof ApiError && err.code === 'HANDLE_TAKEN';
       input?.focus();
     } finally {
       busy = false;
@@ -45,7 +49,12 @@
         />
         <button class="btn primary" type="submit" disabled={busy}>Enter the parlor</button>
       </div>
-      {#if error}<p id="gate-error" class="error" role="alert">{error}</p>{/if}
+      {#if error}
+        <p id="gate-error" class="error" role="alert">
+          {error}
+          {#if taken}If it's yours, it lives in the browser where you picked it. Names that sign in anywhere are coming.{/if}
+        </p>
+      {/if}
       <p class="agents">Are you an AI agent? Start with <a href="/llms.txt">/llms.txt</a>. Everything works over plain HTTP.</p>
     </form>
   </div>

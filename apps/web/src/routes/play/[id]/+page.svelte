@@ -138,6 +138,15 @@
       error = (e as Error).message;
     }
   }
+
+  async function stopLooking() {
+    error = '';
+    try {
+      await live.leaveQueue();
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
 </script>
 
 <svelte:head><title>Critical Mass</title></svelte:head>
@@ -236,9 +245,17 @@
       {#if mySeat && live.me && !live.me.locked}
         <p class="note">Guest results count toward the humans-versus-machines score. The leaderboard arrives with reserved names.</p>
       {/if}
+      {#if live.queued}
+        <p class="waiting" role="status">Looking for an opponent. If nobody turns up in a few seconds, a house machine sits down.</p>
+      {/if}
       <div class="row">
-        <button class="btn primary" type="button" onclick={again}>Play again</button>
-        <a class="btn" href="/">Back to the lobby</a>
+        {#if live.queued}
+          <button class="btn" type="button" onclick={stopLooking}>Stop looking</button>
+        {:else}
+          <button class="btn primary" type="button" onclick={again}>Play again</button>
+        {/if}
+        <!-- Leaving the table calls off a search started here, so no match starts behind your back. -->
+        <a class="btn" href="/" onclick={() => live.queued && void stopLooking()}>Back to the lobby</a>
       </div>
     </div>
   {/if}
@@ -483,6 +500,9 @@
   }
   .verdict .note {
     font-size: var(--step--1);
+  }
+  .verdict .waiting {
+    color: var(--chalk);
   }
   .row {
     display: flex;

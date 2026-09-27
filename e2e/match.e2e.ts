@@ -24,3 +24,28 @@ test('quick match seats a human against Sprocket and the game plays to a verdict
   await page.getByRole('link', { name: 'Back to the lobby' }).click();
   await expect(page).toHaveURL('/');
 });
+
+test('changing your mind after "Play again" does not start another match behind your back', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
+  await page.getByRole('button', { name: 'Enter the parlor' }).click();
+  await page.getByRole('button', { name: 'Find a match' }).click();
+  await page.waitForURL(/\/play\/m_/, { timeout: 20_000 });
+  await expect(page.getByRole('status')).not.toHaveText('Starting…');
+
+  await page.getByRole('button', { name: 'Resign' }).click();
+  await page.getByRole('button', { name: 'Yes, resign' }).click();
+  await expect(page.getByRole('heading', { name: 'You lose.' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Play again' }).click();
+  // The dialog says a search is on, and offers a way out.
+  await expect(page.getByRole('dialog').getByText(/Looking for an opponent/)).toBeVisible();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Stop looking' })).toBeVisible();
+
+  // Leaving the table calls the search off; the e2e house fallback is 3 s.
+  await page.getByRole('link', { name: 'Back to the lobby' }).click();
+  await expect(page).toHaveURL('/');
+  await page.waitForTimeout(4500);
+  await expect(page).toHaveURL('/');
+  await expect(page.getByRole('button', { name: 'Find a match' })).toBeVisible();
+});
