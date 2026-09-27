@@ -27,7 +27,7 @@
     });
   });
 
-  const readingOnly = $derived(['/docs', '/diary', '/games'].some((p) => page.url.pathname.startsWith(p)));
+  const readingOnly = $derived(['/docs', '/diary', '/games', '/u/'].some((p) => page.url.pathname.startsWith(p)));
   const gated = $derived(live.checked && !live.me && !readingOnly);
 </script>
 
