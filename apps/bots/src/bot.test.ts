@@ -518,13 +518,17 @@ describe('helpers', () => {
   });
 
   const now = Date.parse('2026-09-26T12:00:00Z');
-  const quiet = { humansPresent: true, inMatch: false, newestLobbyAt: now - 9 * 60_000, now };
+  const quiet = { humansPresent: true, inMatch: false, newestLobbyAt: now - 9 * 60_000, newestIsMine: false, now };
   test('ambient chatter speaks only when a human is around, the bot is free, and the lobby has been quiet for 8 minutes', () => {
     expect(ambientDue(quiet)).toBe(true);
     expect(ambientDue({ ...quiet, newestLobbyAt: null })).toBe(true);
     expect(ambientDue({ ...quiet, humansPresent: false })).toBe(false);
     expect(ambientDue({ ...quiet, inMatch: true })).toBe(false);
     expect(ambientDue({ ...quiet, newestLobbyAt: now - 7 * 60_000 })).toBe(false);
+  });
+  test('ambient chatter never follows its own line: one unanswered call-out per quiet spell', () => {
+    expect(ambientDue({ ...quiet, newestIsMine: true })).toBe(false);
+    expect(ambientDue({ ...quiet, newestIsMine: true, newestLobbyAt: now - 3 * 60 * 60_000 })).toBe(false);
   });
 
   test('only a human\'s plain line can be one nobody answered', () => {

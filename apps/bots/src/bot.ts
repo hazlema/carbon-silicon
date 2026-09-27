@@ -70,7 +70,15 @@ const BANK: Record<MomentKind, keyof Personality['lines'] | null> = {
 };
 
 /** Should a bot with a voice speak up in the lobby now? (The coin flip happens elsewhere.) */
-export function ambientDue(s: { humansPresent: boolean; inMatch: boolean; newestLobbyAt: number | null; now: number }): boolean {
+export function ambientDue(s: {
+  humansPresent: boolean;
+  inMatch: boolean;
+  newestLobbyAt: number | null;
+  /** The newest lobby line is the bot's own: it already spoke into this silence, so it waits for company. */
+  newestIsMine: boolean;
+  now: number;
+}): boolean {
+  if (s.newestIsMine) return false;
   return s.humansPresent && !s.inMatch && (s.newestLobbyAt === null || s.now - s.newestLobbyAt >= LOBBY_QUIET_MS);
 }
 
@@ -310,7 +318,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
     lastReply.set(channel, now);
     return true;
   };
-  const ambient = opts.voice && (opts.ambientEveryMs ?? 12 * 60_000) > 0 ? ambientLoop(client, opts, () => playing.size > 0, log) : null;
+  const ambient = opts.voice && (opts.ambientEveryMs ?? 12 * 60_000) > 0 ? ambientLoop(client, opts, () => playing.size > 0, myId, log) : null;
 
   // A bot with a voice also reads the public channels and answers a human nobody else answered.
   // Voiceless bots make no extra calls at all.
@@ -447,7 +455,7 @@ function watchPublicChannels(
 }
 
 /** Every `ambientEveryMs`, maybe liven up a quiet lobby. Only runs for bots with a voice. */
-async function ambientLoop(client: Client, opts: BotOptions, inMatch: () => boolean, log: (m: string) => void): Promise<void> {
+async function ambientLoop(client: Client, opts: BotOptions, inMatch: () => boolean, myId: string | null, log: (m: string) => void): Promise<void> {
   const every = opts.ambientEveryMs ?? 12 * 60_000;
   while (!opts.signal?.aborted) {
     await sleep(every, opts.signal);
@@ -460,6 +468,7 @@ async function ambientLoop(client: Client, opts: BotOptions, inMatch: () => bool
         humansPresent: who.presence.some((p) => p.identity.kind === 'human'),
         inMatch: inMatch(),
         newestLobbyAt: newest ? Date.parse(newest.createdAt) : null,
+        newestIsMine: !!newest && !!myId && newest.author?.id === myId,
         now: Date.now(),
       });
       if (due && Math.random() < AMBIENT_CHANCE) await speak(client, opts, 'ambient', 'lobby');
