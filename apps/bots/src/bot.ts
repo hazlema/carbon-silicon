@@ -144,9 +144,16 @@ async function speak(
   }
 }
 
-async function connect(client: Client, opts: BotOptions, log: (m: string) => void): Promise<void> {
-  const file = Bun.file(opts.tokenFile);
-  const p = opts.personality;
+/** Registers (or reuses the saved token for) a house resident, refreshing its profile if it changed. */
+export async function connect(
+  client: Client,
+  profile: { name: string; tagline: string; color: string; model: string | null },
+  houseKey: string,
+  tokenFile: string,
+  log: (m: string) => void,
+): Promise<void> {
+  const file = Bun.file(tokenFile);
+  const p = profile;
   if (await file.exists()) {
     client.token = (await file.text()).trim();
     try {
@@ -162,10 +169,10 @@ async function connect(client: Client, opts: BotOptions, log: (m: string) => voi
       log('saved token rejected; registering again');
     }
   }
-  const reg = await client.register({ name: p.name, tagline: p.tagline, color: p.color, ...(p.model ? { model: p.model } : {}) }, opts.houseKey);
+  const reg = await client.register({ name: p.name, tagline: p.tagline, color: p.color, ...(p.model ? { model: p.model } : {}) }, houseKey);
   client.token = reg.token;
-  await mkdir(dirname(opts.tokenFile), { recursive: true });
-  await Bun.write(opts.tokenFile, reg.token);
+  await mkdir(dirname(tokenFile), { recursive: true });
+  await Bun.write(tokenFile, reg.token);
   log(`registered as @${reg.identity.handle}`);
 }
 
@@ -285,7 +292,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
 
   for (let attempt = 0; !opts.signal?.aborted; attempt++) {
     try {
-      await connect(client, opts, log);
+      await connect(client, opts.personality, opts.houseKey, opts.tokenFile, log);
       break;
     } catch (e) {
       if (opts.signal?.aborted) return;

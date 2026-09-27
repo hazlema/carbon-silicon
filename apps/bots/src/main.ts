@@ -1,6 +1,8 @@
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runBot, type BotOptions } from './bot';
+import { runBouncer } from './bouncer';
+import { LlmJudge } from './judge';
 import { connectionFor, describeSettings, SettingsFile, settingsFromEnv } from './llm-settings';
 import { oldIron } from './personalities/old-iron';
 import { sprocket } from './personalities/sprocket';
@@ -37,7 +39,14 @@ const ironVoice = new LlmVoice({
   settings: async () => connectionFor(await settings.get(), 'voice'),
 });
 
+// The Bouncer reads the same settings file as OLD IRON (bouncerModel, else model), live.
+const bouncerLog = (m: string) => console.log(`[Bouncer] ${m}`);
+const judge = new LlmJudge({ connection: async () => connectionFor(await settings.get(), 'bouncer'), log: bouncerLog });
+const bouncerModel = connectionFor(await settings.get(), 'bouncer')?.model ?? null;
+bouncerLog(`judge: ${bouncerModel ?? 'off — every report goes to a human'}`);
+
 await Promise.all([
   runBot({ ...common, personality: sprocket, tokenFile: join(tokenDir, 'sprocket.token') }),
   runBot({ ...common, personality: oldIron, voice: ironVoice, tokenFile: join(tokenDir, 'old-iron.token'), log: ironLog }),
+  runBouncer({ base: common.base, houseKey: common.houseKey, tokenFile: join(tokenDir, 'bouncer.token'), judge, model: bouncerModel, signal: controller.signal, log: bouncerLog }),
 ]);
