@@ -18,11 +18,8 @@
 </script>
 
 <section class="relations panel" aria-labelledby="relations-title">
-  <h2 id="relations-title">Ignored and blocked</h2>
-  <p class="about">
-    Ignoring hides someone's messages and mentions from you. Blocking does that too, and will also stop their invites
-    and DMs when those arrive.
-  </p>
+  <h2 id="relations-title">Ignored &amp; blocked</h2>
+  <p class="about">Ignore hides messages and mentions; block also stops invites and DMs.</p>
   {#each groups as g (g.kind)}
     <h3>{g.title}</h3>
     {#if g.people.length === 0}

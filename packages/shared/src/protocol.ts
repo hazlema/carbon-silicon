@@ -139,8 +139,25 @@ export interface ProfileMatch {
   id: string;
   gameId: string;
   endedAt: string | null;
+  endReason: string | null;
   result: 'win' | 'loss' | 'draw' | 'abandoned' | null;
   opponents: IdentityPublic[];
+}
+
+export interface ProfileRecord {
+  versus: 'machines' | 'humans';
+  wins: number;
+  losses: number;
+  draws: number;
+  played: number;
+  games: { gameId: string; played: number }[];
+}
+
+export interface ProfileRival {
+  opponent: IdentityPublic;
+  wins: number;
+  losses: number;
+  draws: number;
 }
 
 export interface Profile {
@@ -148,6 +165,8 @@ export interface Profile {
   joinedAt: string;
   lastSeenAt: string;
   matches: ProfileMatch[];
+  record: ProfileRecord;
+  rival: ProfileRival | null;
 }
 
 export interface RelationsInfo {

@@ -5,11 +5,12 @@
   import Avatar from '$lib/components/Avatar.svelte';
   import IdentityChip from '$lib/components/IdentityChip.svelte';
   import AccountSettings from '$lib/components/profile/AccountSettings.svelte';
+  import DeleteAccount from '$lib/components/profile/DeleteAccount.svelte';
   import RelationList from '$lib/components/profile/RelationList.svelte';
   import SessionList from '$lib/components/profile/SessionList.svelte';
   import { relativeTime } from '$lib/format';
   import { live } from '$lib/live.svelte';
-  import { displayName, gameName, resultChip } from '$lib/profile';
+  import { displayName, gameName, matchEndingText, recordSummaryLine, recordWinSharePercent, resultChip, rivalrySentence } from '$lib/profile';
 
   let profile = $state<Profile | null>(null);
   let missing = $state(false);
@@ -38,6 +39,11 @@
   });
 
   const joined = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  function focusBio(e: MouseEvent) {
+    e.preventDefault();
+    document.getElementById('bio')?.focus();
+  }
 </script>
 
 <svelte:head><title>{who ? displayName(who) : 'Profile'}</title></svelte:head>
@@ -51,55 +57,84 @@
 {:else if error}
   <p class="error" role="alert">{error}</p>
 {:else if profile && who}
-  <div class="profile">
-    <section class="card panel" aria-labelledby="who-title">
-      <Avatar kind={who.kind} size="4.5rem" />
-      <div class="id">
-        <h1 id="who-title" class:human={who.kind === 'human'} class:machine={who.kind === 'agent'}>{displayName(who)}</h1>
-        <p class="badges">
-          <span class="badge">{who.kind === 'human' ? 'human' : 'machine'}</span>
-          {#if who.isHouse}<span class="badge">house</span>{/if}
-          {#if who.role !== 'user'}<span class="badge role">{who.role}</span>{/if}
-          {#if who.locked}<span class="badge">locked name</span>{:else if who.kind === 'human' && !who.released}<span class="badge">guest</span>{/if}
-        </p>
-        {#if who.tagline}<p class="bio">{who.tagline}</p>{/if}
-        <p class="facts">Joined {joined(profile.joinedAt)} · last seen {relativeTime(profile.lastSeenAt)}</p>
-      </div>
-    </section>
+  <div class="profile" class:has-settings={mine}>
+    <div class="main">
+      <section class="header-card panel" aria-labelledby="who-title">
+        <div class="who">
+          <Avatar kind={who.kind} size="5.5rem" glow />
+          <div class="id">
+            <h1 id="who-title" class:human={who.kind === 'human'} class:machine={who.kind === 'agent'}>{displayName(who)}</h1>
+            <p class="badges">
+              <span class="badge kind" class:human={who.kind === 'human'} class:machine={who.kind === 'agent'}>{who.kind === 'human' ? 'human' : 'machine'}</span>
+              {#if who.role !== 'user'}<span class="badge role">{who.role}</span>{/if}
+              {#if who.locked}<span class="badge">locked name</span>{:else if who.kind === 'human' && !who.released}<span class="badge">guest</span>{/if}
+              {#if who.isHouse}<span class="badge">house</span>{/if}
+            </p>
+            {#if who.tagline}
+              <p class="bio">{who.tagline}</p>
+            {:else if mine}
+              <p class="bio empty">No bio yet. <a href="#bio" onclick={focusBio}>Add one</a></p>
+            {/if}
+            <p class="facts">Joined {joined(profile.joinedAt)} · last seen {relativeTime(profile.lastSeenAt)}</p>
+          </div>
+        </div>
+        <div class="record" class:human={profile.record.versus === 'humans'} class:machine={profile.record.versus === 'machines'}>
+          <h2>Record vs {profile.record.versus}</h2>
+          {#if profile.record.played === 0}
+            <p class="no-games">{recordSummaryLine(profile.record)}</p>
+          {:else}
+            <p class="score"><span class="self">{profile.record.wins}</span> <span aria-hidden="true">–</span> <span class="opp">{profile.record.losses}</span></p>
+            <div class="bar" role="presentation">
+              <span class="fill" style:width="{recordWinSharePercent(profile.record)}%"></span>
+            </div>
+            <p class="summary">{recordSummaryLine(profile.record)}</p>
+          {/if}
+        </div>
+      </section>
 
-    <section class="matches panel" aria-labelledby="matches-title">
-      <h2 id="matches-title">Recent matches</h2>
-      {#if profile.matches.length === 0}
-        <p class="empty">No finished matches yet.</p>
-      {:else}
-        <ul>
-          {#each profile.matches as m (m.id)}
-            {@const chip = resultChip(m.result)}
-            <li>
-              <span class="chip {chip.tone}">{chip.label}</span>
-              <span class="vs">
-                vs
-                {#each m.opponents as o, i (o.id)}
-                  {#if i > 0}<span aria-hidden="true">, </span>{/if}
-                  {#if o.released}
-                    <span class="former">a former player</span>
-                  {:else}
-                    <a href="/u/{o.handle}"><IdentityChip identity={o} /></a>
-                  {/if}
-                {/each}
-              </span>
-              <span class="game">{gameName(m.gameId)}</span>
-              <span class="when">{m.endedAt ? relativeTime(m.endedAt) : ''}</span>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
+      <section class="matches panel" aria-labelledby="matches-title">
+        <h2 id="matches-title">Recent matches</h2>
+        {#if profile.matches.length === 0}
+          <p class="empty">No finished matches yet.</p>
+        {:else}
+          <ul>
+            {#each profile.matches as m (m.id)}
+              {@const chip = resultChip(m.result)}
+              {@const ending = matchEndingText(m.endReason)}
+              <li>
+                <span class="chip {chip.tone}">{chip.label}</span>
+                <span class="vs">
+                  vs
+                  {#each m.opponents as o, i (o.id)}
+                    {#if i > 0}<span aria-hidden="true">, </span>{/if}
+                    {#if o.released}
+                      <span class="former">a former player</span>
+                    {:else}
+                      <a href="/u/{o.handle}"><IdentityChip identity={o} /></a>
+                    {/if}
+                  {/each}
+                </span>
+                {#if ending}<span class="ending">{ending}</span>{:else}<span></span>{/if}
+                <span class="game">{gameName(m.gameId)}</span>
+                <span class="when">{m.endedAt ? relativeTime(m.endedAt) : ''}</span>
+              </li>
+            {/each}
+          </ul>
+          {#if profile.rival}
+            <p class="rivalry">{rivalrySentence(profile.rival, { mine, ownerHandle: displayName(profile.identity) })}</p>
+          {/if}
+        {/if}
+      </section>
+    </div>
 
     {#if mine}
-      <AccountSettings />
-      {#if live.me?.kind === 'human'}<SessionList />{/if}
-      <RelationList />
+      <aside class="settings-col" aria-labelledby="settings-title">
+        <p id="settings-title" class="settings-title">SETTINGS <span>only you see this</span></p>
+        <AccountSettings />
+        {#if live.me?.kind === 'human'}<SessionList />{/if}
+        <RelationList />
+        <DeleteAccount />
+      </aside>
     {/if}
   </div>
 {/if}
@@ -108,15 +143,33 @@
   .profile {
     display: grid;
     gap: 1.25rem;
-    max-width: 52rem;
+    max-width: 64rem;
     margin: 0 auto;
     padding-bottom: 2rem;
   }
-  .card {
+  .profile.has-settings {
+    max-width: 76rem;
+    grid-template-columns: minmax(0, 1fr) 22rem;
+    align-items: start;
+  }
+  .main {
+    display: grid;
+    gap: 1.25rem;
+    min-width: 0;
+  }
+  .header-card {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 1.5rem;
+  }
+  .who {
     display: flex;
     gap: 1.25rem;
     align-items: flex-start;
-    padding: 1.5rem;
+    min-width: 0;
   }
   .id {
     min-width: 0;
@@ -153,12 +206,96 @@
     color: var(--chalk);
     border-color: var(--fog);
   }
+  .badge.kind.human {
+    color: var(--carbon);
+    border-color: color-mix(in oklab, var(--carbon) 45%, transparent);
+  }
+  .badge.kind.machine {
+    color: var(--silicon);
+    border-color: color-mix(in oklab, var(--silicon) 45%, transparent);
+  }
   .bio {
     margin: 0.8rem 0 0;
     font-size: var(--step-1);
   }
+  .bio.empty {
+    color: var(--fog);
+    font-style: italic;
+  }
+  .bio.empty a {
+    font-style: normal;
+    color: var(--carbon);
+  }
   .facts {
     margin: 0.5rem 0 0;
+    color: var(--fog);
+    font-size: var(--step--1);
+  }
+  .record {
+    flex: none;
+    min-width: 15rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--lattice);
+    border-radius: var(--r-panel);
+  }
+  .record h2 {
+    margin: 0 0 0.6rem;
+    font-size: var(--step--1);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fog);
+  }
+  .record .score {
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: var(--step-3);
+    font-weight: 700;
+    font-family: var(--font-silicon);
+  }
+  .record.machine .score .self {
+    color: var(--carbon);
+  }
+  .record.machine .score .opp {
+    color: var(--silicon);
+  }
+  .record.human .score .self {
+    color: var(--silicon);
+  }
+  .record.human .score .opp {
+    color: var(--carbon);
+  }
+  .record .score span[aria-hidden] {
+    color: var(--dust);
+    font-weight: 400;
+  }
+  .record .bar {
+    margin-top: 0.6rem;
+    height: 3px;
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .record.machine .bar {
+    background: var(--silicon);
+  }
+  .record.human .bar {
+    background: var(--carbon);
+  }
+  .record .bar .fill {
+    display: block;
+    height: 100%;
+  }
+  .record.machine .bar .fill {
+    background: var(--carbon);
+  }
+  .record.human .bar .fill {
+    background: var(--silicon);
+  }
+  .record .summary,
+  .record .no-games {
+    margin: 0.6rem 0 0;
     color: var(--fog);
     font-size: var(--step--1);
   }
@@ -182,7 +319,7 @@
   }
   li {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
     gap: 0.75rem;
     align-items: baseline;
   }
@@ -215,11 +352,38 @@
     white-space: nowrap;
   }
   .former,
+  .ending,
   .game,
   .when,
   .empty {
     color: var(--dust);
     font-size: var(--step--1);
+  }
+  .rivalry {
+    margin: 0.9rem 0 0;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--lattice);
+    color: var(--fog);
+    font-size: var(--step--1);
+  }
+  .settings-col {
+    display: grid;
+    gap: 1.25rem;
+    align-content: start;
+  }
+  .settings-title {
+    margin: 0;
+    font-size: var(--step--1);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fog);
+  }
+  .settings-title span {
+    text-transform: none;
+    font-weight: 400;
+    letter-spacing: normal;
+    color: var(--dust);
   }
   .missing {
     max-width: 32rem;
@@ -234,13 +398,22 @@
   .missing p {
     color: var(--fog);
   }
+  @media (max-width: 960px) {
+    .profile.has-settings {
+      grid-template-columns: 1fr;
+    }
+  }
   @media (max-width: 640px) {
-    .card {
+    .header-card {
       flex-direction: column;
+    }
+    .record {
+      align-self: stretch;
     }
     li {
       grid-template-columns: auto minmax(0, 1fr);
     }
+    .ending,
     .game,
     .when {
       grid-column: 2;

@@ -36,6 +36,26 @@ async function match(status: 'over' | 'abandoned', endedAt: number, players: [st
   return id;
 }
 
+type PlayerSpec = { identity: { id: string; kind: 'human' | 'agent' }; result: 'win' | 'loss' | 'draw' | 'abandoned' };
+
+/** A full-control match helper for record/rival tests: a chosen gameId, end reason, per-player species and result. */
+async function play(opts: { status?: 'over' | 'abandoned'; gameId?: string; endReason?: string | null; endedAt: number; players: PlayerSpec[] }): Promise<string> {
+  const id = newId('m');
+  await database.db.insert(matches).values({
+    id,
+    gameId: opts.gameId ?? 'critical-mass',
+    status: opts.status ?? 'over',
+    seed: 1,
+    season: '2026-09',
+    endReason: opts.endReason ?? null,
+    endedAt: new Date(opts.endedAt),
+  });
+  await database.db.insert(matchPlayers).values(
+    opts.players.map((p, i) => ({ matchId: id, seat: `s${i}`, identityId: p.identity.id, kind: p.identity.kind, result: p.result })),
+  );
+  return id;
+}
+
 describe('ProfileService', () => {
   test('shows the bio, dates and finished matches newest first, with opponents', async () => {
     const me = (await ids.createHuman(`prof${randomTag()}`)).identity;
@@ -58,5 +78,97 @@ describe('ProfileService', () => {
     expect((await errorOf(profiles.profile(gone.handle))).code).toBe('NO_USER');
     expect((await profiles.profileById(gone.id)).identity.released).toBe(true);
     expect((await errorOf(profiles.profileById('id_nobody'))).code).toBe('NO_USER');
+  });
+
+  test('each match carries its end reason', async () => {
+    const me = (await ids.createHuman(`end${randomTag()}`)).identity;
+    const rival = (await ids.registerAgent({ name: `end${randomTag()}` }, null)).identity;
+    await play({ endedAt: clock.now(), endReason: 'last-standing', players: [{ identity: me, result: 'win' }, { identity: rival, result: 'loss' }] });
+    const p = await profiles.profile(me.handle);
+    expect(p.matches[0].endReason).toBe('last-standing');
+  });
+
+  test('record vs machines counts only finished matches where every opponent is an agent, by game', async () => {
+    const me = (await ids.createHuman(`rec${randomTag()}`)).identity;
+    const bot1 = (await ids.registerAgent({ name: `bot1${randomTag()}` }, null)).identity;
+    const bot2 = (await ids.registerAgent({ name: `bot2${randomTag()}` }, null)).identity;
+    const otherHuman = (await ids.createHuman(`oh${randomTag()}`)).identity;
+    let t = clock.now();
+    await play({ endedAt: t++, gameId: 'critical-mass', players: [{ identity: me, result: 'win' }, { identity: bot1, result: 'loss' }] });
+    await play({ endedAt: t++, gameId: 'critical-mass', players: [{ identity: me, result: 'loss' }, { identity: bot1, result: 'win' }] });
+    await play({ endedAt: t++, gameId: 'critical-mass', players: [{ identity: me, result: 'draw' }, { identity: bot2, result: 'draw' }] });
+    await play({ endedAt: t++, gameId: 'other-game', players: [{ identity: me, result: 'win' }, { identity: bot2, result: 'loss' }] });
+    // vs a human: excluded from the "vs machines" record.
+    await play({ endedAt: t++, gameId: 'critical-mass', players: [{ identity: me, result: 'win' }, { identity: otherHuman, result: 'loss' }] });
+    // mixed opponents (human + agent): excluded, not purely "vs machines".
+    await play({ endedAt: t++, gameId: 'critical-mass', players: [{ identity: me, result: 'win' }, { identity: bot1, result: 'loss' }, { identity: otherHuman, result: 'loss' }] });
+    // not finished: excluded.
+    await play({ status: 'abandoned', endedAt: t++, gameId: 'critical-mass', players: [{ identity: me, result: 'abandoned' }, { identity: bot1, result: 'abandoned' }] });
+
+    const p = await profiles.profile(me.handle);
+    expect(p.record).toEqual({
+      versus: 'machines',
+      wins: 2,
+      losses: 1,
+      draws: 1,
+      played: 4,
+      games: [
+        { gameId: 'critical-mass', played: 3 },
+        { gameId: 'other-game', played: 1 },
+      ],
+    });
+  });
+
+  test('an agent\'s record is framed as "vs humans"', async () => {
+    const agent = (await ids.registerAgent({ name: `bot${randomTag()}` }, null)).identity;
+    const human = (await ids.createHuman(`hu${randomTag()}`)).identity;
+    await play({ endedAt: clock.now(), players: [{ identity: agent, result: 'win' }, { identity: human, result: 'loss' }] });
+    const p = await profiles.profileById(agent.id);
+    expect(p.record).toEqual({ versus: 'humans', wins: 1, losses: 0, draws: 0, played: 1, games: [{ gameId: 'critical-mass', played: 1 }] });
+  });
+
+  test('record is empty (not an error) with no qualifying matches', async () => {
+    const me = (await ids.createHuman(`empty${randomTag()}`)).identity;
+    const p = await profiles.profile(me.handle);
+    expect(p.record).toEqual({ versus: 'machines', wins: 0, losses: 0, draws: 0, played: 0, games: [] });
+  });
+
+  test('rival is the most-played two-player opponent, ties broken by the more recent match; null with none', async () => {
+    const me = (await ids.createHuman(`riv${randomTag()}`)).identity;
+    const frequent = (await ids.registerAgent({ name: `freq${randomTag()}` }, null)).identity;
+    const occasional = (await ids.registerAgent({ name: `occ${randomTag()}` }, null)).identity;
+    const third = (await ids.registerAgent({ name: `third${randomTag()}` }, null)).identity;
+    let t = clock.now();
+    await play({ endedAt: t++, players: [{ identity: me, result: 'win' }, { identity: frequent, result: 'loss' }] });
+    await play({ endedAt: t++, players: [{ identity: me, result: 'loss' }, { identity: frequent, result: 'win' }] });
+    await play({ endedAt: t++, players: [{ identity: me, result: 'draw' }, { identity: frequent, result: 'draw' }] });
+    await play({ endedAt: t++, players: [{ identity: me, result: 'win' }, { identity: occasional, result: 'loss' }] });
+    // a 3-player match against `frequent` doesn't count toward the two-player tally.
+    await play({ endedAt: t++, players: [{ identity: me, result: 'win' }, { identity: frequent, result: 'loss' }, { identity: third, result: 'loss' }] });
+
+    const p = await profiles.profile(me.handle);
+    expect(p.rival).toEqual({ opponent: expect.objectContaining({ id: frequent.id }), wins: 1, losses: 1, draws: 1 });
+
+    const lonely = (await ids.createHuman(`lone${randomTag()}`)).identity;
+    expect((await profiles.profile(lonely.handle)).rival).toBeNull();
+  });
+
+  test('rival ties on play count are broken by the more recently played opponent', async () => {
+    const me = (await ids.createHuman(`tie${randomTag()}`)).identity;
+    const older = (await ids.registerAgent({ name: `old${randomTag()}` }, null)).identity;
+    const newer = (await ids.registerAgent({ name: `new${randomTag()}` }, null)).identity;
+    await play({ endedAt: clock.now(), players: [{ identity: me, result: 'win' }, { identity: older, result: 'loss' }] });
+    await play({ endedAt: clock.now() + 10_000, players: [{ identity: me, result: 'win' }, { identity: newer, result: 'loss' }] });
+    const p = await profiles.profile(me.handle);
+    expect(p.rival?.opponent.id).toBe(newer.id);
+  });
+
+  test('rival includes a released opponent, marked released', async () => {
+    const me = (await ids.createHuman(`relv${randomTag()}`)).identity;
+    const gone = (await ids.createHuman(`gonev${randomTag()}`)).identity;
+    await play({ endedAt: clock.now(), players: [{ identity: me, result: 'win' }, { identity: gone, result: 'loss' }] });
+    await accounts.release(gone.id);
+    const p = await profiles.profile(me.handle);
+    expect(p.rival).toEqual({ opponent: expect.objectContaining({ id: gone.id, released: true }), wins: 1, losses: 0, draws: 0 });
   });
 });

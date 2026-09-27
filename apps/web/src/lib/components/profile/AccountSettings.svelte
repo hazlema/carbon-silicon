@@ -66,39 +66,28 @@
     }
   }
 
-  // ── delete ──
-  let confirmHandle = $state('');
-  let deletePassword = $state('');
-  let deleteError = $state('');
-  const canDelete = $derived(!!me && confirmHandle.trim().toLowerCase() === me.handle.toLowerCase());
-  async function remove(e: SubmitEvent) {
-    e.preventDefault();
-    deleteError = '';
-    try {
-      await api('DELETE', '/api/me', me?.locked ? { password: deletePassword } : {});
-      location.assign('/');
-    } catch (err) {
-      deleteError = (err as Error).message;
-    }
-  }
+  // The most urgent thing a guest can do here is keep their name — lead with it, ahead of the bio.
+  const guestFirst = $derived(!!me && me.kind === 'human' && !me.locked && !code);
 </script>
 
-{#if me}
+{#snippet bioSection()}
   <section class="settings panel" aria-labelledby="bio-title">
     <h2 id="bio-title">Bio</h2>
     <form onsubmit={saveBio}>
       <label for="bio">Bio</label>
       <div class="row">
         <input id="bio" bind:value={bio} maxlength="80" placeholder="One line about you" />
-        <button class="btn" type="submit">Save bio</button>
+        <button class="btn" type="submit">Save</button>
       </div>
       {#if bioNote}<p class="note" role="status">{bioNote}</p>{/if}
       {#if bioError}<p class="error" role="alert">{bioError}</p>{/if}
     </form>
   </section>
+{/snippet}
 
-  {#if me.kind === 'human'}
-    <section class="settings panel" aria-labelledby="pw-title">
+{#snippet passwordSection()}
+  {#if me?.kind === 'human'}
+    <section class="settings panel" class:prominent={guestFirst} aria-labelledby="pw-title">
       {#if code}
         <h2 id="pw-title">Your recovery code</h2>
         <p>
@@ -122,14 +111,20 @@
           {#if pwError}<p class="error" role="alert">{pwError}</p>{/if}
         </form>
       {:else}
-        <h2 id="pw-title">Change password</h2>
+        <h2 id="pw-title">Password</h2>
         <form onsubmit={changePassword}>
-          <label for="cur-pw">Current password</label>
-          <input id="cur-pw" type="password" bind:value={current} autocomplete="current-password" maxlength="200" required />
-          <label for="new-pw">New password</label>
-          <input id="new-pw" type="password" bind:value={pw} autocomplete="new-password" minlength="10" maxlength="200" required />
-          <label for="new-pw2">Confirm new password</label>
-          <input id="new-pw2" type="password" bind:value={pw2} autocomplete="new-password" minlength="10" maxlength="200" required />
+          <label for="cur-pw" class="visually-hidden">Current password</label>
+          <input id="cur-pw" type="password" bind:value={current} autocomplete="current-password" maxlength="200" placeholder="Current password" required />
+          <div class="row two">
+            <div>
+              <label for="new-pw" class="visually-hidden">New password</label>
+              <input id="new-pw" type="password" bind:value={pw} autocomplete="new-password" minlength="10" maxlength="200" placeholder="New" required />
+            </div>
+            <div>
+              <label for="new-pw2" class="visually-hidden">Confirm new password</label>
+              <input id="new-pw2" type="password" bind:value={pw2} autocomplete="new-password" minlength="10" maxlength="200" placeholder="Confirm" required />
+            </div>
+          </div>
           <button class="btn" type="submit">Change password</button>
           {#if pwNote}<p class="note" role="status">{pwNote}</p>{/if}
           {#if pwError}<p class="error" role="alert">{pwError}</p>{/if}
@@ -140,26 +135,24 @@
       {/if}
     </section>
   {/if}
+{/snippet}
 
-  <section class="settings danger panel" aria-labelledby="delete-title">
-    <h2 id="delete-title">Delete account</h2>
-    <p>Your name, bio and sign-ins are erased. Your past matches stay, credited to “a former player”.</p>
-    <form onsubmit={remove}>
-      <label for="del-handle">Type your handle to confirm</label>
-      <input id="del-handle" bind:value={confirmHandle} autocomplete="off" placeholder={me.handle} />
-      {#if me.locked}
-        <label for="del-pw">Password</label>
-        <input id="del-pw" type="password" bind:value={deletePassword} autocomplete="current-password" maxlength="200" />
-      {/if}
-      <button class="btn" type="submit" disabled={!canDelete}>Delete my account</button>
-      {#if deleteError}<p class="error" role="alert">{deleteError}</p>{/if}
-    </form>
-  </section>
+{#if me}
+  {#if guestFirst}
+    {@render passwordSection()}
+    {@render bioSection()}
+  {:else}
+    {@render bioSection()}
+    {@render passwordSection()}
+  {/if}
 {/if}
 
 <style>
   .settings {
     padding: 1.1rem 1.25rem 1.25rem;
+  }
+  .settings.prominent {
+    border-color: var(--carbon);
   }
   h2 {
     margin: 0 0 0.8rem;
@@ -194,6 +187,16 @@
   .row input {
     flex: 1 1 14rem;
   }
+  .row.two {
+    width: min(100%, 24rem);
+  }
+  .row.two > div {
+    flex: 1 1 8rem;
+    display: grid;
+  }
+  .row.two input {
+    width: 100%;
+  }
   button[type='submit'] {
     margin-top: 0.6rem;
   }
@@ -218,8 +221,5 @@
   }
   .signout {
     margin-top: 1rem;
-  }
-  .danger {
-    border-color: color-mix(in oklab, var(--danger) 35%, var(--lattice));
   }
 </style>
