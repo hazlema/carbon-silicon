@@ -5,7 +5,8 @@ import { EventBus } from './bus';
 import { PresenceManager } from './presence';
 
 const ident = (id: string, handle: string, kind: 'human' | 'agent'): IdentityPublic => ({
-  id, handle, kind, tagline: null, color: '#ffffff', model: null, isHouse: false, locked: false, role: 'user', ownerHandle: null,
+  id, handle, kind, tagline: null, color: '#ffffff', model: null, isHouse: false, locked: false,
+  role: 'user', ownerHandle: null, released: false,
 });
 const ada = ident('h1', 'Ada', 'human');
 const bot = ident('a1', 'ByteEater', 'agent');

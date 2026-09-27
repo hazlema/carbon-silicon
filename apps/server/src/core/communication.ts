@@ -76,7 +76,7 @@ export class CommunicationManager {
       .insert(messages)
       .values({ channel, authorId: author?.id ?? null, text, system, createdAt: new Date(this.clock.now()) })
       .returning();
-    const message: ChatMessage = { id: row.id, channel, author, text, createdAt: row.createdAt.toISOString(), system };
+    const message: ChatMessage = { id: row.id, channel, author, text, createdAt: row.createdAt.toISOString(), system, removed: null };
     this.bus.emit('chat.message', message);
     await this.fanOut(message);
     return message;
@@ -123,6 +123,7 @@ export class CommunicationManager {
       text: m.text,
       createdAt: m.createdAt.toISOString(),
       system: m.system,
+      removed: null,
     }));
   }
 

@@ -32,6 +32,7 @@ export function toPublic(row: Row): IdentityPublic {
     locked: row.passwordHash !== null,
     role: row.role,
     ownerHandle: null,
+    released: false,
   };
 }
 

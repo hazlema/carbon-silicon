@@ -13,6 +13,8 @@ export interface IdentityPublic {
   locked: boolean;
   role: Role;
   ownerHandle: string | null;
+  /** The name was released (idle clean-up or deletion); show "a former player". */
+  released: boolean;
 }
 
 export interface PresenceInfo {
@@ -28,6 +30,8 @@ export interface ChatMessage {
   text: string;
   createdAt: string;
   system: boolean;
+  /** Set when a moderator removed the message; `text` is then ''. */
+  removed: { by: string } | null;
 }
 
 export interface SeatInfo {
@@ -70,6 +74,8 @@ export type InboxEvent =
   | (Stamp & { type: 'match.started'; match: MatchSummary })
   | (Stamp & { type: 'match.yourTurn'; matchId: string; revision: number; deadline: string })
   | (Stamp & { type: 'match.over'; matchId: string; outcome: OutcomeWire; result: 'win' | 'loss' | 'draw' })
+  | (Stamp & { type: 'moderation'; kind: SanctionKind | 'lift'; reason: string; endsAt: string | null })
+  | (Stamp & { type: 'report.opened'; report: ReportInfo })
   | (Stamp & { type: 'system'; text: string });
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -112,6 +118,122 @@ export interface DiaryEntry extends DiaryEntrySummary {
   markdown: string;
 }
 
+export type SanctionKind = 'mute' | 'suspend';
+export interface SanctionInfo {
+  kind: SanctionKind;
+  reason: string;
+  since: string;
+  endsAt: string | null;
+}
+
+export interface SessionInfo {
+  id: string;
+  label: string;
+  ip: string | null;
+  createdAt: string;
+  lastUsedAt: string;
+  current: boolean;
+}
+
+export interface ProfileMatch {
+  id: string;
+  gameId: string;
+  endedAt: string | null;
+  result: 'win' | 'loss' | 'draw' | 'abandoned' | null;
+  opponents: IdentityPublic[];
+}
+
+export interface Profile {
+  identity: IdentityPublic;
+  joinedAt: string;
+  lastSeenAt: string;
+  matches: ProfileMatch[];
+}
+
+export interface RelationsInfo {
+  ignores: IdentityPublic[];
+  blocks: IdentityPublic[];
+}
+
+export interface ReportSnapshot {
+  messageId: number;
+  channel: string;
+  author: IdentityPublic | null;
+  text: string;
+  createdAt: string;
+}
+
+export interface ReportNote {
+  by: string;
+  text: string;
+  at: string;
+}
+
+export type ReportStatus = 'open' | 'resolved';
+export type ReportResolution = 'dismiss' | 'delete' | 'mute' | 'suspend';
+
+export interface ReportInfo {
+  id: string;
+  status: ReportStatus;
+  reporter: IdentityPublic;
+  target: IdentityPublic | null;
+  snapshot: ReportSnapshot;
+  /** Up to 5 lines before and after the reported one, same channel, oldest first. */
+  context: ReportSnapshot[];
+  reason: string | null;
+  resolution: ReportResolution | null;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+  notes: ReportNote[];
+  createdAt: string;
+}
+
+export type ModActionKind =
+  | 'delete-message'
+  | 'mute'
+  | 'suspend'
+  | 'lift'
+  | 'role'
+  | 'reset-password'
+  | 'release'
+  | 'ip-ban'
+  | 'ip-unban'
+  | 'resolve-report'
+  | 'reopen-report'
+  | 'note';
+
+export interface ModLogEntry {
+  id: number;
+  actor: string;
+  target: IdentityPublic | null;
+  action: ModActionKind;
+  reason: string;
+  detail: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface PersonSummary {
+  identity: IdentityPublic;
+  sanction: SanctionInfo | null;
+  lastSeenAt: string;
+}
+
+export interface PersonDetail {
+  profile: Profile;
+  sanction: SanctionInfo | null;
+  sessions: number;
+  lastIp: string | null;
+  history: ModLogEntry[];
+}
+
+export interface MeResponse {
+  identity: IdentityPublic;
+  presence: PresenceInfo | null;
+  activeMatch: string | null;
+  queued: string | null;
+  sanction: SanctionInfo | null;
+}
+
 export type WsClientMsg =
   | { type: 'subscribe'; channel: string }
   | { type: 'unsubscribe'; channel: string }
@@ -125,6 +247,7 @@ export type WsServerMsg =
   | { type: 'chat'; message: ChatMessage }
   | { type: 'inbox'; event: InboxEvent }
   | { type: 'match'; envelope: MatchEnvelope }
+  | { type: 'chat.removed'; channel: string; id: number; by: string }
   | { type: 'pong' };
 
 /** Public chat channels in M1. Table channels are `match:<id>`. */
