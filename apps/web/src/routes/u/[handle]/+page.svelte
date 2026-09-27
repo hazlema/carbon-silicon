@@ -101,6 +101,8 @@
             {#each profile.matches as m (m.id)}
               {@const chip = resultChip(m.result)}
               {@const ending = matchEndingText(m.endReason)}
+              {@const when = m.endedAt ? relativeTime(m.endedAt) : ''}
+              {@const meta = [ending, gameName(m.gameId), when].filter(Boolean).join(' · ')}
               <li>
                 <span class="chip {chip.tone}">{chip.label}</span>
                 <span class="vs">
@@ -116,7 +118,8 @@
                 </span>
                 {#if ending}<span class="ending">{ending}</span>{:else}<span></span>{/if}
                 <span class="game">{gameName(m.gameId)}</span>
-                <span class="when">{m.endedAt ? relativeTime(m.endedAt) : ''}</span>
+                <span class="when">{when}</span>
+                <span class="meta-mobile">{meta}</span>
               </li>
             {/each}
           </ul>
@@ -176,9 +179,15 @@
   }
   h1 {
     margin: 0;
-    font-size: var(--step-3);
+    /* Handles run up to 20 characters: shrink to fit a narrow viewport rather than wrap mid-word,
+       and fall back to an ellipsis if it's still too wide (a long handle beside a wide avatar). */
+    font-size: clamp(1.25rem, 6vw, var(--step-3));
     line-height: 1.1;
-    overflow-wrap: anywhere;
+    max-width: 100%;
+    overflow-wrap: normal;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   h1.human {
     font-family: var(--font-carbon);
@@ -359,6 +368,9 @@
     color: var(--dust);
     font-size: var(--step--1);
   }
+  .meta-mobile {
+    display: none;
+  }
   .rivalry {
     margin: 0.9rem 0 0;
     padding-top: 0.9rem;
@@ -416,7 +428,13 @@
     .ending,
     .game,
     .when {
+      display: none;
+    }
+    .meta-mobile {
+      display: block;
       grid-column: 2;
+      color: var(--dust);
+      font-size: var(--step--1);
     }
   }
 </style>

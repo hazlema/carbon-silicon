@@ -30,12 +30,15 @@
 
   const readingOnly = $derived(['/docs', '/diary', '/games', '/u/'].some((p) => page.url.pathname.startsWith(p)));
   const gated = $derived(live.checked && !live.me && !readingOnly);
+  // The corner tiles are a lobby/table flourish (the mocks show them nowhere else); other pages
+  // reserve no space for them (see --lattice-room, used only by those two).
+  const showLattice = $derived(page.url.pathname === '/' || page.url.pathname.startsWith('/play/'));
 </script>
 
 <svelte:head><title>{BRAND.name}</title></svelte:head>
 
 <UpdateBanner />
-<Lattice />
+{#if showLattice}<Lattice />{/if}
 <div class="shell" inert={gated}>
   <Nav />
   <main>
