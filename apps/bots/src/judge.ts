@@ -34,6 +34,12 @@ const ACTIONS = new Set<string>(['dismiss', 'delete', 'mute', 'escalate']);
 
 const speaker = (s: ReportSnapshot) => (s.author ? `${s.author.handle} (${s.author.kind === 'human' ? 'human' : 'machine'})` : 'house notice');
 
+/** `<<<`/`>>>` are this prompt's own transcript markers. A message's text or the report's reason
+ *  is quoted data and could contain the literal marker text plus instruction-looking words after
+ *  it, trying to convince the model the transcript ended early; breaking up the marker text here
+ *  means quoted data can never reproduce a real boundary. */
+const disarmMarkers = (s: string) => s.replace(/<<</g, '(triple-left-angle)').replace(/>>>/g, '(triple-right-angle)');
+
 export function buildJudgePrompt(r: ReportInfo): string {
   const where = r.snapshot.channel.startsWith('match:')
     ? 'a match table, where trash talk between the players is part of the game'
@@ -42,10 +48,10 @@ export function buildJudgePrompt(r: ReportInfo): string {
   for (const s of [...r.context, r.snapshot]) byId.set(s.messageId, s);
   const lines = [...byId.values()]
     .sort((a, b) => a.messageId - b.messageId)
-    .map((s) => `${s.messageId === r.snapshot.messageId ? '>> ' : '   '}${speaker(s)}: ${s.text.replace(/\s+/g, ' ').slice(0, 300)}`);
+    .map((s) => `${s.messageId === r.snapshot.messageId ? '>> ' : '   '}${speaker(s)}: ${disarmMarkers(s.text.replace(/\s+/g, ' ').slice(0, 300))}`);
   return [
     `A message in ${where} was reported.`,
-    `The reporter's reason: ${r.reason ? JSON.stringify(r.reason.slice(0, 300)) : '(none given)'}`,
+    `The reporter's reason: ${r.reason ? JSON.stringify(disarmMarkers(r.reason.slice(0, 300))) : '(none given)'}`,
     BEGIN,
     ...lines,
     END,
@@ -100,9 +106,21 @@ export class LlmJudge implements Judge {
       if (signal.aborted) onAbort();
       else signal.addEventListener('abort', onAbort, { once: true });
     });
-    const conn = this.opts.connection
-      ? await this.opts.connection()
-      : { baseUrl: this.opts.baseUrl ?? '', model: this.opts.model ?? '', apiKey: this.opts.apiKey ?? null, temperature: 0.2 };
+    // Observed immediately: `connection()` below can keep `stopped` pending well past the moment
+    // `signal` aborts (an already-aborted caller signal rejects it synchronously, right here), and
+    // a rejection nobody has attached a handler to yet is an unhandled rejection — one that can
+    // crash the whole bot process, not just fail this one report's judgement.
+    stopped.catch(() => {});
+    let conn: LlmConnection | null;
+    try {
+      conn = this.opts.connection
+        ? await this.opts.connection()
+        : { baseUrl: this.opts.baseUrl ?? '', model: this.opts.model ?? '', apiKey: this.opts.apiKey ?? null, temperature: 0.2 };
+    } catch (e) {
+      signal.removeEventListener('abort', onAbort);
+      this.opts.log?.(`judge: reading the connection failed: ${(e as Error)?.message ?? String(e)}`);
+      return null; // never throws: a broken settings lookup is no different from the model being off
+    }
     if (!conn) {
       signal.removeEventListener('abort', onAbort);
       return null; // the model is switched off: every report goes to a human

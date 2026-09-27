@@ -37,12 +37,26 @@ const verdicts: Record<string, Verdict | null> = {
   'suspend me please': { action: 'suspend', reason: 'repeat offender' } as unknown as Verdict,
   'garbage please': null,
 };
-const stub: Judge = { judge: async (r: ReportInfo) => verdicts[r.snapshot.text] ?? null };
+// Used only by the later fix-round tests, kept out of `verdicts` so the main test's loop over
+// `Object.keys(verdicts)` doesn't pick up an extra report it makes no assertions about.
+const extraVerdicts: Record<string, Verdict | null> = {
+  'mute me please (release test)': { action: 'mute', reason: 'spam', minutes: 30 },
+};
+/** Every call the running Bouncer makes to the judge, by the reported message's text — lets a
+ *  test count how many times a given report was actually judged, across every sweep it sees. */
+const judgeCalls: string[] = [];
+const stub: Judge = {
+  judge: async (r: ReportInfo) => {
+    judgeCalls.push(r.snapshot.text);
+    return verdicts[r.snapshot.text] ?? extraVerdicts[r.snapshot.text] ?? null;
+  },
+};
 const logs: string[] = [];
+const bouncerTokenFile = join(root, `.data/test-bots/${crypto.randomUUID()}.token`);
 const done = runBouncer({
   base: running.url,
   houseKey: 'hk',
-  tokenFile: join(root, `.data/test-bots/${crypto.randomUUID()}.token`),
+  tokenFile: bouncerTokenFile,
   judge: stub,
   pollWaitMs: 200,
   signal: controller.signal,
@@ -107,3 +121,75 @@ test('the Bouncer waits for its powers, then works the queue within its limits',
   expect((await get('garbage please')).notes).toHaveLength(1);
   expect(logs.filter((l) => l.includes('no powers yet'))).toHaveLength(1);
 });
+
+test('a report the Bouncer resolved carries a note, so reopening it and restarting the Bouncer does not re-judge it', async () => {
+  const reporter = await human('rep');
+  const author = await human('auth');
+  const message = await core.comms.post(author, 'lobby', 'this one is fine');
+  const report = await core.reports.create(reporter, message.id, 'again');
+  await until(async () => (await core.reports.get(report.id)).status === 'resolved');
+  expect((await core.reports.get(report.id)).notes.map((n) => [n.by, n.text])).toEqual([['Bouncer', 'dismissed: banter']]);
+
+  // A human mod overrules the Bouncer's dismissal. `reopen` clears status/resolution/resolvedBy
+  // but never touches notes. A human must lock their name before holding a role.
+  const modHuman = (await core.accounts.lock(await human('mod'), 'correct horse battery')).identity;
+  const mod = await core.moderation.setRole({ kind: 'console' }, modHuman.id, 'mod', 'test grant');
+  await core.reports.reopen({ kind: 'identity', identity: mod }, report.id, 'double check');
+  expect(await core.reports.get(report.id)).toMatchObject({ status: 'open', resolution: null, resolvedBy: null });
+
+  // A restarted Bouncer process has an empty in-memory `handled` set. It reuses the same saved
+  // token (the same identity), so only the note left behind above — untouched by the reopen —
+  // can stop it from judging the report all over again.
+  const restartController = new AbortController();
+  const restartLogs: string[] = [];
+  const restarted = runBouncer({
+    base: running.url,
+    houseKey: 'hk',
+    tokenFile: bouncerTokenFile,
+    judge: stub,
+    pollWaitMs: 200,
+    signal: restartController.signal,
+    log: (m) => restartLogs.push(m),
+  });
+  try {
+    // A correctly-behaving restart logs nothing at all here (it already has powers, and the one
+    // open report already carries its note, so there is nothing new to say) — so there is no log
+    // line to wait for. Give it several sweeps at pollWaitMs=200 instead.
+    await Bun.sleep(900);
+  } finally {
+    restartController.abort();
+    await restarted;
+  }
+  const untouched = await core.reports.get(report.id);
+  expect(untouched.status).toBe('open');
+  expect(untouched.notes).toHaveLength(1);
+}, 15_000);
+
+test('a resolve that permanently fails (not 401/429) is noted instead of retried, and does not block the rest of the sweep', async () => {
+  const reporter = await human('rep');
+  const gone = await human('auth');
+  const message = await core.comms.post(gone, 'lobby', 'mute me please (release test)');
+  const report = await core.reports.create(reporter, message.id, 'please look');
+  // The target leaves before the Bouncer gets to the report: its mute call now hits a target
+  // that `moderation.mute` rejects with 404 NO_USER, after `decide` already chose to act.
+  await core.moderation.release({ kind: 'console' }, gone.id, 'left before the Bouncer got to it');
+
+  const nextAuthor = await human('auth');
+  const nextMessage = await core.comms.post(nextAuthor, 'lobby', 'this one is fine');
+  const nextReport = await core.reports.create(reporter, nextMessage.id, 'again');
+
+  await until(async () => (await core.reports.get(report.id)).notes.length > 0);
+  const failed = await core.reports.get(report.id);
+  expect(failed.status).toBe('open'); // never resolved: the mute could never actually happen
+  expect(failed.notes.map((n) => n.text)).toEqual(['escalate: could not act (NO_USER)']);
+
+  // The queue kept moving in the same sweep: the next report is still handled.
+  await until(async () => (await core.reports.get(nextReport.id)).status === 'resolved');
+  expect(await core.reports.get(nextReport.id)).toMatchObject({ status: 'resolved', resolution: 'dismiss' });
+  expect(judgeCalls.filter((t) => t === 'mute me please (release test)')).toHaveLength(1);
+
+  // The note is this report's durable mark: further sweeps never judge it again.
+  await Bun.sleep(700);
+  expect((await core.reports.get(report.id)).notes).toHaveLength(1);
+  expect(judgeCalls.filter((t) => t === 'mute me please (release test)')).toHaveLength(1);
+}, 15_000);

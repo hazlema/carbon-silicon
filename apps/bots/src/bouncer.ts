@@ -91,12 +91,27 @@ export async function runBouncer(opts: BouncerOptions): Promise<void> {
         reason: d.reason,
         ...(d.minutes ? { minutes: d.minutes } : {}),
       });
-      log(`report ${report.id}: ${d.resolve}${d.minutes ? ` ${d.minutes} min` : ''} (${d.reason})`);
     } catch (e) {
-      // Beyond its powers after all (the server has the last word): hand it to a human.
-      if (!(e instanceof ApiError && (e.status === 400 || e.status === 403))) throw e;
-      await note(report.id, `escalate: ${d.reason} (beyond my powers: ${e.message})`);
+      // The server has the last word either way, and not just about its own caps: the world can
+      // also have moved on since the report was filed (the target released, the message already
+      // gone). Only a rejected token (401) or a rate limit (429) are worth retrying — every other
+      // 4xx means this report can never be acted on, so it goes to a human. Either way it gets a
+      // note, its durable mark, so it is never re-judged again.
+      if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 429) {
+        const escalate = `escalate: could not act (${e.code})`;
+        await note(report.id, escalate);
+        log(`report ${report.id}: ${escalate}`);
+        return;
+      }
+      throw e;
     }
+    // Resolved: also leave a note recording what happened. `reports.reopen` clears the resolution
+    // and resolvedBy fields but never touches notes, so without this a report the Bouncer resolved
+    // looks untouched to it after a human reopens it — and, worse, after a restart, since `handled`
+    // lives only in memory. The note is what "skip if a note by me exists" actually finds.
+    const verb = d.resolve === 'dismiss' ? 'dismissed' : d.resolve === 'delete' ? 'deleted' : `muted ${d.minutes} min`;
+    await note(report.id, `${verb}: ${d.reason}`);
+    log(`report ${report.id}: ${d.resolve}${d.minutes ? ` ${d.minutes} min` : ''} (${d.reason})`);
   }
 
   async function sweep(): Promise<void> {
@@ -120,8 +135,10 @@ export async function runBouncer(opts: BouncerOptions): Promise<void> {
       try {
         await handle(report);
       } catch (e) {
-        handled.delete(report.id); // a network hiccup: try again next sweep
-        throw e;
+        // A retryable failure (a rejected token, a rate limit, a network hiccup): try this report
+        // again next sweep. It must not take the rest of the queue down with it.
+        handled.delete(report.id);
+        log(`report ${report.id}: ${(e as Error).message}; will retry`);
       }
     }
   }
