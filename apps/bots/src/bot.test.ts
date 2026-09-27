@@ -175,8 +175,8 @@ describe('Sprocket', () => {
 type Said = { messages: { id: number; author: { handle: string } | null; text: string }[] };
 
 describe('OLD IRON (a bot with a voice)', () => {
-  // OLD IRON's registration, Rivet's and Stall's are the only ones from the loopback address
-  // (three of the five allowed per hour); guests and Cog register through newAgent.
+  // Only OLD IRON and Rivet (plus Rivet's one profile refresh) register from the loopback address,
+  // three of the five allowed per hour; guests and Cog register through newAgent.
   const ironUp = () => ironListening;
   let theGuest: Promise<{ client: Client; handle: string }> | null = null;
   const guest = () => (theGuest ??= newAgent(ironServer.url, `guest${randomTag()}`));
@@ -289,18 +289,36 @@ describe('OLD IRON (a bot with a voice)', () => {
     return { listening, done, stop: async () => (c.abort(), await done) };
   };
 
-  test('a restarted bot does not replay mentions it received before it went down', async () => {
+  // One extra house bot for the restart tests, reused so the loopback address stays well under
+  // the registration limit (OLD IRON, Rivet, and Rivet's one profile refresh).
+  const rivet = { ...oldIron, name: `Rivet${randomTag()}`, tagline: 'First edition.' };
+  const rivetTokenFile = join(root, `.data/test-bots/${crypto.randomUUID()}.token`);
+  const whoTagline = async (handle: string) =>
+    (await new Client(ironServer.url).call<{ presence: { identity: { handle: string; tagline: string | null } }[] }>('GET', '/api/who')).presence.find(
+      (p) => p.identity.handle === handle,
+    )?.identity.tagline;
+
+  test('a restarted bot refreshes its profile and does not replay mentions it received while down', async () => {
     voiceMode = 'talk';
-    const rivet = { ...oldIron, name: `Rivet${randomTag()}` };
-    const tokenFile = join(root, `.data/test-bots/${crypto.randomUUID()}.token`);
     const { client, handle } = await guest();
-    let bot = startBot({ personality: rivet, tokenFile });
+    let bot = startBot({ personality: rivet, tokenFile: rivetTokenFile });
     await bot.listening;
+    expect(await whoTagline(rivet.name)).toBe('First edition.');
     await bot.stop();
     const stale = (await client.chat('lobby', `@${rivet.name} anyone home?`)) as { message: { id: number } }; // arrives while it is down
-    bot = startBot({ personality: rivet, tokenFile });
+    rivet.tagline = 'Second edition, now with more core.';
+    const staleToken = (await Bun.file(rivetTokenFile).text()).trim();
+    bot = startBot({ personality: rivet, tokenFile: rivetTokenFile });
     try {
       await bot.listening;
+      expect(await whoTagline(rivet.name)).toBe('Second edition, now with more core.');
+      const refreshedToken = (await Bun.file(rivetTokenFile).text()).trim();
+      expect(refreshedToken).not.toBe(staleToken); // re-registered with the house key: token rotated
+      // An unchanged profile keeps its token: no needless re-registration on every start.
+      await bot.stop();
+      bot = startBot({ personality: rivet, tokenFile: rivetTokenFile });
+      await bot.listening;
+      expect((await Bun.file(rivetTokenFile).text()).trim()).toBe(refreshedToken);
       expect(await mentionAndWait(client, rivet.name, `@${rivet.name} how about now?`)).toBe(`@${handle} VOICE MENTION LINE.`);
       const r = await client.call<Said>('GET', `/api/chat/lobby?since=${stale.message.id}`);
       expect(r.messages.filter((m) => m.author?.handle === rivet.name)).toHaveLength(1);
@@ -312,8 +330,8 @@ describe('OLD IRON (a bot with a voice)', () => {
   test('stopping a bot while its voice hangs returns promptly', async () => {
     voiceMode = 'hang';
     try {
-      const stall = { ...oldIron, name: `Stall${randomTag()}` };
-      const bot = startBot({ personality: stall, tokenFile: join(root, `.data/test-bots/${crypto.randomUUID()}.token`) });
+      const stall = rivet;
+      const bot = startBot({ personality: stall, tokenFile: rivetTokenFile });
       await bot.listening;
       const { client } = await guest();
       const before = heard.length;

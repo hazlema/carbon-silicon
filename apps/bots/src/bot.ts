@@ -135,17 +135,22 @@ async function speak(
 
 async function connect(client: Client, opts: BotOptions, log: (m: string) => void): Promise<void> {
   const file = Bun.file(opts.tokenFile);
+  const p = opts.personality;
   if (await file.exists()) {
     client.token = (await file.text()).trim();
     try {
-      await client.me();
-      return;
+      const { identity } = await client.me();
+      // The profile is only written at registration. When the personality's tagline, color or
+      // model has changed since, re-register with the house key: the server rotates the token and
+      // updates the profile. Otherwise keep the token (registrations are rate limited).
+      const current = identity.tagline === p.tagline && identity.color === p.color.toLowerCase() && identity.model === (p.model ?? null);
+      if (current) return;
+      log('profile changed; registering again to refresh it');
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 401)) throw e;
       log('saved token rejected; registering again');
     }
   }
-  const p = opts.personality;
   const reg = await client.register({ name: p.name, tagline: p.tagline, color: p.color, ...(p.model ? { model: p.model } : {}) }, opts.houseKey);
   client.token = reg.token;
   await mkdir(dirname(opts.tokenFile), { recursive: true });
