@@ -190,6 +190,13 @@ describe('release and deletion', () => {
     expect(fresh.identity.id).not.toBe(identity.id);
     expect((await errorOf(ctx.accounts.login(handle, PW, meta))).code).toBe('BAD_PASSWORD');
   });
+  test('a released name gives up its role too', async () => {
+    const ctx = setup();
+    const { identity } = await locked(ctx, 'retired');
+    await ctx.ids.setRole(identity.id, 'mod');
+    await ctx.accounts.release(identity.id);
+    expect((await ctx.ids.row(identity.id))!.role).toBe('user');
+  });
   test('deleting yourself needs your password if the name is locked', async () => {
     const ctx = setup();
     const { identity } = await locked(ctx, 'quitter');
@@ -225,6 +232,61 @@ describe('bio', () => {
 });
 
 describe('the idle sweep', () => {
+  test('re-checks each candidate as it releases it: one that locks or comes back in the meantime stays', async () => {
+    const own = await openDatabase(await testDatabaseUrl());
+    try {
+      const clock = new FakeClock(Date.now());
+      const ctx = setup(own, clock);
+      const locker = (await ctx.ids.createHuman('Locker')).identity;
+      const returner = (await ctx.ids.createHuman('Returner')).identity;
+      const gone = (await ctx.ids.createHuman('Gone')).identity;
+      for (const id of [locker.id, returner.id, gone.id]) {
+        await own.db.update(identities).set({ lastSeenAt: new Date(clock.now() - 40 * DAY) }).where(eq(identities.id, id));
+      }
+      // Between the sweep's selection and each release: one locks their name, one is seen again.
+      const release = ctx.accounts.release.bind(ctx.accounts);
+      ctx.accounts.release = async (id, ...rest) => {
+        if (id === locker.id) await ctx.accounts.lock(locker, PW);
+        if (id === returner.id) await own.db.update(identities).set({ lastSeenAt: new Date(clock.now()) }).where(eq(identities.id, id));
+        return release(id, ...rest);
+      };
+      const hooked: string[] = [];
+      ctx.accounts.onRelease(async (id) => {
+        hooked.push(id);
+      });
+
+      expect(await ctx.accounts.sweepIdle()).toBe(1);
+      expect(hooked).toEqual([gone.id]);
+      expect((await ctx.ids.row(locker.id))!.releasedAt).toBeNull();
+      expect((await ctx.ids.row(locker.id))!.passwordHash).not.toBeNull();
+      expect((await ctx.ids.row(returner.id))!.releasedAt).toBeNull();
+      expect((await ctx.ids.row(gone.id))!.releasedAt).not.toBeNull();
+      // An explicit release (an admin, or deleting yourself) stays unconditional.
+      await release(locker.id);
+      expect((await ctx.ids.row(locker.id))!.releasedAt).not.toBeNull();
+    } finally {
+      await own.close();
+    }
+  });
+  test('never releases staff, even an unlocked guest who holds a role', async () => {
+    const own = await openDatabase(await testDatabaseUrl());
+    try {
+      const clock = new FakeClock(Date.now());
+      const ctx = setup(own, clock);
+      const staff = (await ctx.ids.createHuman('Staffer')).identity;
+      const plain = (await ctx.ids.createHuman('Plain')).identity;
+      // A role normally needs a locked name; set one on a guest directly to prove the sweep checks it.
+      await own.db.update(identities).set({ role: 'mod' }).where(eq(identities.id, staff.id));
+      for (const id of [staff.id, plain.id]) {
+        await own.db.update(identities).set({ lastSeenAt: new Date(clock.now() - 400 * DAY) }).where(eq(identities.id, id));
+      }
+      expect(await ctx.accounts.sweepIdle()).toBe(1);
+      expect((await ctx.ids.row(staff.id))!.releasedAt).toBeNull();
+      expect((await ctx.ids.row(plain.id))!.releasedAt).not.toBeNull();
+    } finally {
+      await own.close();
+    }
+  });
   test('releases idle guests after 30 days, or 180 with matches; never locked names, agents or house bots', async () => {
     const own = await openDatabase(await testDatabaseUrl());
     try {

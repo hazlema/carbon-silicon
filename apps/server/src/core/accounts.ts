@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lt, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, ne, sql, type SQL } from 'drizzle-orm';
 import { censorText } from '@cs/shared/filter';
 import type { IdentityPublic, SessionInfo } from '@cs/shared/protocol';
 import type { DB } from '../db';
@@ -50,7 +50,7 @@ export class AccountManager {
     this.idleMatchedMs = opts.idleMatchedMs ?? 180 * DAY;
   }
 
-  /** Runs inside release(), before the name is scrubbed (e.g. to drop ignore and block lists). */
+  /** Runs inside release(), once the name is scrubbed (e.g. to drop ignore and block lists, lift sanctions). */
   onRelease(fn: (identityId: string) => Promise<void>): void {
     this.releaseHooks.push(fn);
   }
@@ -161,14 +161,20 @@ export class AccountManager {
 
   /**
    * Gives a name back. The row stays, because match records point at it; its handle becomes a
-   * tombstone nobody can type, and everything personal goes. Idempotent.
+   * tombstone nobody can type, and everything personal goes, its role included. Idempotent.
+   * `idleBefore` is the idle sweep's re-check, made in the same UPDATE: the name is released only
+   * if it is still an unlocked plain guest last seen before then, so one that locks or comes back
+   * between the sweep's selection and this call stays. An admin's or your own release passes none.
+   * Hooks (dropping relations, lifting sanctions) run only when the release actually happened.
+   * Returns whether it did.
    */
-  async release(identityId: string): Promise<void> {
-    const row = await this.identities.row(identityId);
-    if (!row || row.releasedAt) return;
-    for (const hook of this.releaseHooks) await hook(identityId);
-    const tomb = `~${row.id}`;
-    await this.db
+  async release(identityId: string, idleBefore?: Date): Promise<boolean> {
+    const tomb = `~${identityId}`;
+    const where: SQL[] = [eq(identities.id, identityId), isNull(identities.releasedAt)];
+    if (idleBefore) {
+      where.push(isNull(identities.passwordHash), eq(identities.role, 'user'), lt(identities.lastSeenAt, idleBefore));
+    }
+    const done = await this.db
       .update(identities)
       .set({
         handle: tomb,
@@ -178,12 +184,17 @@ export class AccountManager {
         recoveryHash: null,
         email: null,
         ownerId: null,
-        secretHash: `released:${row.id}`,
+        role: 'user',
+        secretHash: `released:${identityId}`,
         releasedAt: new Date(this.clock.now()),
       })
-      .where(eq(identities.id, row.id));
-    await this.db.delete(sessions).where(eq(sessions.identityId, row.id));
-    this.identities.evict(row.id);
+      .where(and(...where))
+      .returning({ id: identities.id });
+    if (done.length === 0) return false;
+    for (const hook of this.releaseHooks) await hook(identityId);
+    await this.db.delete(sessions).where(eq(sessions.identityId, identityId));
+    this.identities.evict(identityId);
+    return true;
   }
 
   async deleteSelf(identity: IdentityPublic, password: unknown): Promise<void> {
@@ -209,7 +220,7 @@ export class AccountManager {
     return (await this.identities.refresh(row.id))!;
   }
 
-  /** Releases guest names nobody has used for a while. Locked names, agents and house bots stay. */
+  /** Releases guest names nobody has used for a while. Locked names, staff, agents and house bots stay. */
   async sweepIdle(): Promise<number> {
     const now = this.clock.now();
     const candidates = await this.db
@@ -223,6 +234,7 @@ export class AccountManager {
         and(
           eq(identities.kind, 'human'),
           eq(identities.isHouse, false),
+          eq(identities.role, 'user'),
           isNull(identities.passwordHash),
           isNull(identities.releasedAt),
           lt(identities.lastSeenAt, new Date(now - this.idleGuestMs)),
@@ -230,9 +242,9 @@ export class AccountManager {
       );
     let released = 0;
     for (const c of candidates) {
-      if (c.played && c.lastSeenAt.getTime() >= now - this.idleMatchedMs) continue;
-      await this.release(c.id);
-      released += 1;
+      const idleBefore = new Date(now - (c.played ? this.idleMatchedMs : this.idleGuestMs));
+      if (c.lastSeenAt >= idleBefore) continue;
+      if (await this.release(c.id, idleBefore)) released += 1;
     }
     return released;
   }

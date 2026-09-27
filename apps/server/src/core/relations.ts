@@ -1,4 +1,4 @@
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { IdentityPublic, RelationsInfo } from '@cs/shared/protocol';
 import type { DB } from '../db';
 import { identities, personRelations } from '../db/schema';
@@ -17,9 +17,10 @@ export class RelationManager {
     private identities: IdentityManager,
   ) {}
 
-  private async targetOf(owner: IdentityPublic, handle: string): Promise<IdentityPublic> {
+  /** `clearing`: a relation to a released name stays on your list (see forget), so you may still clear it. */
+  private async targetOf(owner: IdentityPublic, handle: string, clearing = false): Promise<IdentityPublic> {
     const target = await this.identities.getByHandle(handle);
-    if (!target || target.released) throw notFound('NO_USER', `There is no @${handle}.`);
+    if (!target || (target.released && !clearing)) throw notFound('NO_USER', `There is no @${handle}.`);
     if (target.id === owner.id) throw badRequest('SELF', "You can't ignore or block yourself.");
     return target;
   }
@@ -35,7 +36,7 @@ export class RelationManager {
   }
 
   async clear(owner: IdentityPublic, targetHandle: string, kind: RelationKind): Promise<RelationsInfo> {
-    const target = await this.targetOf(owner, targetHandle);
+    const target = await this.targetOf(owner, targetHandle, true);
     await this.db
       .delete(personRelations)
       .where(and(eq(personRelations.ownerId, owner.id), eq(personRelations.targetId, target.id), eq(personRelations.kind, kind)));
@@ -70,9 +71,10 @@ export class RelationManager {
     return byTarget.has(authorId);
   }
 
-  /** On release: nothing points to or from a tombstone. */
+  /** On release: the released person's own lists go. Relations that point at them stay — a
+   *  victim's block of a harasser is theirs to keep (and to clear). */
   async forget(identityId: string): Promise<void> {
-    await this.db.delete(personRelations).where(or(eq(personRelations.ownerId, identityId), eq(personRelations.targetId, identityId)));
-    this.cache.clear();
+    await this.db.delete(personRelations).where(eq(personRelations.ownerId, identityId));
+    this.cache.delete(identityId);
   }
 }

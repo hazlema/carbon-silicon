@@ -74,6 +74,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const relations = new RelationManager(database.db, identities);
   comms.setMentionFilter((ownerId, authorId) => relations.mutes(ownerId, authorId));
   accounts.onRelease((identityId) => relations.forget(identityId));
+  accounts.onRelease((identityId) => moderation.liftOnRelease(identityId));
   const reports = new ReportManager(database.db, clock, { identities, comms, moderation, guard });
 
   const abandoned = await games.recoverOnBoot();

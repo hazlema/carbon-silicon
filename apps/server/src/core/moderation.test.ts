@@ -294,6 +294,39 @@ describe('the power table, enforced by the manager', () => {
   });
 });
 
+describe('sanctions end with the name, however it is given back', () => {
+  const fresh = async () => {
+    const again = new ModerationManager(core.database.db, core.bus, clock, {
+      identities: core.identities,
+      accounts: core.accounts,
+      profiles: core.profiles,
+      comms: core.comms,
+      games: core.games,
+      invites: core.invites,
+    });
+    await again.load();
+    return again;
+  };
+
+  test('a muted player who deletes themselves leaves no sanction to reload at boot', async () => {
+    const admin = await staff('admin');
+    const p = await person('quitter');
+    await core.moderation.mute(as(admin), p.id, 'noisy', 30);
+    await core.accounts.deleteSelf(p, undefined);
+    expect(core.moderation.sanctionOf(p.id)).toBeNull();
+    expect((await fresh()).sanctionOf(p.id)).toBeNull();
+  });
+
+  test('an idle guest swept while suspended leaves no sanction behind either', async () => {
+    const admin = await staff('admin');
+    const p = await person('swept');
+    await core.moderation.suspend(as(admin), p.id, 'long one', null);
+    await core.accounts.release(p.id);
+    expect(core.moderation.sanctionOf(p.id)).toBeNull();
+    expect((await fresh()).sanctionOf(p.id)).toBeNull();
+  });
+});
+
 describe('the log and the people pages', () => {
   test('every action is logged with its actor; people and person read it back', async () => {
     const mod = await staff('mod');

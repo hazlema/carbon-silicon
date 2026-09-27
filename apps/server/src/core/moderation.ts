@@ -298,16 +298,21 @@ export class ModerationManager {
     const target = await this.target(targetId);
     this.authorize(actor, { action: 'release' }, target);
     await this.bench(target);
-    // Lift any active sanction in storage too (same update as lift()), or load() at the next boot
-    // would find an un-lifted row and reinstate it as still active for a released identity.
-    await this.db
-      .update(sanctions)
-      .set({ liftedAt: new Date(this.clock.now()), liftedBy: actorName(actor) })
-      .where(and(eq(sanctions.identityId, target.id), isNull(sanctions.liftedAt)));
-    this.active.delete(target.id);
+    // Its sanctions are lifted by the release hook (liftOnRelease), however the name is given back.
     // Recorded first, so the log keeps the handle the tombstone is about to erase.
     await this.record(actor, 'release', target.id, why, { handle: target.handle });
     await this.deps.accounts.release(target.id);
+  }
+
+  /** An AccountManager release hook: a released name's active sanctions end with it, in storage
+   *  too, or load() at the next boot would reinstate an un-lifted row for a tombstone. Runs for
+   *  every release: a moderator's, deleting yourself, and the idle sweep. */
+  async liftOnRelease(identityId: string): Promise<void> {
+    await this.db
+      .update(sanctions)
+      .set({ liftedAt: new Date(this.clock.now()), liftedBy: 'release' })
+      .where(and(eq(sanctions.identityId, identityId), isNull(sanctions.liftedAt)));
+    this.active.delete(identityId);
   }
 
   /** The one way a message is removed: validated, checked against the power table, and logged. */

@@ -25,7 +25,11 @@ function m1Folder(): string {
 }
 
 const client = new PGlite();
-afterAll(() => client.close());
+const oldClient = new PGlite();
+afterAll(async () => {
+  await client.close();
+  await oldClient.close();
+});
 
 describe('0001_m2a_accounts', () => {
   test("carries every human's browser key into sessions and leaves agents alone", async () => {
@@ -50,5 +54,26 @@ describe('0001_m2a_accounts', () => {
     const [bot] = await db.select().from(identities).where(eq(identities.id, 'id_bot'));
     expect(bot.secretHash).toBe(hashSecret('cs_oldtoken'));
     expect(await db.select().from(sessions).where(eq(sessions.identityId, 'id_bot'))).toHaveLength(0);
+  });
+});
+
+describe('0002_m2a_last_seen', () => {
+  test("restarts every human's idle clock, since M1 never kept last_seen_at up to date", async () => {
+    const db = drizzle(oldClient, { schema });
+    await migrate(db, { migrationsFolder: m1Folder() });
+    // An M1 guest whose last_seen_at was only ever its creation time, a year ago; and an agent.
+    await oldClient.query(
+      `insert into identities (id, handle, handle_lower, kind, secret_hash, color, created_at, last_seen_at) values
+       ('id_guest', 'Oldguest', 'oldguest', 'human', 'x1', '#ffb347', now() - interval '365 days', now() - interval '365 days'),
+       ('id_agent', 'Oldagent', 'oldagent', 'agent', 'x2', '#3de0ff', now() - interval '365 days', now() - interval '365 days')`,
+    );
+
+    await migrate(db, { migrationsFolder: MIGRATIONS });
+
+    const dayAgo = Date.now() - 86_400_000;
+    const [guest] = await db.select().from(identities).where(eq(identities.id, 'id_guest'));
+    expect(guest.lastSeenAt.getTime()).toBeGreaterThan(dayAgo);
+    const [agent] = await db.select().from(identities).where(eq(identities.id, 'id_agent'));
+    expect(agent.lastSeenAt.getTime()).toBeLessThan(dayAgo);
   });
 });

@@ -65,12 +65,20 @@ describe('ignore and block', () => {
     expect(await codeOf(core.relations.set(ann, `nobody${randomTag()}`, 'block'))).toBe('NO_USER');
   });
 
-  test('releasing someone forgets every relation that points at them', async () => {
+  test("releasing someone drops the relations they owned, but keeps a victim's block of them", async () => {
     const ann = await person('ann');
     const bob = await person('bob');
-    await core.relations.set(ann, bob.handle, 'ignore');
+    await core.relations.set(ann, bob.handle, 'block'); // ann (the victim) blocks bob
+    await core.relations.set(bob, ann.handle, 'ignore'); // bob's own list
     await core.moderation.release(CONSOLE, bob.id, 'deleted their account');
-    expect((await core.relations.list(ann.id)).ignores).toEqual([]);
+    expect((await core.relations.list(bob.id)).ignores).toEqual([]);
+    const kept = (await core.relations.list(ann.id)).blocks;
+    expect(kept.map((i) => [i.id, i.released])).toEqual([[bob.id, true]]);
+    expect(await core.relations.mutes(ann.id, bob.id)).toBe(true);
+    // ann can still clear it from her list, by the name it now shows
+    expect((await core.relations.clear(ann, kept[0].handle, 'block')).blocks).toEqual([]);
+    // but nobody can start a new relation with a released name
+    expect(await codeOf(core.relations.set(ann, kept[0].handle, 'block'))).toBe('NO_USER');
   });
 });
 
