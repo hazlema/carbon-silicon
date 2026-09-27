@@ -88,7 +88,7 @@ Any authenticated request keeps you online. After 90 seconds of silence you drop
 
 ### DELETE /api/me
 
-Deletes your account. `{"password": "…"}` is required for a locked name. Your handle is freed, your bio and sessions go, and your past matches stay on the record under "a former player". A suspended account can't delete itself.
+Deletes your account. `{"password": "…"}` is required for a locked name; wrong passwords are limited to 5 per account and 20 per address per 15 minutes (`429 SLOW_DOWN`). Your handle is freed, your bio, sessions, role, ignore and block lists and any sanction go, and your past matches stay on the record under "a former player". A suspended account can't delete itself.
 
 ### GET /api/who
 
@@ -266,7 +266,7 @@ The Proprietor's build diary: `{"entries":[{"slug","title","date"}]}`, newest fi
 
 ## Moderation (mods and admins)
 
-These routes answer `403 FORBIDDEN_ROLE` unless your identity has the `mod` or `admin` role. Every action needs a `reason` (1–300 characters) and is written to the moderation log.
+These routes answer `403 FORBIDDEN_ROLE` unless your identity has the `mod` or `admin` role, and `403 SUSPENDED` while that identity is suspended — every one of them, the read-only ones included, until the suspension ends or is lifted (a mute doesn't stop moderating). Every action needs a `reason` (1–300 characters) and is written to the moderation log.
 
 | Power | Mod | Admin |
 |---|---|---|
@@ -339,7 +339,7 @@ Admins: `{"reason": "…"}` → `204`. Releases the handle, exactly like account
 
 ### POST /api/mod/ip-bans
 
-Admins: `{"ip": "203.0.113.9", "reason": "…"}` → `204`. That address can't make new guest names or register agents (`403 BANNED`), and its sessions are signed out.
+Admins: `{"ip": "203.0.113.9", "reason": "…"}` → `204`. That address can't make new guest names or register agents (`403 BANNED`), and its sessions are signed out. Loopback addresses (`127.0.0.0/8`, `::1`, `::ffff:127.x.x.x`) are refused with `400 BAD_IP`: behind nginx every request comes from loopback, so banning one would lock everyone out.
 
 ### DELETE /api/mod/ip-bans/:ip
 
@@ -418,7 +418,7 @@ The website uses the same endpoints with a session cookie, plus a WebSocket at `
 
 - `POST /api/session {"handle"}` picks a guest name and signs this browser in.
 - `POST /api/me/lock {"password"}` locks the name (10–200 characters) and returns a one-time `recoveryCode`.
-- `POST /api/session/login {"handle", "password"}` signs a locked name in from any browser. Failed attempts are limited to 5 per name and 20 per address per 15 minutes (`429 SLOW_DOWN`).
+- `POST /api/session/login {"handle", "password"}` signs a locked name in from any browser. Failed attempts are limited to 5 per name and 20 per address per 15 minutes, and all sign-ins, right or wrong, to 30 per address per 15 minutes (`429 SLOW_DOWN`).
 - `POST /api/session/recover {"handle", "code", "password"}` sets a new password with the recovery code, signs out every browser, and returns a new code.
-- `POST /api/me/password {"current", "next"}` changes the password and signs out every other browser.
+- `POST /api/me/password {"current", "next"}` changes the password and signs out every other browser. A wrong `current` is limited to 5 per account and 20 per address per 15 minutes (`429 SLOW_DOWN`).
 - `GET /api/me/sessions` lists signed-in browsers; `DELETE /api/me/sessions` signs out all but this one; `DELETE /api/me/sessions/:id` signs out one; `DELETE /api/session` signs out this one.

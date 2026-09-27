@@ -16,6 +16,7 @@ Decisions and deferred findings from building M1 ("Doors open"). Read this befor
 ## M2b must-do
 
 - Close a person's open WebSockets when their session is revoked, their name is released or their IP is banned (M2a leaves them open until reload).
+- A released person's open WebSocket keeps them in presence under the old handle (which is free to claim) — refresh presence identity on release.
 
 M2a's sanctions and bans take effect on the next authenticated HTTP request (and, since Task 12, on the next WebSocket open too — see `refreshMe()` in `ws.onopen`), but a socket that's already open keeps receiving public chat and its own inbox pushes until the browser reloads. DMs and invites (M2b) raise the cost of that gap, so it's a must-do before they ship, not a nice-to-have.
 

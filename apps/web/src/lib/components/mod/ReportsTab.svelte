@@ -4,7 +4,7 @@
   import IdentityChip from '$lib/components/IdentityChip.svelte';
   import { relativeTime } from '$lib/format';
   import { live } from '$lib/live.svelte';
-  import { allowedActions, contextLines, limits } from '$lib/mod';
+  import { allowedActions, contextLines, limits, reportAbout } from '$lib/mod';
   import { displayName } from '$lib/profile';
   import ActionForm from './ActionForm.svelte';
 
@@ -56,7 +56,7 @@
   }
 
   const canSanction = (r: ReportInfo) => !!live.me && !!r.target && allowedActions(live.me, r.target).length > 0;
-  const who = (r: ReportInfo) => (r.snapshot.author ? (r.snapshot.author.released ? displayName(r.snapshot.author) : `@${r.snapshot.author.handle}`) : 'system');
+  const who = (r: ReportInfo) => reportAbout(r);
   const LABEL: Record<ReportResolution, string> = { dismiss: 'Dismiss', delete: 'Delete message', mute: 'Mute', suspend: 'Suspend' };
   const SUBMIT: Record<ReportResolution, string> = { dismiss: 'Dismiss it', delete: 'Delete it', mute: 'Mute them', suspend: 'Suspend them' };
 </script>

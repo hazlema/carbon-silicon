@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { IdentityPublic, ModLogEntry, ReportInfo, ReportSnapshot } from '@cs/shared/protocol';
-import { allowedActions, contextLines, durationText, isModerator, limits, logLine } from './mod';
+import { allowedActions, contextLines, durationText, isModerator, limits, logLine, reportAbout } from './mod';
 
 const who = (id: string, over: Partial<IdentityPublic> = {}): IdentityPublic => ({
   id,
@@ -91,5 +91,29 @@ describe('contextLines', () => {
   test('does not repeat the snapshot when the context already holds it', () => {
     const report = { snapshot: line(5), context: [line(5), line(6)] } as ReportInfo;
     expect(contextLines(report).map((l) => l.messageId)).toEqual([5, 6]);
+  });
+});
+
+describe('a report about someone since released', () => {
+  const snapLine = (messageId: number, author: IdentityPublic | null): ReportSnapshot => ({
+    messageId,
+    channel: 'lobby',
+    author,
+    text: `t${messageId}`,
+    createdAt: '2026-09-27T12:00:00Z',
+  });
+  const bob = who('id_bob', { handle: 'bob' });
+  const gone = who('id_bob', { handle: '~id_bob', released: true });
+  const report = (target: IdentityPublic | null) =>
+    ({ snapshot: snapLine(5, bob), context: [snapLine(4, user), snapLine(6, bob)], target }) as ReportInfo;
+
+  test('shows "a former player", not the frozen handle that is free to claim again', () => {
+    expect(reportAbout(report(gone))).toBe('a former player');
+    expect(contextLines(report(gone)).map((l) => l.author?.released)).toEqual([false, true, true]);
+    expect(contextLines(report(gone))[0].author).toEqual(user); // other authors untouched
+  });
+  test('an active target keeps their @handle; a system line says system', () => {
+    expect(reportAbout(report(bob))).toBe('@bob');
+    expect(reportAbout({ snapshot: snapLine(5, null), context: [], target: null } as unknown as ReportInfo)).toBe('system');
   });
 });

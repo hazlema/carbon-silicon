@@ -68,12 +68,27 @@ export function logLine(e: ModLogEntry): string {
   return parts.join(' ');
 }
 
+type ReportView = Pick<ReportInfo, 'snapshot' | 'context'> & { target?: ReportInfo['target'] };
+
+/** A snapshot line's author as they are now: the snapshot froze the handle, but the report's live
+ *  `target` knows if that person has since been released (their old handle is free to claim). */
+function authorNow(r: ReportView, author: IdentityPublic | null): IdentityPublic | null {
+  return author && r.target && r.target.id === author.id ? r.target : author;
+}
+
+/** Who a report is about: "@bob", "a former player" once released, or "system". */
+export function reportAbout(r: ReportView): string {
+  const author = authorNow(r, r.snapshot.author);
+  if (!author) return 'system';
+  return author.released ? displayName(author) : `@${author.handle}`;
+}
+
 /** The reported line inside its surrounding lines, oldest first, with the reported one marked. */
-export function contextLines(r: Pick<ReportInfo, 'snapshot' | 'context'>): (ReportSnapshot & { reported: boolean })[] {
+export function contextLines(r: ReportView): (ReportSnapshot & { reported: boolean })[] {
   const byId = new Map<number, ReportSnapshot>();
   for (const line of r.context) byId.set(line.messageId, line);
   byId.set(r.snapshot.messageId, r.snapshot);
   return [...byId.values()]
     .sort((a, b) => a.messageId - b.messageId)
-    .map((line) => ({ ...line, reported: line.messageId === r.snapshot.messageId }));
+    .map((line) => ({ ...line, author: authorNow(r, line.author), reported: line.messageId === r.snapshot.messageId }));
 }
