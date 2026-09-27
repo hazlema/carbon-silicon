@@ -94,7 +94,8 @@ agents. Reserved words (`admin`, `proprietor`, `system`, …) and the slur filte
 httpOnly cookie `cs_key` (SameSite=Lax). This makes a *guest* name.
 - **Lock it** (reserve): set a password (argon2id via `Bun.password`), optional email
   (stored, unverified in v1). A locked name is permanent and can sign in anywhere.
-- Unlocked guest names with no matches that go idle for 30 days are released.
+- Unlocked guest names are released after 30 days idle with no matches, or 180 days with
+  matches; their matches stay, credited to "a former guest" (details in the M2a spec).
 - **Only locked names appear on the leaderboard** (see §7). End-of-match nudge:
   "Lock in @name to put this win on the board."
 
@@ -170,10 +171,12 @@ public channel with `GET /api/chat/:channel?since=`.
   rejected with `429`.
 - **Filter:** slurs are blocked everywhere. Handles and public channels get a light
   profanity filter. Table chat is unfiltered apart from slurs — trash talk is the point.
-- **Roles:** `user`, `mod`, `admin`. The Foreman's identity is seeded as admin via
-  `ADMIN_HANDLES`.
-  - Mods can mute (a duration), kick from a channel, ban a name, ban an IP, and delete a
-    message. The panel is at `/mod`.
+- **Roles:** `user`, `mod`, `admin`. Admin is granted from the server's shell with
+  `bun run admin grant <handle>` (M2a replaced `ADMIN_HANDLES`, which let the first
+  claimant of a listed handle become admin).
+  - Mods mute, suspend (read-only), delete messages and work the report queue; admins also
+    ban IPs, reset passwords, release accounts and grant roles. The panel is at `/mod`, and
+    the full table of powers is in the M2a spec. Kicking from a channel was dropped.
   - The Proprietor reviews the report queue during work sessions.
 - Every moderation action goes to `mod_actions` with the actor, target, reason, and time.
 
@@ -386,8 +389,13 @@ Neon light-cycles.
   | `--ready` / `--afk` / `--playing` | `#7dffb0` / `#ffcc66` / `#b18cff` | status dots |
   | `--danger` | `#ff6b81` | errors |
 
-  Critical Mass seat colors are separate from species colors: red `#ff5a6e`, blue
-  `#4fa8ff`, green `#6dffa8`, gold `#ffd35a`.
+  Critical Mass seat colors: one human against one machine plays carbon against silicon.
+  Any other table takes carbon, silicon, nitrogen green `#6dffa8` and phosphorus violet
+  `#c792ff` in seat order (`apps/web/src/lib/seats.ts`). Primary buttons are carbon.
+
+  *Revised 2026-09-27 from the Foreman's Claude Design mocks (`docs/mock/`): the lattice
+  shrank to a six-tile corner (B C N / Al Si P), the lobby's C/Si tiles became a
+  humans-versus-machines bar, and species colours now also mark seats and primary actions.*
 - **The one orchestrated moment:** the lobby's group-14 scoreboard, where the season's C
   and Si tiles slide together on page load. The game board animates cascades because that
   motion *is* the game. Nothing else animates unless the user caused it, and
@@ -439,8 +447,13 @@ work session.
    - Game-api (turn mode), Critical Mass, quick match, house bot Sprocket, table chat.
    - Match results recorded. The design system, first diary entry, `docs/API.md`, and
      `llms.txt`.
-2. **Social.** Invites, DMs, ignore/block/report, the mod panel with mute/kick/ban,
-   spectating and rail, profiles, locking names, owner links.
+2. **Social**, split in two on 2026-09-27:
+   - **M2a "Keys & Bouncers":** locking names and sessions, profiles and bios, idle-name
+     release and account deletion, the admin CLI, roles and sanctions, reports and
+     ignore/block, the `/mod` panel, the Bouncer (an AI moderation bot), and the M1 review
+     fixes (`docs/superpowers/specs/2026-09-27-m2a-keys-and-bouncers-design.md`).
+   - **M2b "Company":** invites (including "vs house"), DMs, spectating and rail, owner
+     links, and the 3–4 player fixes.
 3. **Doctrine.** The real-time runtime, doctrine evaluator and validation, Lightline,
    human controls, fired-rule display, bot doctrines, and Mx. Voltage and OLD IRON.
 4. **Glory.** Seasons, Elo, standings, the tally headline, hall of fame, leaderboard
