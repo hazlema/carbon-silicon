@@ -14,6 +14,7 @@
   let error = $state('');
   let acting = $state<PersonAction | null>(null);
   let code = $state('');
+  let closeBtn: HTMLButtonElement | undefined = $state();
   const target = $derived(detail?.profile.identity ?? null);
   const actions = $derived(live.me && target ? allowedActions(live.me, target) : []);
   const lim = $derived(live.me ? limits(live.me) : { muteMax: 0, suspendMax: 0, permanent: false });
@@ -33,9 +34,18 @@
     acting = null;
     code = '';
     void load();
+    closeBtn?.focus();
   });
 
   async function act(kind: PersonAction, v: { reason: string; minutes?: number }) {
+    if (kind === 'release') {
+      // Release renames the identity to `~<id>`, so the drawer's own GET would now 404. Close it
+      // instead of reloading, and let the People list (which still has the old handle) refresh.
+      await api('POST', `${base}/release`, { reason: v.reason });
+      onChanged();
+      onClose();
+      return;
+    }
     switch (kind) {
       case 'mute':
       case 'suspend':
@@ -49,9 +59,6 @@
         break;
       case 'reset-password':
         code = (await api<{ code: string }>('POST', `${base}/reset-password`, { reason: v.reason })).code;
-        break;
-      case 'release':
-        await api('POST', `${base}/release`, { reason: v.reason });
         break;
     }
     acting = null;
@@ -73,10 +80,10 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && onClose()} />
 
-<aside class="drawer panel" role="dialog" aria-labelledby="person-title">
+<div class="drawer panel" role="dialog" aria-modal="true" aria-labelledby="person-title">
   <header>
     <h2 id="person-title">{target ? displayName(target) : handle}</h2>
-    <button class="btn quiet" type="button" onclick={onClose}>Close</button>
+    <button class="btn quiet" type="button" bind:this={closeBtn} onclick={onClose}>Close</button>
   </header>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if detail && target}
@@ -139,7 +146,7 @@
       </ul>
     {/if}
   {/if}
-</aside>
+</div>
 
 <style>
   .drawer {

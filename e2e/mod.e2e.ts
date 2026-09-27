@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { enter, grantMod, lock, newPlayer, PASSWORD, randomTag } from './testing';
+import { enter, grantAdmin, grantMod, lock, newPlayer, PASSWORD, randomTag } from './testing';
 
 test('a mod deletes a reported line from /mod, and the lobby shows it was removed', async ({ browser, request }) => {
   const loud = await newPlayer(browser);
@@ -60,6 +60,35 @@ test('a mod mutes someone from People', async ({ browser, request }) => {
   await drawer.getByRole('button', { name: 'Mute them' }).click();
   await expect(drawer.getByText(/Muted until/)).toBeVisible();
   await expect(target.getByRole('status').filter({ hasText: "You're muted" })).toBeVisible();
+});
+
+test('an admin releases a guest from the People drawer, cleanly', async ({ browser, request }) => {
+  const guest = await newPlayer(browser);
+  const guestName = `rel${randomTag()}`;
+  await enter(guest, guestName);
+
+  const admin = await newPlayer(browser);
+  const adminName = `adm${randomTag()}`;
+  await enter(admin, adminName);
+  await lock(admin, PASSWORD);
+  await grantAdmin(request, adminName);
+  await admin.goto('/mod');
+  await admin.getByRole('tab', { name: 'People' }).click();
+  await admin.getByLabel('Search people').fill(guestName);
+  await admin.getByRole('button', { name: new RegExp(guestName) }).click();
+  const drawer = admin.getByRole('dialog', { name: guestName });
+  await drawer.getByRole('button', { name: 'Release name' }).click();
+  await drawer.getByLabel('Reason').fill('e2e: release');
+  await drawer.getByRole('button', { name: 'Release it' }).click();
+
+  // No spurious "no such player" error, and the drawer closes on success.
+  await expect(admin.getByRole('dialog', { name: guestName })).toHaveCount(0);
+  await expect(admin.getByRole('alert')).toHaveCount(0);
+
+  // A fresh search no longer finds the released name.
+  await admin.getByLabel('Search people').fill('');
+  await admin.getByLabel('Search people').fill(guestName);
+  await expect(admin.getByRole('button', { name: new RegExp(guestName) })).toHaveCount(0);
 });
 
 test('someone without the role gets a polite refusal', async ({ browser }) => {

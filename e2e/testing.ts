@@ -38,3 +38,9 @@ export async function grantMod(request: APIRequestContext, handle: string): Prom
   const r = await request.post('/api/console/grant-mod', { headers: { 'x-admin-key': 'e2e-admin' }, data: { handle } });
   if (!r.ok()) throw new Error(`grant-mod ${handle} failed: ${r.status()} ${await r.text()}`);
 }
+
+/** Make a locked name an admin through the admin console (loopback + the e2e admin key). */
+export async function grantAdmin(request: APIRequestContext, handle: string): Promise<void> {
+  const r = await request.post('/api/console/grant', { headers: { 'x-admin-key': 'e2e-admin' }, data: { handle } });
+  if (!r.ok()) throw new Error(`grant ${handle} failed: ${r.status()} ${await r.text()}`);
+}

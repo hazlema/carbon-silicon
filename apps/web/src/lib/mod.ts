@@ -1,4 +1,5 @@
 import type { IdentityPublic, ModLogEntry, ReportInfo, ReportSnapshot, Role } from '@cs/shared/protocol';
+import { displayName } from './profile';
 
 export type PersonAction = 'mute' | 'suspend' | 'lift' | 'role' | 'reset-password' | 'release';
 
@@ -57,7 +58,7 @@ const VERB: Record<ModLogEntry['action'], string> = {
 /** One log entry as a sentence: "@mo muted @ann for 1 hour". */
 export function logLine(e: ModLogEntry): string {
   const actor = e.actor === 'console' ? 'console' : `@${e.actor}`;
-  const target = e.target ? (e.target.released ? 'a former player' : `@${e.target.handle}`) : '';
+  const target = e.target ? (e.target.released ? displayName(e.target) : `@${e.target.handle}`) : '';
   const parts = [actor, VERB[e.action]];
   if (target) parts.push(target);
   if (typeof e.detail.ip === 'string') parts.push(e.detail.ip);

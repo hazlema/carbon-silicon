@@ -5,6 +5,7 @@
   import { relativeTime } from '$lib/format';
   import { live } from '$lib/live.svelte';
   import { allowedActions, contextLines, limits } from '$lib/mod';
+  import { displayName } from '$lib/profile';
   import ActionForm from './ActionForm.svelte';
 
   type Acting = { id: string; kind: ReportResolution | 'reopen' };
@@ -55,7 +56,7 @@
   }
 
   const canSanction = (r: ReportInfo) => !!live.me && !!r.target && allowedActions(live.me, r.target).length > 0;
-  const who = (r: ReportInfo) => (r.snapshot.author ? (r.snapshot.author.released ? 'a former player' : `@${r.snapshot.author.handle}`) : 'system');
+  const who = (r: ReportInfo) => (r.snapshot.author ? (r.snapshot.author.released ? displayName(r.snapshot.author) : `@${r.snapshot.author.handle}`) : 'system');
   const LABEL: Record<ReportResolution, string> = { dismiss: 'Dismiss', delete: 'Delete message', mute: 'Mute', suspend: 'Suspend' };
   const SUBMIT: Record<ReportResolution, string> = { dismiss: 'Dismiss it', delete: 'Delete it', mute: 'Mute them', suspend: 'Suspend them' };
 </script>
@@ -85,7 +86,7 @@
       <ol class="context">
         {#each contextLines(r) as line (line.messageId)}
           <li class:reported={line.reported}>
-            <span class="who">{line.author ? (line.author.released ? 'a former player' : line.author.handle) : 'system'}</span>
+            <span class="who">{line.author ? displayName(line.author) : 'system'}</span>
             <span class="text">{line.text}</span>
           </li>
         {/each}
