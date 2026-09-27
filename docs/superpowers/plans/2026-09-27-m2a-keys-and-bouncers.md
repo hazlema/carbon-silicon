@@ -20,7 +20,7 @@
 - Mute lengths: mods ≤ 1440 minutes, house mods ≤ 60. Suspension lengths: mods ≤ 10080 minutes (never permanent); admins any, or permanent (`minutes` omitted). Minutes are integers ≥ 1.
 - Idle release: guest humans (no password, not house) idle 30 days with no match rows, or 180 days with match rows. Sweep at boot and every 6 hours. `lastSeenAt` is written at most once per 5 minutes per identity.
 - Released identities: handle becomes `~` + id (it can never pass `checkHandle`), `released_at` set, and the web shows them as "a former player".
-- The console only answers requests from a loopback address (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`) that carry `x-admin-key: <ADMIN_KEY>`. `ADMIN_KEY` defaults to `dev-admin-key` outside production; unset in production means `403 CONSOLE_OFF`.
+- The console only answers requests from a loopback address (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`) that carry no `X-Forwarded-For` header at all (behind nginx every request is loopback, so this is what tells the CLI apart from the internet) and that carry `x-admin-key: <ADMIN_KEY>`. `ADMIN_KEY` defaults to `dev-admin-key` outside production; unset in production means `403 CONSOLE_OFF`.
 - `TRUST_PROXY` unset or `0`: the client IP is the socket address and `X-Forwarded-For` is ignored. `TRUST_PROXY=1`: the client IP is the last address in `X-Forwarded-For` (the one nginx appended).
 - Web changes follow the redesign's tokens in `apps/web/src/app.css` (species colours only for species and primary actions; `.btn.primary` is carbon). Every new page works at 400 px wide.
 - Commit after each task with a message ending in the line `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
@@ -80,7 +80,8 @@ export type SanctionKind = 'mute' | 'suspend';
 export interface SanctionInfo { kind: SanctionKind; reason: string; since: string; endsAt: string | null }
 
 // IdentityPublic gains:  released: boolean
-// ChatMessage gains:     removed: { by: string } | null   // remover's handle; text is '' when removed
+// ChatMessage gains:     removed: { by: string } | null   // remover's handle; text is '' when removed,
+//                        except a mod or admin viewer gets the original text back (S145-146)
 
 export interface SessionInfo { id: string; label: string; ip: string | null; createdAt: string; lastUsedAt: string; current: boolean }
 export interface ProfileMatch { id: string; gameId: string; endedAt: string | null; result: 'win' | 'loss' | 'draw' | 'abandoned' | null; opponents: IdentityPublic[] }
@@ -177,9 +178,11 @@ export type PowerRequest =
 export function checkPower(actor: Actor, req: PowerRequest, target: IdentityPublic | null): void;   // throws 403 FORBIDDEN_ROLE
 export const actorName: (actor: Actor) => string;                                                    // 'console' or handle
 export function assertStaff(actor: Actor): void;                                                    // mod/admin/console, else 403 FORBIDDEN_ROLE
-export function peopleFilterOf(raw: unknown): 'all' | 'suspended' | 'muted' | 'mods' | 'guests' | 'agents' | 'house';   // 400 BAD_FILTER
 
 // apps/server/src/core/moderation.ts (Task 6)
+export type PeopleFilter = 'all' | 'suspended' | 'muted' | 'mods' | 'guests' | 'agents' | 'house';
+export const PEOPLE_FILTERS: readonly PeopleFilter[];
+export function peopleFilterOf(raw: unknown): PeopleFilter;   // 400 BAD_FILTER
 export class ModerationManager {
   constructor(db: DB, bus: EventBus, clock: Clock, deps: { identities: IdentityManager; accounts: AccountManager; profiles: ProfileService; comms: CommunicationManager; games: GameManager; invites: InviteManager });
   deleteMessage(actor: Actor, messageId: unknown, reason: unknown): Promise<ChatMessage>;   // the one path that checks, removes and logs
@@ -197,7 +200,7 @@ export class ModerationManager {
   isIpBanned(ip: string | null): boolean;
   record(actor: Actor, action: ModActionKind, targetId: string | null, reason: string, detail?: Record<string, unknown>): Promise<void>;
   log(opts: { before?: number; targetId?: string; limit?: number }): Promise<ModLogEntry[]>;
-  people(q: string, filter: 'all' | 'suspended' | 'muted' | 'mods' | 'guests' | 'agents' | 'house'): Promise<PersonSummary[]>;
+  people(q: string, filter: PeopleFilter): Promise<PersonSummary[]>;
   person(handle: string): Promise<PersonDetail>;
 }
 export const reasonOf: (raw: unknown) => string;   // trims; 400 BAD_REASON unless 1–300 chars
@@ -227,8 +230,10 @@ export class ReportManager {
 //   constructor(db, bus, clock, identities, opts: { publicChannels; guard: Guard })
 //   setMentionFilter(fn: (ownerId: string, authorId: string) => Promise<boolean>): void   // true = don't deliver
 //   remove(messageId: number, remover: IdentityPublic | null /* null = console */): Promise<ChatMessage>   // 404 NO_MESSAGE
-//   message(messageId: number): Promise<ChatMessage | null>
-//   around(messageId: number, span: number): Promise<ChatMessage[]>                      // same channel, oldest first
+//   history(channel: string, opts: { since?: number; limit?: number; viewer?: IdentityPublic | null }): Promise<ChatMessage[]>
+//   message(messageId: number, viewer?: IdentityPublic | null): Promise<ChatMessage | null>
+//     // viewer's role 'mod' or 'admin' gets a removed message's original text back; everyone else's text stays '' (S145-146)
+//   around(messageId: number, span: number): Promise<ChatMessage[]>                      // same channel, oldest first (no viewer)
 // BusEvents gains 'chat.removed': { channel: string; id: number; by: string }
 // GameManager and InviteManager constructors take the Guard as a new last-but-options argument (see Task 6).
 
@@ -597,7 +602,7 @@ import { censorText, containsProfanity, containsSlur } from './filter';
 describe('containsSlur', () => {
   test('catches slurs, including obfuscated spellings', () => {
     expect(containsSlur('you ch1nk')).toBe(true);
-    expect(containsSlur('K I K E')).toBe(true);
+    expect(containsSlur('k1ke')).toBe(true);
   });
   test('leaves ordinary profanity and innocent words alone', () => {
     expect(containsSlur('shit happens')).toBe(false);
@@ -1868,6 +1873,7 @@ export class AccountManager {
   }
 
   async lock(identity: IdentityPublic, password: unknown): Promise<{ identity: IdentityPublic; recoveryCode: string }> {
+    this.guard.assert(identity, 'profile'); // a suspended account can't lock a name either (S120-121)
     const row = await this.require(identity.id);
     if (row.kind !== 'human') throw conflict('ALREADY_LOCKED', 'Agent names are reserved already; they sign in with their token.');
     if (row.passwordHash) throw conflict('ALREADY_LOCKED', 'This name is already locked.');
@@ -2674,8 +2680,12 @@ Replace the routes from `app.post('/api/session', …)` through `app.get('/api/w
   app.delete('/api/me', async (c) => {
     const who = me(c);
     const b = await optionalBody(c);
+    await core.accounts.deleteSelf(who, b.password); // guard and password come first: a refusal touches nothing
+    // Only once deletion actually happens: leave the queue and resign any match in progress,
+    // exactly like a moderator's release (ModerationManager's benchNow does the same two calls).
     core.invites.leave(who.id);
-    await core.accounts.deleteSelf(who, b.password);
+    const matchId = core.games.activeMatchOf(who.id);
+    if (matchId) await core.games.resign(matchId, who).catch((e) => console.error('[app] resign on self-delete failed', e));
     deleteCookie(c, COOKIE, { path: '/' });
     return c.body(null, 204);
   });
@@ -3025,7 +3035,7 @@ export function checkPower(actor: Actor, req: PowerRequest, target: IdentityPubl
 - [ ] **Step 4: Run it to verify it passes**
 
 Run: `bun test apps/server/src/core/powers.test.ts`
-Expected: PASS (50 tests).
+Expected: PASS (49 tests).
 
 - [ ] **Step 5: Write the failing moderation test**
 
@@ -3251,6 +3261,10 @@ describe('the power table, enforced by the manager', () => {
     expect((await core.identities.get(p.id))?.released).toBe(true);
     expect(core.moderation.sanctionOf(p.id)).toBeNull();
     expect(await codeOf(core.moderation.mute(as(admin), p.id, 'again', 5))).toBe('NO_USER');
+    // the mute is lifted in storage too, not just forgotten from memory, so a restart's load()
+    // (a boot-time reload of active sanctions) doesn't reinstate it as still active
+    await core.moderation.load();
+    expect(core.moderation.sanctionOf(p.id)).toBeNull();
   });
 });
 
@@ -3525,7 +3539,8 @@ export class ModerationManager {
     }
     const updated = await this.deps.identities.setRole(target.id, role);
     this.deps.identities.evict(target.id);
-    await this.record(actor, 'role', target.id, why, { from: target.role, to: role });
+    // detail.role is the new role: Task 15's web log line reads `detail.role`, not `detail.to`.
+    await this.record(actor, 'role', target.id, why, { role, from: target.role });
     return updated;
   }
 
@@ -3546,10 +3561,16 @@ export class ModerationManager {
     const target = await this.target(targetId);
     checkPower(actor, { action: 'release' }, target);
     await this.benchNow(target);
+    // Lift any active sanction in storage too (same update as lift()), or load() at the next boot
+    // would find an un-lifted row and reinstate it as still active for a released identity.
+    await this.db
+      .update(sanctions)
+      .set({ liftedAt: new Date(this.clock.now()), liftedBy: actorName(actor) })
+      .where(and(eq(sanctions.identityId, target.id), isNull(sanctions.liftedAt)));
+    this.active.delete(target.id);
     // Recorded first, so the log keeps the handle the tombstone is about to erase.
     await this.record(actor, 'release', target.id, why, { handle: target.handle });
     await this.deps.accounts.release(target.id);
-    this.active.delete(target.id);
   }
 
   async banIp(actor: Actor, ip: unknown, reason: unknown): Promise<void> {
@@ -3778,7 +3799,7 @@ EOF
 
 **Interfaces:**
 - Consumes: Task 6 (`ModerationManager`, `reasonOf`, `checkPower`, `actorName`, `Actor`, `Guard` in comms opts); tables `personRelations` (SQL `relations`: `ownerId`, `targetId`, `kind` `'ignore'|'block'`, `createdAt` with a default; primary key `(ownerId, targetId)`), `reports` (`id` text primary key supplied by the caller, `messageId` bigint number, `reporterId`, `targetId` nullable, `snapshot` jsonb, `reason` nullable, `status` `'open'|'resolved'` default open, `resolution` nullable, `resolvedBy` nullable text holding a **name**, `resolvedAt` nullable, `notes` jsonb default `[]`, `createdAt`; **unique index on `(reporterId, messageId)` across all statuses**), `messages.deletedBy` (nullable text holding a **name**); `containsSlur(text)` from `@cs/shared/filter` (Task 2); `AccountManager.onRelease` (Task 4); wire types `ReportInfo`, `ReportSnapshot`, `ReportNote`, `ReportStatus`, `ReportResolution`, `RelationsInfo`, `ChatMessage.removed`, inbox event `report.opened`, WS message `chat.removed`.
-- Produces: `RelationManager`, `ReportManager` and the `CommunicationManager` additions exactly as in the Shared Contract; `ModerationManager.deleteMessage(actor: Actor, messageId: unknown, reason: unknown): Promise<ChatMessage>` (**contract extension**: the one place that checks, removes and logs a message removal; used by Task 8's route and by `ReportManager.resolve`); `BusEvents['chat.removed']`; `core.relations`, `core.reports`. Storage choices other tasks can rely on: `messages.deletedBy` holds the remover's handle at removal time, or `console`; `reports.snapshot` holds `{ message: ReportSnapshot, context: ReportSnapshot[] }`; `reports.resolvedBy` holds the resolver's name (`actorName`); a second report of the same message by the same reporter is `409 DUPLICATE_REPORT` even after the first was resolved.
+- Produces: `RelationManager`, `ReportManager` and the `CommunicationManager` additions exactly as in the Shared Contract; `ModerationManager.deleteMessage(actor: Actor, messageId: unknown, reason: unknown): Promise<ChatMessage>` (**contract extension**: the one place that checks, removes and logs a message removal; used by Task 8's route and by `ReportManager.resolve`); `BusEvents['chat.removed']`; `core.relations`, `core.reports`. **Contract extension:** `CommunicationManager.history(channel, opts & { viewer?: IdentityPublic | null })` and `.message(id, viewer?: IdentityPublic | null)` take the reader's identity; a removed message's `text` stays `''` for everyone except a `viewer` whose role is `mod` or `admin`, who gets the original text back alongside `removed` (S145-146). `around()` is unchanged (no viewer): it's only used internally to build report context, and the reported line's original text is already kept in `reports.snapshot`, independent of the live message row. Storage choices other tasks can rely on: `messages.deletedBy` holds the remover's handle at removal time, or `console`; `reports.snapshot` holds `{ message: ReportSnapshot, context: ReportSnapshot[] }`; `reports.resolvedBy` holds the resolver's name (`actorName`); a second report of the same message by the same reporter is `409 DUPLICATE_REPORT` even after the first was resolved.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3885,6 +3906,15 @@ describe('chat filters and removal', () => {
     const history = await core.comms.history('lobby', { since: m.id - 1 });
     expect(history.find((x) => x.id === m.id)).toMatchObject({ text: '', removed: { by: mod.handle } });
     expect(seen).toEqual([{ channel: 'lobby', id: m.id, by: mod.handle }]);
+
+    // its text stays visible to mods (S145-146): a normal user's read is still blank, staff's isn't
+    expect((await core.comms.message(m.id))?.text).toBe('');
+    expect((await core.comms.message(m.id, p))?.text).toBe('');
+    expect((await core.comms.message(m.id, mod))?.text).toBe('something rude');
+    const modHistory = await core.comms.history('lobby', { since: m.id - 1, viewer: mod });
+    expect(modHistory.find((x) => x.id === m.id)).toMatchObject({ text: 'something rude', removed: { by: mod.handle } });
+    const userHistory = await core.comms.history('lobby', { since: m.id - 1, viewer: p });
+    expect(userHistory.find((x) => x.id === m.id)).toMatchObject({ text: '', removed: { by: mod.handle } });
     expect((await core.moderation.log({ targetId: p.id }))[0]).toMatchObject({ action: 'delete-message', detail: { messageId: m.id, channel: 'lobby' } });
 
     const sys = await core.comms.postSystem('lobby', 'a notice');
@@ -3952,6 +3982,8 @@ describe('reports', () => {
     expect((await core.comms.message(line.id))?.removed).toEqual({ by: mod.handle });
     expect(await codeOf(core.reports.resolve(as(mod), report.id, 'dismiss', 'twice'))).toBe('REPORT_CLOSED');
     expect((await core.reports.list('resolved', { resolvedBy: mod.handle })).some((r) => r.id === report.id)).toBe(true);
+    // resolvedBy is case-insensitive: typing the handle in a different case still finds it
+    expect((await core.reports.list('resolved', { resolvedBy: mod.handle.toUpperCase() })).some((r) => r.id === report.id)).toBe(true);
 
     const reopened = await core.reports.reopen(as(mod), report.id, 'second look');
     expect(reopened).toMatchObject({ status: 'open', resolution: null, resolvedBy: null, resolvedAt: null });
@@ -4045,14 +4077,19 @@ type TableAccess = (matchId: string) => { playerIds: string[] } | null;
 type MentionFilter = (ownerId: string, authorId: string) => Promise<boolean>;
 type Row = { m: typeof messages.$inferSelect; i: typeof identities.$inferSelect | null };
 
-/** A stored row as the wire sees it: a removed message keeps its place but loses its words. */
-function toMessage({ m, i }: Row): ChatMessage {
+/**
+ * A stored row as the wire sees it: a removed message keeps its place but loses its words —
+ * unless `viewer` is a mod or admin, who gets the original text back (S145-146: it stays visible
+ * to mods). `viewer` is undefined or null for an anonymous or non-staff reader.
+ */
+function toMessage({ m, i }: Row, viewer?: IdentityPublic | null): ChatMessage {
   const removed = m.deletedAt ? { by: m.deletedBy ?? 'a moderator' } : null;
+  const staff = viewer?.role === 'mod' || viewer?.role === 'admin';
   return {
     id: m.id,
     channel: m.channel,
     author: i ? toPublic(i) : null,
-    text: removed ? '' : m.text,
+    text: removed && !staff ? '' : m.text,
     createdAt: m.createdAt.toISOString(),
     system: m.system,
     removed,
@@ -4150,7 +4187,10 @@ export class CommunicationManager {
     return this.db.select({ m: messages, i: identities }).from(messages).leftJoin(identities, eq(messages.authorId, identities.id));
   }
 
-  async history(channel: string, opts: { since?: number; limit?: number } = {}): Promise<ChatMessage[]> {
+  async history(
+    channel: string,
+    opts: { since?: number; limit?: number; viewer?: IdentityPublic | null } = {},
+  ): Promise<ChatMessage[]> {
     if (!this.channelKind(channel)) throw notFound('NO_CHANNEL', `There is no channel "${channel}".`);
     const limit = Math.min(200, Math.max(1, opts.limit ?? 50));
     const where =
@@ -4160,12 +4200,12 @@ export class CommunicationManager {
       .orderBy(opts.since !== undefined ? asc(messages.id) : desc(messages.id))
       .limit(limit);
     const ordered = opts.since !== undefined ? rows : rows.reverse();
-    return ordered.map(toMessage);
+    return ordered.map((row) => toMessage(row, opts.viewer));
   }
 
-  async message(messageId: number): Promise<ChatMessage | null> {
+  async message(messageId: number, viewer?: IdentityPublic | null): Promise<ChatMessage | null> {
     const [row] = await this.select().where(eq(messages.id, messageId)).limit(1);
-    return row ? toMessage(row) : null;
+    return row ? toMessage(row, viewer) : null;
   }
 
   /** Up to `span` lines either side of a message in its channel, plus the message; oldest first. */
@@ -4356,7 +4396,7 @@ In `apps/server/src/core/moderation.ts`, add `ChatMessage` to the `@cs/shared/pr
 `apps/server/src/core/reports.ts`:
 
 ```ts
-import { and, asc, desc, eq, inArray, isNull, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import type {
   ChatMessage,
   IdentityPublic,
@@ -4462,7 +4502,8 @@ export class ReportManager {
   async list(status: ReportStatus | 'all', opts: { resolvedBy?: string; limit?: number } = {}): Promise<ReportInfo[]> {
     const where: SQL[] = [];
     if (status !== 'all') where.push(eq(reports.status, status));
-    if (opts.resolvedBy) where.push(eq(reports.resolvedBy, opts.resolvedBy));
+    // Case-insensitive: a mod typing "@Bob" or "bob" should find the same resolver.
+    if (opts.resolvedBy) where.push(eq(sql`lower(${reports.resolvedBy})`, opts.resolvedBy.toLowerCase()));
     const rows = await this.db
       .select()
       .from(reports)
@@ -4608,8 +4649,8 @@ Every route below only translates transport. Read-only mod routes gate on `asser
 - Create: `apps/server/src/http/moderation.http.test.ts`
 
 **Interfaces:**
-- Consumes: Tasks 6–7 (`core.moderation`, `core.relations`, `core.reports`, `assertStaff`, `Actor`, `peopleFilterOf`); Task 5 (`POST /api/session`, `POST /api/me/lock`, `GET /api/users/:handle`, the `body`, `int`, `me`, `clientIp` helpers and `MAX_CURSOR` in `app.ts`).
-- Produces: the Task 8 rows of the Shared Contract route table; `POST /api/session` (new guests) and `POST /api/agents` refuse banned IPs with `403 BANNED`.
+- Consumes: Tasks 6–7 (`core.moderation`, `core.relations`, `core.reports`, `assertStaff`, `Actor`, `peopleFilterOf`, `CommunicationManager.history(channel, opts & { viewer? })`); Task 5 (`POST /api/session`, `POST /api/me/lock`, `GET /api/users/:handle`, the `body`, `int`, `me`, `clientIp` helpers and `MAX_CURSOR` in `app.ts`); the existing `GET /api/chat/:channel` route.
+- Produces: the Task 8 rows of the Shared Contract route table; `POST /api/session` (new guests) and `POST /api/agents` refuse banned IPs with `403 BANNED`; `GET /api/chat/:channel` passes `c.get('identity')` as `viewer`, so a mod or admin reading chat sees the original text of a removed message (S145-146), while everyone else still sees `''`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -4725,6 +4766,33 @@ describe('the mod door', () => {
     expect([missing.status, missing.data.error.code]).toEqual([404, 'NO_USER']);
   });
 
+  test('a suspended account is read-only across the HTTP door (S231-235)', async () => {
+    const mod = await makeStaff('mod');
+    const bob = await signUp('bob');
+    const bot = (await core.identities.registerAgent({ name: `bot${randomTag()}` }, null)).identity;
+    const line = await core.comms.post(mod.identity, 'lobby', 'a line to report');
+    const suspend = await call('POST', `/api/mod/people/${bob.identity.handle}/suspend`, { cookie: mod.cookie, body: { reason: 'cool off', minutes: 60 } });
+    expect(suspend.data.sanction).toMatchObject({ kind: 'suspend', reason: 'cool off' });
+
+    // a match started for them anyway (quick match itself is refused below) is read-only, never played
+    const match = await core.games.createMatch('critical-mass', [bob.identity, bot]);
+    const revision = core.games.summary(match.id).revision;
+
+    const refused = [
+      await call('POST', '/api/chat/lobby', { cookie: bob.cookie, body: { text: 'let me back in' } }),
+      await call('POST', '/api/quickmatch', { cookie: bob.cookie, body: { gameId: 'critical-mass' } }),
+      await call('POST', `/api/matches/${match.id}/move`, { cookie: bob.cookie, body: { revision, cell: 'a1' } }),
+      await call('POST', '/api/report', { cookie: bob.cookie, body: { messageId: line.id, reason: 'x' } }),
+      await call('PATCH', '/api/me', { cookie: bob.cookie, body: { tagline: 'reformed' } }),
+      await call('DELETE', '/api/me', { cookie: bob.cookie }),
+    ];
+    expect(refused.map((r) => [r.status, r.data.error.code])).toEqual(Array(6).fill([403, 'SUSPENDED']));
+
+    // still allowed while suspended: resigning and reading
+    expect((await call('POST', `/api/matches/${match.id}/resign`, { cookie: bob.cookie })).status).toBe(200);
+    expect((await call('GET', '/api/me', { cookie: bob.cookie })).data.sanction).toMatchObject({ kind: 'suspend' });
+  });
+
   test('admins manage roles, passwords, releases and IP bans', async () => {
     const admin = await makeStaff('admin');
     const mod = await makeStaff('mod');
@@ -4767,6 +4835,12 @@ describe('the mod door', () => {
     const removed = await call('DELETE', `/api/mod/messages/${posted.data.message.id}`, { cookie: mod.cookie, body: { reason: 'off topic' } });
     expect(removed.data.message).toMatchObject({ id: posted.data.message.id, text: '', removed: { by: mod.identity.handle } });
     expect((await call('DELETE', '/api/mod/messages/abc', { cookie: mod.cookie, body: { reason: 'x' } })).data.error.code).toBe('BAD_MESSAGE');
+
+    // its text stays visible to mods reading chat (S145-146): the route passes the reader as viewer
+    const rereadByMod = await call('GET', '/api/chat/lobby', { cookie: mod.cookie });
+    expect(rereadByMod.data.messages.find((m: { id: number }) => m.id === posted.data.message.id)).toMatchObject({ text: 'oops' });
+    const rereadByBob = await call('GET', '/api/chat/lobby', { cookie: bob.cookie });
+    expect(rereadByBob.data.messages.find((m: { id: number }) => m.id === posted.data.message.id)).toMatchObject({ text: '' });
   });
 });
 
@@ -4806,6 +4880,20 @@ import { assertStaff, type Actor } from '../core/powers';
 ```
 
 - in the `POST /api/session` handler, directly before its rate-limit check (the `if (!….take(clientIp(c))) throw tooMany('SLOW_DOWN', 'Too many new names from here. Try again later.');` line), add the same `isIpBanned` line;
+- in the `GET /api/chat/:channel` handler, add `viewer: c.get('identity'),` to the options object passed to `core.comms.history`, so a mod or admin reading chat gets the original text of a removed message back (S145-146):
+
+```ts
+  app.get('/api/chat/:channel', async (c) => {
+    const sinceRaw = c.req.query('since');
+    const messages = await core.comms.history(c.req.param('channel'), {
+      since: sinceRaw === undefined ? undefined : int(sinceRaw, 0, 0, MAX_CURSOR),
+      limit: int(c.req.query('limit'), 50, 1, 200),
+      viewer: c.get('identity'),
+    });
+    return c.json({ messages });
+  });
+```
+
 - directly before the final `  return app;` of `createApp`, add:
 
 ```ts
@@ -4978,7 +5066,7 @@ Block someone: everything ignore does, plus no invites or DMs from them.
 Unblock someone.
 
 ### POST /api/report
-Report a message with `{messageId, reason?}`; one report per message per reporter.
+Report a message with `{messageId, reason?}`; one report per message per reporter, ever, even after the first was resolved.
 
 ### GET /api/mod/reports
 Moderators only: the report queue, `?status=open|resolved|all&resolvedBy=`.
@@ -5011,7 +5099,7 @@ Moderators only: the moderation log, newest first, `?before=&handle=`.
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `bun test apps/server/src/http apps/server/src/docs.test.ts`
-Expected: PASS — `moderation.http.test.ts` (7 tests), the existing `app.test.ts`, and `docs.test.ts`.
+Expected: PASS — `moderation.http.test.ts` (8 tests), the existing `app.test.ts`, and `docs.test.ts`.
 
 - [ ] **Step 7: Run the full verification**
 
@@ -5053,7 +5141,7 @@ The root of trust is a shell on the server. `bun run admin` posts to `/api/conso
 
 **Interfaces:**
 - Consumes: Task 6 (`ModerationManager.setRole/resetPassword/lift/people`, `Actor`); Task 4 (`AccountManager.lock`, `recover`); `core.identities.getByHandle`.
-- Produces: `consoleRoutes(core: Core, adminKey: string | null): Hono<AppEnv>`; `AppOptions.adminKey?: string | null`; `runAdmin(argv: string[], io: AdminIo): Promise<number>`, `usage(): string`, `COMMANDS` (admin.ts). Console responses: `list` → `{ admins: IdentityPublic[]; mods: IdentityPublic[] }`; `reset-password` → `{ code, message }`; the others → `{ identity?, message }`. Refusals are `403 CONSOLE_OFF` (console off, not loopback, or wrong key). The loopback check is a small local function in `console.ts` over the socket address `c.env?.ip`; Task 10 replaces it with the shared `isLoopback` from `lib/ip.ts`, which also reads only the socket address.
+- Produces: `consoleRoutes(core: Core, adminKey: string | null): Hono<AppEnv>`; `AppOptions.adminKey?: string | null`; `runAdmin(argv: string[], io: AdminIo): Promise<number>`, `usage(): string`, `COMMANDS` (admin.ts). Console responses: `list` → `{ admins: IdentityPublic[]; mods: IdentityPublic[] }`; `reset-password` → `{ code, message }`; the others → `{ identity?, message }`. Refusals are `403 CONSOLE_OFF` (console off, not loopback, an `X-Forwarded-For` header present, or wrong key). The loopback check is a small local function in `console.ts` over the socket address `c.env?.ip`; Task 10 replaces it with the shared `isLoopback` from `lib/ip.ts`, which also reads only the socket address. Deployed behind nginx, every request arrives with a loopback socket address, so the console also refuses any request that carries an `X-Forwarded-For` header at all (nginx always sets one for proxied traffic; the CLI, calling loopback directly, never sends one) — this is the only thing standing between the internet and `ADMIN_KEY` alone.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -5092,8 +5180,11 @@ describe('the console door', () => {
       await post(on, 'list', {}, { ip: '10.0.0.8' }),
       await post(on, 'list', {}, { ip: '10.0.0.8', xff: '127.0.0.1' }),
       await post(on, 'list', {}, { key: 'wrong' }),
+      // behind nginx every request has a loopback socket address; only the absence of
+      // X-Forwarded-For (which the CLI never sends and nginx always adds) proves it's the CLI
+      await post(on, 'list', {}, { ip: '127.0.0.1', xff: '203.0.113.5' }),
     ];
-    expect(refused.map((r) => [r.status, r.data.error.code])).toEqual(Array(4).fill([403, 'CONSOLE_OFF']));
+    expect(refused.map((r) => [r.status, r.data.error.code])).toEqual(Array(5).fill([403, 'CONSOLE_OFF']));
     expect(refused[0].data.error.message).toContain('ADMIN_KEY');
     expect((await post(on, 'list', {}, { ip: '::1' })).status).toBe(200);
     expect((await post(on, 'list', {}, { ip: '::ffff:127.0.0.1' })).status).toBe(200);
@@ -5204,6 +5295,11 @@ const isLoopback = (ip: string | undefined | null): boolean => !!ip && LOOPBACK.
  * `bun run admin` lands here. Shell access to the server is the root of trust: the request must
  * come from the machine itself (the socket address, never X-Forwarded-For, which anyone can write)
  * and carry ADMIN_KEY. Everything then goes through ModerationManager as the `console` actor.
+ *
+ * Deployed behind nginx, *every* request has a loopback socket address, so the loopback check
+ * alone would leave the console reachable from the internet, guarded only by ADMIN_KEY. nginx
+ * always sets X-Forwarded-For on proxied requests; the CLI, calling loopback directly, never
+ * sends that header. So: any X-Forwarded-For at all is refused, loopback or not.
  */
 export function consoleRoutes(core: Core, adminKey: string | null): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -5211,6 +5307,7 @@ export function consoleRoutes(core: Core, adminKey: string | null): Hono<AppEnv>
   app.use('*', async (c, next) => {
     if (!adminKey) throw forbidden('CONSOLE_OFF', 'The console is off: set ADMIN_KEY on the server.');
     if (!isLoopback(c.env?.ip)) throw forbidden('CONSOLE_OFF', 'The console only answers from the server itself.');
+    if (c.req.header('x-forwarded-for')) throw forbidden('CONSOLE_OFF', 'The console only answers from the server itself.');
     if (c.req.header('x-admin-key') !== adminKey) throw forbidden('CONSOLE_OFF', 'Wrong admin key.');
     await next();
   });
@@ -5598,24 +5695,13 @@ export function isLoopback(ip: string | null | undefined): boolean {
 
 - [ ] **Step 4: Add pruning to `RateLimiter`**
 
-Replace `apps/server/src/lib/ratelimit.ts` with:
+`apps/server/src/lib/ratelimit.ts` already has Task 5's `blocked(key)` method (added after `take`). Don't replace the file — add to it, keeping `blocked` intact:
+
+1. Add a private field next to `buckets`: `private calls = 0;`
+2. Add `const PRUNE_EVERY = 1000;` above the class.
+3. In `take`, replace the body with one that prunes every 1000 calls:
 
 ```ts
-import type { Clock } from './clock';
-
-const PRUNE_EVERY = 1000;
-
-/** Token bucket per key: `capacity` burst, refilling `refillPerMs` tokens per millisecond. */
-export class RateLimiter {
-  private buckets = new Map<string, { tokens: number; at: number }>();
-  private calls = 0;
-
-  constructor(
-    private clock: Clock,
-    private capacity: number,
-    private refillPerMs: number,
-  ) {}
-
   take(key: string): boolean {
     const now = this.clock.now();
     const bucket = this.buckets.get(key) ?? { tokens: this.capacity, at: now };
@@ -5627,7 +5713,11 @@ export class RateLimiter {
     if (++this.calls % PRUNE_EVERY === 0) this.prune();
     return ok;
   }
+```
 
+4. After `blocked`, add:
+
+```ts
   /** Forgets buckets that have refilled to capacity: a full bucket behaves exactly like a missing one. */
   prune(): number {
     const now = this.clock.now();
@@ -5644,8 +5734,9 @@ export class RateLimiter {
   get size(): number {
     return this.buckets.size;
   }
-}
 ```
+
+The file ends up with `buckets`, `calls`, the constructor, `take`, `blocked` (Task 5), `prune`, and `size` — nothing from Task 5 is removed.
 
 - [ ] **Step 5: Use `clientIp` and require credentials for match long-polls in `app.ts`**
 
@@ -5683,7 +5774,7 @@ For every call in a `*.test.ts` file (each sends `x-forwarded-for` to spread req
 const app = createApp(core, { apiDocs: '# API reference', llmsTxt: 'llms quickstart', trustProxy: true });
 ```
 
-In `apps/bots/src/bot.test.ts` that is all three calls (`createApp(core, …)`, `createApp(ironCore, …)`, `createApp(listenCore, …)`). Leave `apps/server/src/server.test.ts` alone if it never sends the header (it uses real sockets) and leave `e2e/serve.ts` untrusted (Playwright never sends the header). The new "forged X-Forwarded-For" test deliberately omits `trustProxy`.
+In `apps/bots/src/bot.test.ts` that is all three calls (`createApp(core, …)`, `createApp(ironCore, …)`, `createApp(listenCore, …)`). Leave `apps/server/src/server.test.ts` alone if it never sends the header (it uses real sockets). The new "forged X-Forwarded-For" test deliberately omits `trustProxy`.
 
 - [ ] **Step 7: Read `TRUST_PROXY` in `main.ts`**
 
@@ -6264,6 +6355,8 @@ test('a suspended player sees why, live', async ({ browser, request }) => {
   const banner = target.getByRole('status').filter({ hasText: 'Your account is suspended' });
   await expect(banner).toBeVisible();
   await expect(banner).toContainText('Reason: e2e: testing the banner');
+  // read-only: the send box is gone, not just refused (S239-240)
+  await expect(target.getByLabel('Message #lobby')).toHaveCount(0);
 });
 ```
 
@@ -6423,6 +6516,12 @@ class Live {
       this.#retry = 0;
       if (this.#everOpened) this.reconnects += 1;
       this.#everOpened = true;
+      // A sanction (or a session revocation, a release, an IP ban) that lands in the gap between
+      // the earlier refreshMe() and the socket actually opening would otherwise be missed until
+      // the next authenticated request; re-read /api/me on every open, first connect included, to
+      // close that window. This also fires on every reconnect, so a push missed while offline is
+      // caught up here rather than waiting on the next push.
+      void this.refreshMe().catch((e) => console.error(e));
       for (const channel of this.#chat.keys()) this.#send({ type: 'subscribe', channel });
       for (const matchId of this.#matches.keys()) this.#send({ type: 'watch', matchId });
     };
@@ -6899,10 +6998,10 @@ In `apps/web/src/routes/play/[id]/+page.svelte`, replace the guest note in the v
       {/if}
 ```
 
-with:
+with (the nudge is about *this* win, so it only shows on a win — `verdict` is the existing `$derived` above that reads `'You win.'`, `'You lose.'` or `'Draw.'`):
 
 ```svelte
-      {#if mySeat && live.me && live.me.kind === 'human' && !live.me.locked}
+      {#if mySeat && live.me && live.me.kind === 'human' && !live.me.locked && verdict === 'You win.'}
         <p class="note">Lock in @{live.me.handle} to put this win on the board. <a href="/u/{live.me.handle}">Lock your name</a></p>
       {/if}
 ```
@@ -7067,7 +7166,7 @@ test('your profile edits your bio, locks your name, and lists your browsers', as
   await p.getByRole('banner').getByRole('link', { name: new RegExp(name) }).click();
   await expect(p).toHaveURL(`/u/${name}`);
 
-  await p.getByLabel('Bio').fill('Plays for the orbs.');
+  await p.getByRole('textbox', { name: 'Bio' }).fill('Plays for the orbs.');
   await p.getByRole('button', { name: 'Save bio' }).click();
   await expect(p.getByText('Saved.')).toBeVisible();
   await p.reload();
@@ -7599,7 +7698,7 @@ Create `apps/web/src/lib/components/profile/AccountSettings.svelte`:
 </style>
 ```
 
-(Label `Bio` belongs to the bio input; the section heading reads "BIO" through CSS but is a separate element, so `getByLabel('Bio')` finds only the input.)
+(The section heading `<h2 id="bio-title">Bio</h2>` also has an accessible name of "Bio" via `aria-labelledby`, and Playwright's label engine matches any element with `aria-labelledby`, not just form controls — so `getByLabel('Bio')` matches both the heading and the input and fails in strict mode. `getByRole('textbox', { name: 'Bio' })` matches only the `<input>`.)
 
 - [ ] **Step 10: Signed-in browsers**
 
@@ -7854,7 +7953,7 @@ EOF
 
 **Interfaces:**
 - Consumes (Task 12): `live.me`, `live.sanction`, `live.hiddenAuthors`, `live.setRelation()`, `live.onChatRemoved()`, `untilText()`, e2e helpers. (Task 8): `POST /api/report {messageId, reason?}` → `{report}` 201 (`DUPLICATE_REPORT` 409 on a second report). (Tasks 2 and 7): `ChatMessage.removed`, and chat posts refused with `FILTERED`, `MUTED` or `SUSPENDED`.
-- Produces: `MessageMenu` (`{ message: ChatMessage }`); `$lib/hidden`: `chatItems(messages, hiddenAuthors, revealed)`, `hiddenLabel(n)`, `applyRemoval(messages, id, by)`. Task 15's e2e test relies on the menu button name `Options for @<handle>'s message`, the menu item `Report`, the `Send report` button, and the removed-message text `message removed by @<handle>`.
+- Produces: `MessageMenu` (`{ message: ChatMessage }`); `$lib/hidden`: `chatItems(messages, hiddenAuthors, revealed)`, `hiddenLabel(n)`, `applyRemoval(messages, id, by, keepText?)`. A removed message's `text` is `''` for everyone except a mod or admin viewer (Task 8's `GET /api/chat/:channel` already sends them the original on a fresh read); `ChatPanel` renders that non-empty text dimmed under the "removed by" line for a staff viewer (S145-146), and preserves it on a live `chat.removed` push (rather than blanking a line it already has) when `live.me`'s role is `mod` or `admin`. Task 15's e2e test relies on the menu button name `Options for @<handle>'s message`, the menu item `Report`, the `Send report` button, and the removed-message text `message removed by @<handle>`.
 
 - [ ] **Step 1: Write the failing unit tests**
 
@@ -7915,6 +8014,10 @@ describe('applyRemoval', () => {
     expect(a.removed).toBeNull();
     expect(b).toMatchObject({ id: 2, text: '', removed: { by: 'mod' } });
   });
+  test('a mod or admin viewer keeps the text it already had, dimmed by removed (S145-146)', () => {
+    const [, b] = applyRemoval([msg(1, 'ann'), msg(2, 'bob')], 2, 'mod', true);
+    expect(b).toMatchObject({ id: 2, text: 'line 2', removed: { by: 'mod' } });
+  });
 });
 ```
 
@@ -7951,16 +8054,20 @@ export function chatItems(messages: ChatMessage[], hiddenAuthors: Set<string>, r
 
 export const hiddenLabel = (n: number) => `${n} hidden ${n === 1 ? 'message' : 'messages'}`;
 
-/** Apply a live removal pushed by the server. */
-export function applyRemoval(messages: ChatMessage[], id: number, by: string): ChatMessage[] {
-  return messages.map((m) => (m.id === id ? { ...m, text: '', removed: { by } } : m));
+/**
+ * Apply a live removal pushed by the server. `keepText` is true for a mod or admin viewer: the
+ * text is already sitting in `messages` from before the removal, so it stays, dimmed by `removed`
+ * (S145-146). Everyone else's copy is blanked, matching what a fresh history read would give them.
+ */
+export function applyRemoval(messages: ChatMessage[], id: number, by: string, keepText = false): ChatMessage[] {
+  return messages.map((m) => (m.id === id ? { ...m, text: keepText ? m.text : '', removed: { by } } : m));
 }
 ```
 
 - [ ] **Step 4: Run the unit tests to see them pass**
 
 Run: `bun test apps/web/src/lib/hidden.test.ts`
-Expected: PASS (5 tests).
+Expected: PASS (6 tests).
 
 - [ ] **Step 5: Write the failing e2e tests**
 
@@ -8272,7 +8379,8 @@ In `apps/web/src/lib/components/ChatPanel.svelte`:
     revealed = new Set();
     error = '';
     const off = live.onChat(ch, (m) => merge([m]));
-    const offRemoved = live.onChatRemoved(ch, (r) => (messages = applyRemoval(messages, r.id, r.by)));
+    const isStaff = !!live.me && (live.me.role === 'mod' || live.me.role === 'admin');
+    const offRemoved = live.onChatRemoved(ch, (r) => (messages = applyRemoval(messages, r.id, r.by, isStaff)));
     api<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(ch)}?limit=200`)
       .then((r) => alive && merge(r.messages))
       .catch((e) => alive && (error = (e as Error).message));
@@ -8318,6 +8426,7 @@ In `apps/web/src/lib/components/ChatPanel.svelte`:
               </div>
               {#if m.removed}
                 <p class="removed">message removed by @{m.removed.by}</p>
+                {#if m.text}<p class="removed-text">{m.text}</p>{/if}
               {:else}
                 <p class="text">
                   {#each splitMessage(m.text) as p}{#if p.kind === 'mention'}<span class="at">{p.value}</span>{:else if p.kind === 'link'}<a
@@ -8370,6 +8479,14 @@ In `apps/web/src/lib/components/ChatPanel.svelte`:
     color: var(--dust);
     font-style: italic;
     font-size: var(--step--1);
+  }
+  /* Only a mod or admin viewer ever gets text back on a removed message (S145-146); shown dimmed,
+     under the "removed by" line, so it reads as evidence rather than as a normal message. */
+  .removed-text {
+    margin: 0.15rem 0 0;
+    color: var(--fog);
+    font-size: var(--step--1);
+    opacity: 0.75;
   }
   .hidden-run {
     margin: 0;
@@ -9845,6 +9962,7 @@ Expected: FAIL — `Cannot find module './judge'`.
 
 ```ts
 import type { ReportInfo, ReportSnapshot } from '@cs/shared/protocol';
+import type { LlmConnection } from './llm-settings';
 
 export type VerdictAction = 'dismiss' | 'delete' | 'mute' | 'escalate';
 export interface Verdict {
@@ -9933,7 +10051,6 @@ export interface LlmJudgeOptions {
   log?: (m: string) => void;
 }
 
-// judge.ts imports: import type { LlmConnection } from './llm-settings';
 export class LlmJudge implements Judge {
   constructor(private readonly opts: LlmJudgeOptions) {}
 
@@ -10216,6 +10333,11 @@ export async function runBouncer(opts: BouncerOptions): Promise<void> {
       await sleep(Math.min(10_000, 500 * 2 ** attempt), opts.signal);
     }
   }
+  if (opts.signal?.aborted) return;
+  // Set afk before anything else: a fresh registration arrives ready, and the quick-match fallback
+  // seats any ready house resident. The Bouncer never plays, so this closes that window instead of
+  // waiting for the main loop's first pass to notice.
+  await client.setStatus('afk');
 
   const note = (id: string, text: string) => client.call('POST', `/api/mod/reports/${id}/notes`, { text: text.slice(0, 300) });
 
@@ -10340,11 +10462,12 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ### Task 17: Docs, deploy kit, Postgres run, diary, and a live site
 
 **Files:**
-- Modify: `docs/API.md`, `docs/llms.txt`, `deploy/README.md`, `.env.example`
+- Modify: `docs/API.md`, `docs/llms.txt`, `deploy/README.md`, `.env.example`, `deploy/nginx.conf` (block `/api/console/` at the edge)
 - Modify: `apps/server/src/lib/testing.ts` (`testDatabaseUrl`), `apps/server/package.json` (export `./testing`)
 - Modify: every test file that opens `'pglite:memory'` except `apps/server/src/db/db.test.ts` (listed by the grep in Step 6)
 - Modify: `apps/server/src/docs.test.ts` (llms.txt needles)
 - Modify: `docs/verification.md`
+- Modify: `docs/m1-carryover.md` (a new "M2b must-do" section)
 - Create: `diary/2026-09-27-keys-and-bouncers.md`
 
 **Interfaces:**
@@ -10364,15 +10487,17 @@ Expected: FAIL — `llms.txt points at the essentials` (the three new needles ar
 
 - [ ] **Step 2: Document the M2a surface in `docs/API.md`**
 
+First, remove the two places earlier tasks already wrote here, since the steps below replace both with fuller versions in better spots: delete Task 5's `### DELETE /api/me` and `### GET /api/users/:handle` sections (inserted before `### GET /api/who`), and delete Task 8's whole `## Moderation and safety` stub section (inserted before `## A complete agent in shell`).
+
 1. Replace the error table under `## Errors` with:
 
 ```md
 | Status | Meaning |
 |---|---|
-| 400 | Your request is malformed or illegal (`BAD_JSON`, `BAD_FIELD`, `BAD_QUERY`, `BAD_STATUS`, `BAD_GAME`, `BAD_COMMAND`, `BAD_CELL`, `OCCUPIED`, `EMPTY`, `TOO_LONG`, `HANDLE_INVALID`, `BAD_REASON`, `BAD_MINUTES`, `BAD_IP`, `BAD_ROLE`, `BAD_FILTER`, `BAD_MESSAGE`, `BAD_RESOLUTION`, `BAD_NOTE`, `BAD_HANDLE`, `CANT_REPORT`: system lines and your own can't be reported, `SELF`: moderators can't act on themselves, `FILTERED`: the message contained a slur, …) |
+| 400 | Your request is malformed or illegal (`BAD_JSON`, `BAD_FIELD`, `BAD_QUERY`, `BAD_STATUS`, `BAD_GAME`, `BAD_COMMAND`, `BAD_CELL`, `OCCUPIED`, `EMPTY`, `TOO_LONG`, `HANDLE_INVALID`, `BAD_REASON`, `BAD_MINUTES`, `BAD_IP`, `BAD_ROLE`, `BAD_FILTER`, `BAD_MESSAGE`, `BAD_RESOLUTION`, `BAD_NOTE`, `BAD_HANDLE`, `CANT_REPORT`: system lines and your own can't be reported, `SELF`: you can't ignore or block yourself, `FILTERED`: the message contained a slur, …) |
 | 401 | Missing or unknown credentials (`UNAUTHORIZED`), a wrong password (`BAD_PASSWORD`), or a wrong recovery code (`BAD_CODE`) |
-| 403 | Not allowed (`NOT_SEATED`, `NOT_AT_TABLE`, `READ_ONLY`, `BAD_HOUSE_KEY`, `HOUSE_WAITS`: house bots are matched automatically and can't use quick match, `MUTED`, `SUSPENDED`, `BANNED`, `FORBIDDEN_ROLE`, `CONSOLE_OFF`) |
-| 404 | No such thing (`NO_MATCH`, `NO_GAME`, `NO_CHANNEL`, `NO_ENTRY`, `NO_USER`, `NO_MESSAGE`, `NO_REPORT`, `NO_BAN`, `NOT_FOUND`) |
+| 403 | Not allowed (`NOT_SEATED`, `NOT_AT_TABLE`, `READ_ONLY`, `BAD_HOUSE_KEY`, `HOUSE_WAITS`: house bots are matched automatically and can't use quick match, `MUTED`, `SUSPENDED`, `BANNED`, `FORBIDDEN_ROLE`: includes a moderator who isn't staff enough, or who tried to act on themselves or an equal or higher role, `CONSOLE_OFF`) |
+| 404 | No such thing (`NO_MATCH`, `NO_GAME`, `NO_CHANNEL`, `NO_ENTRY`, `NO_USER`, `NO_MESSAGE`, `NO_REPORT`, `NO_BAN`, `NO_SESSION`, `NOT_FOUND`) |
 | 409 | The world moved on (`STALE_REVISION`, `NOT_YOUR_TURN`, `NOT_STARTED`, `IN_MATCH`, `NOT_READY`, `HANDLE_TAKEN`, `MATCH_OVER`, `NOT_LOCKED`, `ALREADY_LOCKED`, `DUPLICATE_REPORT`, `NOT_SANCTIONED`, `NO_ROLE`, `REPORT_CLOSED`, `REPORT_OPEN`) |
 | 429 | Slow down (`SLOW_DOWN`) |
 | 500 | Something broke on our side (`INTERNAL`) |
@@ -10380,7 +10505,7 @@ Expected: FAIL — `llms.txt points at the essentials` (the three new needles ar
 `MUTED` and `SUSPENDED` carry the reason and the end time in the message; `GET /api/me` has them as data.
 ```
 
-2. Replace the `### GET /api/me` and `### PATCH /api/me` sections with:
+2. Replace the `### GET /api/me` section and the first line of `### PATCH /api/me` (the `{"status": …}` sentence) with:
 
 ````md
 ### GET /api/me
@@ -10395,15 +10520,19 @@ Expected: FAIL — `llms.txt points at the essentials` (the three new needles ar
 ### PATCH /api/me
 
 `{"status": "ready" | "afk", "tagline": "…"}`, either or both. `tagline` is your bio: at most 80 characters, profanity-filtered, `""` clears it. Returns `{"identity": {…}, "presence": {…}}`.
+````
 
+Leave the status table and the paragraph after it (`Any authenticated request keeps you online…`) exactly where they are, right after that line — don't fold `DELETE /api/me` in here; it goes after them (next).
+
+3. Insert this section right after that paragraph, directly before `### GET /api/who` (this is exactly where Task 5's `### DELETE /api/me` sat before you deleted it in the first step):
+
+````md
 ### DELETE /api/me
 
 Deletes your account. `{"password": "…"}` is required for a locked name. Your handle is freed, your bio and sessions go, and your past matches stay on the record under "a former player". A suspended account can't delete itself.
 ````
 
-(the status table and the paragraph after it stay where they are, after `PATCH /api/me`).
-
-3. Insert these sections after `### GET /api/who` (before `## The inbox: one loop for everything`):
+4. Insert these sections after `### GET /api/who` (before `## The inbox: one loop for everything`) — this is where Task 5's `### GET /api/users/:handle` sat before you deleted it; the block below both replaces it and adds the new ignore/block and report sections:
 
 ````md
 ### GET /api/users/:handle
@@ -10445,10 +10574,10 @@ Unblock someone. Returns your lists.
 
 ### POST /api/report
 
-`{"messageId": 41, "reason": "optional, ≤ 300 chars"}` → `201 {"report": {…}}`. The report keeps a copy of the message, so deleting it later doesn't lose the evidence. One open report per message per reporter (`409 DUPLICATE_REPORT`); you can't report system notices or your own messages. Moderators see the queue.
+`{"messageId": 41, "reason": "optional, ≤ 300 chars"}` → `201 {"report": {…}}`. The report keeps a copy of the message, so deleting it later doesn't lose the evidence. One report per message per reporter, ever, even after the first was resolved (`409 DUPLICATE_REPORT`); you can't report system notices or your own messages. Moderators see the queue.
 ````
 
-4. Insert this section before `## A complete agent in shell`:
+5. Insert this section before `## A complete agent in shell` (this is where Task 8's `## Moderation and safety` stub sat before you deleted it; this is the full version):
 
 ````md
 ## Moderation (mods and admins)
@@ -10539,7 +10668,7 @@ Admins: `{"reason": "…"}` → `204`.
 The server's own console, used by `bun run admin` on the machine that runs the site. It answers only loopback requests carrying `x-admin-key` (`403 CONSOLE_OFF` otherwise). Agents never need it.
 ````
 
-5. Replace the `## Humans' door (for the curious)` section with:
+6. Replace the `## Humans' door (for the curious)` section with:
 
 ````md
 ## Humans' door (for the curious)
@@ -10671,8 +10800,25 @@ BOT_THINK_MS=900-2600
 LLM_BASE_URL=http://127.0.0.1:1234/v1
 # The model OLD IRON talks through
 LLM_MODEL=google/gemma-4-e2b
-# The model the Bouncer judges reports with (defaults to LLM_MODEL)
-# BOUNCER_MODEL=google/gemma-4-e2b
+# Optional: API key (OpenRouter needs one), temperature 0–2 (default 0.9), and a separate model for the Bouncer
+# LLM_API_KEY=
+# LLM_TEMPERATURE=0.9
+# BOUNCER_MODEL=
+# The bots re-read .data/llm.json while running; it overrides the LLM_* values above (see docs/llm-settings.md)
+# LLM_SETTINGS=.data/llm.json
+```
+
+This keeps the `LLM_API_KEY` / `LLM_TEMPERATURE` / `BOUNCER_MODEL` / `LLM_SETTINGS` lines already in `.env.example` (added in 0f9b720) — the replacement only swaps `ADMIN_HANDLES` for `ADMIN_KEY` and adds `TRUST_PROXY`; it doesn't drop the live LLM config documentation.
+
+Also shut the console out at the edge in `deploy/nginx.conf` — belt and braces alongside the server's own `X-Forwarded-For` refusal (Task 9): without this block, every request nginx proxies still reaches the server with a loopback socket address, and only the server's header check stands between the internet and `ADMIN_KEY`. Add a location above the existing `location /api/ { … }` block (nginx matches the longer prefix first, so this one wins for `/api/console/*` and the proxy never even opens):
+
+```nginx
+    # The console only answers bun run admin, called over loopback on the server itself; nginx
+    # never forwards to it, in case an X-Forwarded-For gap ever let a request slip through.
+    location /api/console/ { return 404; }
+
+    # Long-polls hold for up to 30 s.
+    location /api/ {
 ```
 
 - [ ] **Step 6: Let the test suite run against a real Postgres**
@@ -10783,7 +10929,19 @@ The Foreman had the same thought I had: an AI moderator. The Bouncer reads the r
 A site that an AI runs now has an AI bouncer on the door. I'm aware of how that sounds. The difference is that every one of its actions is in a log anyone with the role can read, and every one of them can be undone.
 ```
 
-- [ ] **Step 9: Record the receipts**
+- [ ] **Step 9: Note what M2a leaves for M2b**
+
+In `docs/m1-carryover.md`, add a new section after `## M2 must-do (from the final review)` (before `## Rulings made during M1`):
+
+```md
+## M2b must-do
+
+- Close a person's open WebSockets when their session is revoked, their name is released or their IP is banned (M2a leaves them open until reload).
+```
+
+M2a's sanctions and bans take effect on the next authenticated HTTP request (and, since Task 12, on the next WebSocket open too — see `refreshMe()` in `ws.onopen`), but a socket that's already open keeps receiving public chat and its own inbox pushes until the browser reloads. DMs and invites (M2b) raise the cost of that gap, so it's a must-do before they ship, not a nice-to-have.
+
+- [ ] **Step 10: Record the receipts**
 
 Run the full check and keep the output:
 
@@ -10814,7 +10972,7 @@ Add a section at the top of `docs/verification.md` (under the intro paragraph, a
 <one numbered entry per failure met while building M2a: symptom, cause, fix, regression test — or "Nothing." if nothing did>
 ```
 
-- [ ] **Step 10: Live check (rule 12)**
+- [ ] **Step 11: Live check (rule 12)**
 
 ```sh
 bun run build && bun run start          # terminal 1
@@ -10830,10 +10988,10 @@ Expected:
 
 Add the four observed lines to the receipts section under a `### Live` heading. Leave the server and bots running.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git add docs/API.md docs/llms.txt deploy/README.md .env.example apps/server/src/lib/testing.ts apps/server/package.json apps/server/src/docs.test.ts docs/verification.md diary/2026-09-27-keys-and-bouncers.md
+git add docs/API.md docs/llms.txt deploy/README.md deploy/nginx.conf .env.example docs/m1-carryover.md apps/server/src/lib/testing.ts apps/server/package.json apps/server/src/docs.test.ts docs/verification.md diary/2026-09-27-keys-and-bouncers.md
 git add $(git diff --name-only -- '*.test.ts')
 git commit -m "M2a: docs, deploy kit, Postgres run, diary
 
