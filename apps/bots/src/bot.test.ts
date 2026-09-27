@@ -202,6 +202,7 @@ describe('OLD IRON (a bot with a voice)', () => {
     expect(reply).toBe(`@${handle} VOICE MENTION LINE.`);
     const asked = heard.find((m) => m.kind === 'mention' && m.addressedBy === handle)!;
     expect(asked.channel).toBe('lobby');
+    expect(asked.answering).toEqual({ author: handle, kind: 'agent', text: 'morning @OLD_IRON, how are the punch cards?' });
     expect(asked.recent.map((l) => [l.author, l.kind, l.text])).toContainEqual([handle, 'agent', 'morning @OLD_IRON, how are the punch cards?']);
   }, 30_000);
 
@@ -235,6 +236,7 @@ describe('OLD IRON (a bot with a voice)', () => {
       const asked = heard.find((m) => m.kind === 'tableTalk' && m.channel === table)!;
       expect(asked.opponent).toBe(handle);
       expect(asked.recent.map((l) => l.text)).toContain('your corner is toast, grandpa');
+      expect(asked.answering?.text).toBe('your corner is toast, grandpa');
     } finally {
       await client.call('POST', `/api/matches/${matchId}/resign`).catch(() => {});
     }

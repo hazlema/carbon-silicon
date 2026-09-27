@@ -97,13 +97,14 @@ async function speak(
   opts: BotOptions,
   kind: MomentKind,
   channel: string,
-  extra: { opponent?: string; addressedBy?: string } = {},
+  extra: { opponent?: string; addressedBy?: string; answering?: ChatMessage } = {},
 ): Promise<void> {
   try {
     let text: string | null = null;
     if (opts.voice) {
       const recent = await recentLines(client, channel).catch(() => [] as ChatMessage[]);
-      const moment: Moment = { kind, channel, recent: recent.map(toChatLine), ...extra };
+      const { answering, ...who } = extra;
+      const moment: Moment = { kind, channel, recent: recent.map(toChatLine), ...who, ...(answering ? { answering: toChatLine(answering) } : {}) };
       // At a table the game clock is running, so the voice gets a short deadline; everywhere, the
       // bot's own shutdown signal cuts it off.
       const deadline = channel.startsWith('match:') ? AbortSignal.timeout(opts.voiceDeadlineMs ?? 4000) : undefined;
@@ -319,7 +320,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
         const channel = message.channel;
         if (event.type === 'chat.mention' && (PUBLIC_CHANNELS as readonly string[]).includes(channel) && mayReply(channel)) {
           // Not awaited: the inbox keeps flowing while the voice thinks.
-          track(speak(client, opts, 'mention', channel, { addressedBy: message.author.handle }));
+          track(speak(client, opts, 'mention', channel, { addressedBy: message.author.handle, answering: message }));
         }
         if (
           event.type === 'chat.table' &&
@@ -328,7 +329,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
           Math.random() < (opts.tableTalkChance ?? 0.6) &&
           mayReply(channel)
         ) {
-          track(speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle }));
+          track(speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle, answering: message }));
         }
       }
     } catch (e) {
