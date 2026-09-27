@@ -16,6 +16,7 @@
   import Lattice from '$lib/components/Lattice.svelte';
   import Nav from '$lib/components/Nav.svelte';
   import SanctionBanner from '$lib/components/SanctionBanner.svelte';
+  import UpdateBanner from '$lib/components/UpdateBanner.svelte';
   import { live } from '$lib/live.svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -33,6 +34,7 @@
 
 <svelte:head><title>{BRAND.name}</title></svelte:head>
 
+<UpdateBanner />
 <Lattice />
 <div class="shell" inert={gated}>
   <Nav />

@@ -11,6 +11,7 @@ import type {
   WsClientMsg,
   WsServerMsg,
 } from '@cs/shared/protocol';
+import { updated } from '$app/state';
 import { api, ApiError } from './api';
 
 type Listener<T> = (value: T) => void;
@@ -142,7 +143,11 @@ class Live {
     ws.onopen = () => {
       this.connected = true;
       this.#retry = 0;
-      if (this.#everOpened) this.reconnects += 1;
+      if (this.#everOpened) {
+        this.reconnects += 1;
+        // A reconnect is a good time to check whether a new build shipped while we were away.
+        void updated.check().catch(() => {});
+      }
       this.#everOpened = true;
       // A sanction (or a session revocation, a release, an IP ban) that lands in the gap between
       // the earlier refreshMe() and the socket actually opening would otherwise be missed until
