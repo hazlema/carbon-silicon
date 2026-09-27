@@ -6,6 +6,7 @@ import type {
   ModLogEntry,
   PersonDetail,
   PersonSummary,
+  Role,
   SanctionInfo,
   SanctionKind,
 } from '@cs/shared/protocol';
@@ -40,7 +41,22 @@ interface Active {
   reason: string;
   since: number;
   endsAt: number | null;
+  /** The imposer's rank at the time this sanction was set: console 4, admin 3, human mod 2,
+   *  house mod 1. Only an actor of equal or higher rank may shorten, replace or lift it. */
+  by: number;
 }
+
+/** console 4, admin 3, human mod (or anyone else human, e.g. a since-demoted mod) 2, house mod
+ *  (or anyone else house) 1. Matches the M2a review ruling on senior-only shortening/lifting. */
+function imposerRankOf(role: Role, isHouse: boolean): number {
+  return role === 'admin' ? 3 : isHouse ? 1 : 2;
+}
+
+function actorRank(actor: Actor): number {
+  return actor.kind === 'console' ? 4 : imposerRankOf(actor.identity.role, actor.identity.isHouse);
+}
+
+const SENIOR = () => forbidden('FORBIDDEN_ROLE', 'That sanction was set by someone senior; ask them or an admin.');
 
 /** Every moderation action carries a reason: 1–300 characters after trimming. */
 export function reasonOf(raw: unknown): string {
@@ -99,6 +115,17 @@ export class ModerationManager {
       .select()
       .from(sanctions)
       .where(and(isNull(sanctions.liftedAt), or(isNull(sanctions.endsAt), gt(sanctions.endsAt, now))));
+    // The imposer's rank isn't stored; it's derived from the actor's *current* role and isHouse,
+    // so a since-demoted mod's old sanctions fall to whatever their current standing implies.
+    const actorIds = [...new Set(rows.map((r) => r.actorId).filter((id): id is string => id !== null))];
+    const actorRanks = new Map<string, number>();
+    if (actorIds.length > 0) {
+      const actorRows = await this.db
+        .select({ id: identities.id, role: identities.role, isHouse: identities.isHouse })
+        .from(identities)
+        .where(inArray(identities.id, actorIds));
+      for (const a of actorRows) actorRanks.set(a.id, imposerRankOf(a.role, a.isHouse));
+    }
     this.active.clear();
     for (const r of rows) {
       this.remember(r.identityId, {
@@ -106,6 +133,7 @@ export class ModerationManager {
         reason: r.reason,
         since: r.createdAt.getTime(),
         endsAt: r.endsAt ? r.endsAt.getTime() : null,
+        by: r.actorId === null ? 4 : (actorRanks.get(r.actorId) ?? 2),
       });
     }
     this.bans = new Set((await this.db.select({ ip: ipBans.ip }).from(ipBans)).map((b) => b.ip));
@@ -177,9 +205,13 @@ export class ModerationManager {
   }
 
   private async impose(actor: Actor, target: IdentityPublic, kind: SanctionKind, reason: string, minutes: number | null): Promise<SanctionInfo> {
+    const myRank = actorRank(actor);
+    // A new sanction of the same kind replaces the old one, whether it is shorter or longer — but
+    // only if this actor outranks (or matches) whoever set the one that's active now.
+    const existing = this.current(target.id, kind);
+    if (existing && myRank < existing.by) throw SENIOR();
     const now = this.clock.now();
     const endsAt = minutes === null ? null : now + minutes * 60_000;
-    // A new sanction of the same kind replaces the old one, whether it is shorter or longer.
     await this.db
       .update(sanctions)
       .set({ liftedAt: new Date(now), liftedBy: actorName(actor) })
@@ -192,7 +224,7 @@ export class ModerationManager {
       createdAt: new Date(now),
       endsAt: endsAt === null ? null : new Date(endsAt),
     });
-    const active: Active = { kind, reason, since: now, endsAt };
+    const active: Active = { kind, reason, since: now, endsAt, by: myRank };
     this.remember(target.id, active);
     await this.record(actor, kind, target.id, reason, { minutes });
     this.deps.comms.deliver(target.id, { type: 'moderation', kind, reason, endsAt: iso(endsAt) });
@@ -203,9 +235,13 @@ export class ModerationManager {
     const why = reasonOf(reason);
     const target = await this.target(targetId);
     checkPower(actor, { action: 'lift' }, target);
-    if (!this.current(target.id, 'suspend') && !this.current(target.id, 'mute')) {
-      throw conflict('NOT_SANCTIONED', `@${target.handle} has no active mute or suspension.`);
-    }
+    const suspend = this.current(target.id, 'suspend');
+    const mute = this.current(target.id, 'mute');
+    if (!suspend && !mute) throw conflict('NOT_SANCTIONED', `@${target.handle} has no active mute or suspension.`);
+    // lift() clears every active sanction on the target in one call, so the actor must outrank
+    // (or match) whoever set the most senior of them.
+    const seniorBy = Math.max(suspend?.by ?? 0, mute?.by ?? 0);
+    if (actorRank(actor) < seniorBy) throw SENIOR();
     await this.db
       .update(sanctions)
       .set({ liftedAt: new Date(this.clock.now()), liftedBy: actorName(actor) })

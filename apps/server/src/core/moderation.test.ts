@@ -145,6 +145,66 @@ describe('suspension and mute at the checkpoint', () => {
   });
 });
 
+describe('imposer rank: only equal or senior can shorten, replace or lift', () => {
+  // 'a new sanction of the same kind replaces the old one' (above, same-rank actor both times)
+  // already covers the equal-rank case; it stays valid unchanged under the new rank check.
+
+  test('a house mod cannot replace a human mod\'s mute', async () => {
+    const mod = await staff('mod');
+    const house = await staff('mod', true);
+    const p = await person('housecap');
+    await core.moderation.mute(as(mod), p.id, 'human mod sets it', 600);
+    expect(await codeOf(core.moderation.mute(as(house), p.id, 'house tries to downgrade', 5))).toBe('FORBIDDEN_ROLE');
+    expect(core.moderation.sanctionOf(p.id)?.reason).toBe('human mod sets it');
+  });
+
+  test('a mod cannot replace or lift a suspension an admin imposed', async () => {
+    const admin = await staff('admin');
+    const mod = await staff('mod');
+    const p = await person('senior');
+    await core.moderation.suspend(as(admin), p.id, 'admin sets it', null);
+    expect(await codeOf(core.moderation.suspend(as(mod), p.id, 'mod tries to shorten', 60))).toBe('FORBIDDEN_ROLE');
+    expect(await codeOf(core.moderation.lift(as(mod), p.id, 'mod tries to lift'))).toBe('FORBIDDEN_ROLE');
+    expect(core.moderation.sanctionOf(p.id)?.reason).toBe('admin sets it');
+  });
+
+  test('an admin can lift a mod\'s suspension', async () => {
+    const mod = await staff('mod');
+    const admin = await staff('admin');
+    const p = await person('adminlifts');
+    await core.moderation.suspend(as(mod), p.id, 'mod sets it', 60);
+    await core.moderation.lift(as(admin), p.id, 'admin lifts it');
+    expect(core.moderation.sanctionOf(p.id)).toBeNull();
+  });
+
+  test('the console can replace or lift anything', async () => {
+    const admin = await staff('admin');
+    const p = await person('console');
+    await core.moderation.suspend(as(admin), p.id, 'admin sets it', null);
+    const replaced = await core.moderation.suspend(CONSOLE, p.id, 'console overrides', 10);
+    expect(replaced.reason).toBe('console overrides');
+    await core.moderation.lift(CONSOLE, p.id, 'console lifts it');
+    expect(core.moderation.sanctionOf(p.id)).toBeNull();
+  });
+
+  test('the imposer rank survives a restart', async () => {
+    const admin = await staff('admin');
+    const mod = await staff('mod');
+    const p = await person('restartrank');
+    await core.moderation.suspend(as(admin), p.id, 'admin sets it', null);
+    const again = new ModerationManager(core.database.db, core.bus, clock, {
+      identities: core.identities,
+      accounts: core.accounts,
+      profiles: core.profiles,
+      comms: core.comms,
+      games: core.games,
+      invites: core.invites,
+    });
+    await again.load();
+    expect(await codeOf(again.lift(as(mod), p.id, 'mod tries after restart'))).toBe('FORBIDDEN_ROLE');
+  });
+});
+
 describe('the power table, enforced by the manager', () => {
   test('ranks, limits and inputs are checked', async () => {
     const mod = await staff('mod');
