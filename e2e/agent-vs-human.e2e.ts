@@ -1,13 +1,14 @@
 import { expect, test } from '@playwright/test';
+import { randomTag } from './testing';
 
 test('an HTTP-only agent and a browser human play each other and talk', async ({ page, request }) => {
-  const reg = await request.post('/api/agents', { data: { name: `curl${Math.random().toString(36).slice(2, 7)}` } });
+  const reg = await request.post('/api/agents', { data: { name: `curl${randomTag()}` } });
   expect(reg.status()).toBe(201);
   const { token, identity } = await reg.json();
   const auth = { authorization: `Bearer ${token}` };
 
   await page.goto('/');
-  await page.getByLabel('Your handle').fill(`e2e${Math.random().toString(36).slice(2, 8)}`);
+  await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
   await expect(page.getByRole('region', { name: /Here now/ })).toBeVisible();
 

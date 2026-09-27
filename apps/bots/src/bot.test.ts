@@ -23,6 +23,10 @@ afterAll(async () => {
   await core.close();
 });
 
+/** A short random tag for test handles. Digits only — a base-36 tag can occasionally spell
+ *  something the profanity filter rejects, which would fail these tests in setup. */
+const randomTag = () => String(Math.floor(Math.random() * 1e9)).padStart(9, '0');
+
 async function until<T>(fn: () => Promise<T | null | undefined | false>, ms = 10_000): Promise<T> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -37,7 +41,7 @@ describe('Sprocket', () => {
   test('shows up, gets matched by quick match, plays to the end, and talks', async () => {
     const guest = new Client(running.url);
     await until(async () => (await guest.call<{ presence: { identity: { handle: string; isHouse: boolean } }[] }>('GET', '/api/who')).presence.find((p) => p.identity.handle === 'Sprocket' && p.identity.isHouse));
-    const reg = await guest.register({ name: `challenger${Math.random().toString(36).slice(2, 7)}` });
+    const reg = await guest.register({ name: `challenger${randomTag()}` });
     guest.token = reg.token;
     expect((await guest.quickMatch('critical-mass')).status).toBe('queued');
     const matchId = await until(async () => (await guest.me()).activeMatch);
@@ -65,27 +69,17 @@ describe('Sprocket', () => {
 
   test('greets exactly once per match', async () => {
     const guest = new Client(running.url);
-    const reg = await guest.register({ name: `challenger${Math.random().toString(36).slice(2, 7)}` });
+    const reg = await guest.register({ name: `challenger${randomTag()}` });
     guest.token = reg.token;
     expect((await guest.quickMatch('critical-mass')).status).toBe('queued');
     const matchId = await until(async () => (await guest.me()).activeMatch);
-    let env = await guest.match(matchId);
-    while (env.match.status !== 'over') {
-      if (env.match.status === 'live' && env.legal.length > 0) {
-        try {
-          env = await guest.move(matchId, env.match.revision, env.legal[0] as CMCommand);
-        } catch {
-          env = await guest.match(matchId);
-        }
-      } else {
-        env = await guest.match(matchId, env.match.revision, 5000);
-      }
-    }
-    // since=0 orders oldest-first over the full 200-message window, so a long match can't push
-    // the (always-first) hello line out of a newest-first default-limit-50 view. The 20s window
-    // (vs until's 10s default) absorbs the CPU contention a full `bun test apps/server apps/bots`
-    // run creates across many concurrent in-memory PGlite instances, which can briefly slow
-    // Sprocket's background loop in noticing and greeting.
+    // Sprocket greets as soon as it notices the match (playMatch says hello before its first
+    // move), so we don't need to play the match out to see it — doing so made this test's
+    // duration depend on how long a whole game against a random opponent takes, which could run
+    // long enough that the wait for the greeting (which had already long since happened) timed
+    // out under the CPU contention of a full `bun test apps/server apps/bots` run with many
+    // concurrent in-memory PGlite instances. Observing the greeting and then resigning keeps the
+    // test's duration bounded by Sprocket's poll interval instead.
     const hellos = await until(async () => {
       const r = await guest.call<{ messages: { author: { handle: string } | null; text: string }[] }>(
         'GET',
@@ -93,7 +87,8 @@ describe('Sprocket', () => {
       );
       const said = r.messages.filter((m) => m.author?.handle === 'Sprocket' && sprocket.lines.hello.includes(m.text));
       return said.length >= 1 ? said : null;
-    }, 20_000);
+    });
+    await guest.call('POST', `/api/matches/${matchId}/resign`).catch(() => {}); // best-effort cleanup
     expect(hellos).toHaveLength(1);
   }, 60_000);
 

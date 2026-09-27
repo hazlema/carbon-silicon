@@ -4,7 +4,7 @@ import { PUBLIC_CHANNELS } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
 import { FakeClock } from '../lib/clock';
 import type { AppError } from '../lib/errors';
-import { waitFor } from '../lib/testing';
+import { randomTag, waitFor } from '../lib/testing';
 import { EventBus } from './bus';
 import { CommunicationManager } from './communication';
 import { GameManager } from './games';
@@ -23,7 +23,7 @@ async function setup() {
   const presence = new PresenceManager(bus, clock);
   const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame]);
   const invites = new InviteManager(games, presence, bus, clock, { houseFallbackMs: 8000 });
-  const tag = Math.random().toString(36).slice(2, 8);
+  const tag = randomTag();
   const ann = (await ids.createHuman(`ann${tag}`)).identity;
   const ben = (await ids.createHuman(`ben${tag}`)).identity;
   const house = (await ids.registerAgent({ name: `house${tag}` }, 'hk')).identity;

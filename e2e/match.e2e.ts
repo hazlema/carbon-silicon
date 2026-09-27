@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { randomTag } from './testing';
 
 test('quick match seats a human against Sprocket and the game plays to a verdict', async ({ page }) => {
   await page.goto('/');
-  await page.getByLabel('Your handle').fill(`e2e${Math.random().toString(36).slice(2, 8)}`);
+  await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
   await page.getByRole('button', { name: 'Find a match' }).click();
   await page.waitForURL(/\/play\/m_/, { timeout: 20_000 });

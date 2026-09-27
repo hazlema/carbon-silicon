@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import type { WsServerMsg } from '@cs/shared/protocol';
 import { createCore } from './core/core';
 import { createApp } from './http/app';
-import { waitFor } from './lib/testing';
+import { randomTag, waitFor } from './lib/testing';
 import { startServer } from './server';
 
 const fixture = (p: string) => fileURLToPath(new URL(`./__fixtures__/${p}`, import.meta.url));
@@ -19,7 +19,7 @@ afterAll(async () => {
   await core.close();
 });
 const base = running.url;
-const tag = () => Math.random().toString(36).slice(2, 8);
+const tag = () => randomTag();
 
 async function human() {
   const res = await fetch(`${base}/api/session`, {

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
+import { randomTag } from './testing';
 
-const handle = () => `e2e${Math.random().toString(36).slice(2, 8)}`;
+const handle = () => `e2e${randomTag()}`;
 
 test('a human picks a handle, chats in the lobby, and sees Sprocket here', async ({ page }) => {
   const me = handle();

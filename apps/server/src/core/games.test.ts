@@ -8,7 +8,7 @@ import { matches, matchPlayers } from '../db/schema';
 import { FakeClock } from '../lib/clock';
 import type { AppError } from '../lib/errors';
 import { newId } from '../lib/ids';
-import { waitFor } from '../lib/testing';
+import { randomTag, waitFor } from '../lib/testing';
 import { EventBus } from './bus';
 import { CommunicationManager } from './communication';
 import { GameManager } from './games';
@@ -28,7 +28,7 @@ async function setup() {
     countdownMs: 3000,
     seed: () => 12345,
   });
-  const tag = Math.random().toString(36).slice(2, 8);
+  const tag = randomTag();
   const red = (await ids.registerAgent({ name: `red${tag}` }, null)).identity;
   const blue = (await ids.createHuman(`blue${tag}`)).identity;
   const outsider = (await ids.createHuman(`out${tag}`)).identity;

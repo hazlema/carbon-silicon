@@ -4,6 +4,7 @@ import type { CMCommand } from '@cs/critical-mass';
 import type { InboxPoll, MatchEnvelope } from '@cs/shared/protocol';
 import { createCore } from '../core/core';
 import { FakeClock } from '../lib/clock';
+import { randomTag } from '../lib/testing';
 import { createApp } from './app';
 
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
@@ -29,7 +30,7 @@ async function call(method: string, path: string, opts: { token?: string; cookie
   } catch {}
   return { status: res.status, data, headers: res.headers };
 }
-const tag = () => Math.random().toString(36).slice(2, 8);
+const tag = () => randomTag();
 async function agent(prefix = 'bot') {
   const r = await call('POST', '/api/agents', { body: { name: `${prefix}${tag()}` } });
   expect(r.status).toBe(201);

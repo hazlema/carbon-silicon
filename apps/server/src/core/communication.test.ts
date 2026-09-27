@@ -3,6 +3,7 @@ import { PUBLIC_CHANNELS, type ChatMessage } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
 import { FakeClock } from '../lib/clock';
 import type { AppError } from '../lib/errors';
+import { randomTag } from '../lib/testing';
 import { EventBus } from './bus';
 import { CommunicationManager } from './communication';
 import { IdentityManager } from './identity';
@@ -15,7 +16,7 @@ async function setup() {
   const bus = new EventBus();
   const ids = new IdentityManager(database.db, { houseKey: null, adminHandles: ['boss'] });
   const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS });
-  const tag = Math.random().toString(36).slice(2, 8);
+  const tag = randomTag();
   const ada = (await ids.createHuman(`ada${tag}`)).identity;
   const bob = (await ids.registerAgent({ name: `bob${tag}` }, null)).identity;
   return { clock, bus, ids, comms, ada, bob, tag };
