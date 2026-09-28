@@ -8,6 +8,7 @@ import type {
   RelationsInfo,
   SanctionInfo,
   Status,
+  TableInfo,
   WsClientMsg,
   WsServerMsg,
 } from '@cs/shared/protocol';
@@ -33,6 +34,8 @@ class Live {
   /** Your active mute or suspension, if any. */
   sanction = $state<SanctionInfo | null>(null);
   relations = $state<RelationsInfo>({ ignores: [], blocks: [] });
+  /** The lobby's tables: open ones gathering, and ones playing now (pushed by the server). */
+  tables = $state<TableInfo[]>([]);
   /** Everyone you ignore or block; their chat is hidden for you. */
   hiddenAuthors: Set<string> = $derived(new Set([...this.relations.ignores, ...this.relations.blocks].map((i) => i.id)));
   myStatus: Status = $derived(this.presence.find((p) => p.identity.id === this.me?.id)?.status ?? 'offline');
@@ -42,6 +45,7 @@ class Live {
   #everOpened = false;
   #chat = new Map<string, Set<Listener<ChatMessage>>>();
   #removed = new Map<string, Set<Listener<Removal>>>();
+  #tableWatch = new Map<string, Set<Listener<TableInfo | null>>>();
   #matches = new Map<string, Set<Listener<MatchEnvelope>>>();
   #inbox = new Set<Listener<InboxEvent>>();
 
@@ -157,6 +161,7 @@ class Live {
       void this.refreshMe().catch((e) => console.error(e));
       for (const channel of this.#chat.keys()) this.#send({ type: 'subscribe', channel });
       for (const matchId of this.#matches.keys()) this.#send({ type: 'watch', matchId });
+      for (const tableId of this.#tableWatch.keys()) this.#send({ type: 'watchTable', tableId });
     };
     ws.onmessage = (e) => {
       let msg: WsServerMsg;
@@ -209,6 +214,15 @@ class Live {
       case 'match':
         for (const fn of this.#matches.get(msg.envelope.match.id) ?? []) fn(msg.envelope);
         break;
+      case 'tables':
+        this.tables = msg.tables;
+        break;
+      case 'table':
+        for (const fn of this.#tableWatch.get(msg.table.id) ?? []) fn(msg.table);
+        break;
+      case 'table.gone':
+        for (const fn of this.#tableWatch.get(msg.tableId) ?? []) fn(null);
+        break;
       case 'pong':
         break;
     }
@@ -258,6 +272,24 @@ class Live {
       if (set.size === 0) {
         this.#matches.delete(matchId);
         this.#send({ type: 'unwatch', matchId });
+      }
+    };
+  }
+
+  /** Follow one table (seats, status, watchers). `null` means it was cleared. */
+  watchTable(tableId: string, fn: Listener<TableInfo | null>): () => void {
+    let set = this.#tableWatch.get(tableId);
+    if (!set) {
+      set = new Set();
+      this.#tableWatch.set(tableId, set);
+      this.#send({ type: 'watchTable', tableId });
+    }
+    set.add(fn);
+    return () => {
+      set.delete(fn);
+      if (set.size === 0) {
+        this.#tableWatch.delete(tableId);
+        this.#send({ type: 'unwatchTable', tableId });
       }
     };
   }

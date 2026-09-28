@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { randomTag } from './testing';
+import { enter, newPlayer, randomTag } from './testing';
 
 test('quick match seats a human against Sprocket and the game plays to a verdict', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
   await page.getByRole('button', { name: 'Find a match' }).click();
-  await page.waitForURL(/\/play\/m_/, { timeout: 20_000 });
+  await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
   await expect(page.getByText('Sprocket').first()).toBeVisible();
 
   const verdict = page.getByRole('heading', { name: /^(You win\.|You lose\.|Draw\.)$/ });
@@ -30,7 +30,7 @@ test('changing your mind after "Play again" does not start another match behind 
   await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
   await page.getByRole('button', { name: 'Find a match' }).click();
-  await page.waitForURL(/\/play\/m_/, { timeout: 20_000 });
+  await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
   // Scoped to the table: the page's own live-region wrapper (UpdateBanner, always in the DOM) is a
   // second role="status" element now, so an unscoped getByRole('status') would be ambiguous.
   await expect(page.getByRole('region', { name: 'Critical Mass' }).getByRole('status')).not.toHaveText('Starting…');
@@ -39,7 +39,7 @@ test('changing your mind after "Play again" does not start another match behind 
   await page.getByRole('button', { name: 'Yes, resign' }).click();
   await expect(page.getByRole('heading', { name: 'You lose.' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Play again' }).click();
+  await page.getByRole('button', { name: 'Find a match' }).click();
   // The dialog says a search is on, and offers a way out.
   await expect(page.getByRole('dialog').getByText(/Looking for an opponent/)).toBeVisible();
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Stop looking' })).toBeVisible();
@@ -57,7 +57,7 @@ test('keyboard players can reach every cell, and only legal cells act', async ({
   await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
   await page.getByRole('button', { name: 'Find a match' }).click();
-  await page.waitForURL(/\/play\/m_/, { timeout: 20_000 });
+  await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
   const cells = page.locator('button[data-cell]');
   await expect(cells).toHaveCount(54);
   await expect(page.locator('button[data-cell][disabled]')).toHaveCount(0);
@@ -72,4 +72,29 @@ test('keyboard players can reach every cell, and only legal cells act', async ({
   expect(await focusedCell()).toBe('b8');
   await page.getByRole('button', { name: 'Resign' }).click();
   await page.getByRole('button', { name: 'Yes, resign' }).click();
+});
+
+test('a spectator lands on the rail, and the player sees it only by switching tabs', async ({ page, browser }) => {
+  await page.goto('/');
+  await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
+  await page.getByRole('button', { name: 'Enter the parlor' }).click();
+  await page.getByRole('button', { name: 'Find a match' }).click();
+  await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
+  const tableUrl = page.url();
+
+  const fan = await newPlayer(browser);
+  await enter(fan, `fan${randomTag()}`);
+  await fan.goto(tableUrl);
+  await expect(fan.getByRole('tab', { name: /Rail/ })).toHaveAttribute('aria-selected', 'true');
+  await fan.getByPlaceholder('Cheer, heckle, speculate').fill('go carbon');
+  await fan.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page.getByText(/Watching: 1/)).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Rail (1)' })).toBeVisible();
+  await expect(page.getByRole('log').getByText('go carbon')).toHaveCount(0);
+  await page.getByRole('tab', { name: /Rail/ }).click();
+  await expect(page.getByRole('log').getByText('go carbon')).toBeVisible();
+  await page.getByRole('button', { name: 'Resign' }).click();
+  await page.getByRole('button', { name: 'Yes, resign' }).click();
+  await expect(page.getByRole('button', { name: 'Rematch' })).toBeVisible();
 });

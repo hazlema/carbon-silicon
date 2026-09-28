@@ -24,7 +24,7 @@
   onMount(() => {
     void live.init();
     return live.onInbox((event) => {
-      if (event.type === 'match.started') void goto(`/play/${event.match.id}`);
+      if (event.type === 'match.started') void goto(event.match.tableId ? `/t/${event.match.tableId}` : `/play/${event.match.id}`);
     });
   });
 
@@ -32,7 +32,7 @@
   const gated = $derived(live.checked && !live.me && !readingOnly);
   // The corner tiles are a lobby/table flourish (the mocks show them nowhere else); other pages
   // reserve no space for them (see --lattice-room, used only by those two).
-  const showLattice = $derived(page.url.pathname === '/' || page.url.pathname.startsWith('/play/'));
+  const showLattice = $derived(page.url.pathname === '/' || page.url.pathname.startsWith('/t/') || page.url.pathname.startsWith('/play/'));
 </script>
 
 <svelte:head><title>{BRAND.name}</title></svelte:head>
