@@ -29,10 +29,13 @@ Each line: what was decided — why — what it costs if wrong. P1–P7 were mad
 - R-12 — I2: code stands — GET /api/matches/:id only serves matches still retained in memory (30 min), so a tableless match's old page already fell to "This table has been cleared" once it aged out, and every match since Task 5 has a table; the spec sentence is outdated — costs: a stale /play bookmark to a pre-M2b match within its 30-minute retention shows "cleared" instead of the board.
 - R-13 — accept I1/I2 against the plan text: decline removes the offer only after the call succeeds (like accept); the countdown number is aria-hidden (the card's appearance stays announced) — costs a few lines.
 - R-14 — accept the live.svelte.ts loadGames fix inside Task 11 (outside its file list) — without it the lobby shows raw game ids and /invite can't pick a game for new guests; it's a 3-line fix of Task 10 code — costs nothing.
+- R-15 — Task 12's carryover gap is folded into the final review's single fix wave (which rewrites docs/m2b-carryover.md from the full ledger, including every later ruling and minor) instead of a separate fix round — the file must be regenerated after the final review anyway — costs nothing if the fix wave does it; the final re-review checks it.
+- R-16 — the scripted live check (HTTP + a real Playwright browser on a :3200 copy) stands in for "by hand": it drove the real UI and found two genuine UI rough edges — costs: no human eyes on it before the Foreman's own look.
 
-## Deferred findings (minor, from the per-task reviews)
+## Deferred findings (minor, from the per-task and final reviews)
 
 - Task 1: minor (deferred): generated 0003 migration/snapshot lack trailing newline (drizzle-kit default)
+- Task 2: minor (deferred, plan-mandated): 'tableIdOf reads finished matches from the database' test never evicts the match, so only the unknown-id case hits the DB branch
 - Task 3: minor (deferred): ReportsTab paren-wrapped regex could carry a comment explaining the Svelte `{/` gotcha
 - Task 4: minor (deferred): decline/expire/onUnavailable invite drops don't touch() the idle timer (spec says any seat or invite change resets it)
 - Task 4: minor (deferred): host() failure path leaves a table.closed event, an "opened a table" line and a table.changed for a table the caller never saw
@@ -40,6 +43,7 @@ Each line: what was decided — why — what it costs if wrong. P1–P7 were mad
 - Task 4: minor (deferred): a host's block is inferable at an open table (NOT_OPEN while listed open)
 - Task 4: minor (deferred): `declined` map never pruned
 - Task 4: minor (deferred): test gaps — starting lock not attempted, last-player posting, outsider info() view, refund loop, host AFK → host-left, offline path
+- Task 4: minor (deferred, pre-existing): [bus]/[games] console noise in verify output from lib.test/games.test
 - Task 4: minor (deferred): sit() post-await re-check doesn't re-check t.open (host closing the table mid-await still lets an uninvited sit complete)
 - Task 5: minor (deferred): vsHouse tests don't pin "the one you name" (single bot) or the AFK case (Bouncer); a freshly-upserted Bouncer presence is 'ready' until it sets AFK
 - Task 5: minor (deferred): two simultaneous vsHouse calls can invite the same bot (invite() re-checks available() not isBusy())
@@ -55,6 +59,7 @@ Each line: what was decided — why — what it costs if wrong. P1–P7 were mad
 - Task 7: minor (deferred): every table.changed broadcasts the full list to every socket, incl. private-table and watcher-count changes (nested emit doubles it)
 - Task 7: minor (deferred): "PGlite is closed" line in full-suite output dismissed without base-commit evidence
 - Task 8: minor (deferred): a non-ApiError failure of me() in answer() leaves the invite unanswered (it expires) and the catch comment doesn't describe that path
+- Task 8: minor (deferred, pre-existing): bot.test 'answering a human nobody answered > stays quiet…' flaked once in 5 runs inside its newHuman() helper
 - Task 9: minor (deferred): tab flashes to Rail for a player until the table loads (isPlayer false while table is null)
 - Task 9: minor (deferred): tab/railUnread not reset on client-side navigation between two /t/ pages
 - Task 9: minor (deferred): reports.test 'suspended people cannot report' flaked once in a full verify under CPU load (a hung stray bun test process from 09:53 pegs a core; my kill was refused by the permission checker — left for the Foreman)
@@ -64,6 +69,26 @@ Each line: what was decided — why — what it costs if wrong. P1–P7 were mad
 - Task 10: minor (deferred): Play panel buttons stack one per line (.btn width:100% inside the flex row) instead of a three-button row
 - Task 11: minor (deferred): PersonMenu's window keydown listener is unconditional (one per rendered author)
 - Task 11: minor (deferred): host-branch firstItem unbound if the catalog is momentarily empty
-- Task 11: minor (deferred): Open list shows a full forming table (Sit → TABLE_FULL error) — brief code
+- Task 11: minor (deferred): Open list shows a full forming table (Sit → TABLE_FULL error) — brief code — fixed in the final fix wave (TablesList skips full tables)
 - Task 11: minor (deferred): PersonMenu stays open after an action while MessageMenu switches to 'done' — brief code, UX seam
-- Task 11: minor (deferred): e2e '/invite from the lobby chat reaches someone on their profile page…' (added in Task 11) flaked once in a full run; clean on 3 isolated reruns + a full rerun — triage at final review
+- Task 11: minor (deferred): e2e '/invite from the lobby chat reaches someone on their profile page…' (added in Task 11) flaked once in a full run; clean on 3 isolated reruns + a full rerun — triage at final review — hardened in the final fix wave (waits for the game catalog before typing)
+- Task 12: minor (deferred, live screenshots): name menu stays open after inviting and is clipped at the bottom of the Here now panel; gathering card shows two near-duplicate hints
+- Final review: minor (deferred, left): client reconnect loop when a session is revoked while the socket is down (401 at upgrade → 1006, never refreshes me)
+- Final review: minor (deferred, left): a rematch forming shortens the table's life (retention swapped for the 10-min idle timer; host leaving clears viewers' verdict page)
+- Final review: minor (deferred, left): rematch() invites last players the presser has blocked (only checks the reverse)
+- Final review: minor (deferred, left): plan's Review Focus #1 text says late accept gets 409 TABLE_BUSY; code gives 410 INVITE_GONE (invites dropped first) — acceptable — the fix wave pins the 410 in tables.test.ts
+- Final review: minor (deferred, left): client 4001 → handle-gate path and bots' decline-when-busy have no automated test — the fix wave's F3 test now covers a bot declining while seated at another table
+
+## Final review
+
+The whole-branch review (opus) found four Important issues and a few cheap extras; one fix wave took them all:
+
+- F1 (fixed) — a seat eliminated by capture in a 3–4 player match was never released: `advance()` now releases every seat the game says is out, so presence, `activeMatchOf` and `atTable()` free them while the others play on.
+- F2 (fixed) — the web never learned a player was out: `live` re-reads `/api/me` when your presence leaves `playing` mid-match; the table page hides Resign for an out seat and refreshes after a resign.
+- F3 (fixed) — house bots walked out of a forming table to accept another invite: `answer()` declines when `/api/me` reports a table as well as a match (spec §5).
+- F4 (fixed) — no throttle on gathering: `tablesPerMinute` (host, vs house, invite shorthand) and `seatMovesPerMinute` (sit, leave), 10 each, `429 SLOW_DOWN`; in docs/API.md.
+- F5 (fixed) — a match ending inside `launch()`'s await left its table `playing`: launch finishes the table if the match is already over.
+- F6 (fixed) — Review Focus pins: late accept during `starting` and after AFK → `410 INVITE_GONE`; `/play/<match>` → `/t/<table>` e2e; the `/invite` e2e waits for the catalog.
+- F7 (fixed) — this file, regenerated from the full ledger (R-15).
+- Also fixed — the lobby's Open list skips full tables.
+- Left — every other deferred minor above, and the final review's own five (revoked-while-down reconnect loop, rematch shortening a table's life, rematch inviting someone the presser blocked, the plan's 409-vs-410 wording, untested 4001 gate path), were triaged "leave".
