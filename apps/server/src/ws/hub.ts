@@ -69,11 +69,26 @@ export class WsHub {
       }
       switch (msg?.type) {
         case 'subscribe':
-          if (typeof msg.channel === 'string' && this.core.comms.channelKind(msg.channel)) ws.data.channels.add(msg.channel);
+          if (typeof msg.channel === 'string' && this.core.comms.channelKind(msg.channel)) {
+            const raw = msg.channel;
+            ws.data.channels.add(raw);
+            void this.core.comms
+              .resolve(raw)
+              .then((ch) => {
+                if (ws.data.channels.has(raw)) ws.data.channels.add(ch);
+              })
+              .catch(() => {});
+          }
           break;
-        case 'unsubscribe':
-          ws.data.channels.delete(msg.channel);
+        case 'unsubscribe': {
+          const raw = msg.channel;
+          ws.data.channels.delete(raw);
+          void this.core.comms
+            .resolve(raw)
+            .then((ch) => ws.data.channels.delete(ch))
+            .catch(() => {});
           break;
+        }
         case 'watch':
           if (typeof msg.matchId === 'string') {
             ws.data.matches.add(msg.matchId);
