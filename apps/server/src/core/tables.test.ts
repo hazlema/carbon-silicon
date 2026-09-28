@@ -284,6 +284,44 @@ describe('rematch', () => {
     expect(again.invites).toEqual([]);
     await said(ctx, t.id, `@${ctx.ben.handle} isn't around for a rematch.`);
   });
+  test('rematch re-checks freedom after its await: sitting elsewhere mid-call is caught, not silently overridden', async () => {
+    const ctx = await setup();
+    const { t } = await played(ctx, ctx.ann, ctx.ben);
+    const real = ctx.relations.blocks.bind(ctx.relations);
+    let elsewhere = '';
+    ctx.relations.blocks = (async (ownerId: string, targetId: string) => {
+      if (!elsewhere) elsewhere = (await ctx.tables.host(ctx.ann, 'critical-mass')).id;
+      return real(ownerId, targetId);
+    }) as typeof ctx.relations.blocks;
+    try {
+      expect((await errorOf(() => ctx.tables.rematch(ctx.ann, t.id))).code).toBe('AT_TABLE');
+    } finally {
+      ctx.relations.blocks = real;
+    }
+    // The table ann hosts elsewhere must survive untouched: rematch() must not have silently
+    // seated her at `t` and, as a side effect, closed the table she hosts as 'host-left'.
+    expect(ctx.tables.atTable(ctx.ann.id)).toBe(elsewhere);
+    expect(ctx.tables.get(elsewhere, null).status).toBe('forming');
+  });
+  test('overlapping rematch presses from both last players both end up seated, no leftover invite', async () => {
+    const ctx = await setup();
+    const { t } = await played(ctx, ctx.ann, ctx.ben);
+    const [a, b] = await Promise.all([ctx.tables.rematch(ctx.ann, t.id), ctx.tables.rematch(ctx.ben, t.id)]);
+    expect(a.status).toBe('forming');
+    expect(b.status).toBe('forming');
+    const now = ctx.tables.get(t.id, null);
+    expect(now.seated.map((p) => p.id).sort()).toEqual([ctx.ann.id, ctx.ben.id].sort());
+    expect(now.invites).toEqual([]);
+  });
+  test('a house bot among the last players never becomes host via rematch', async () => {
+    const ctx = await setup();
+    const t = await ctx.tables.host(ctx.ann, 'critical-mass', { invite: [ctx.house.handle] });
+    ctx.tables.accept(ctx.house, await inviteOf(ctx, ctx.house));
+    const match = await ctx.tables.start(ctx.ann, t.id);
+    ctx.clock.advance(0);
+    await ctx.games.resign(match.id, ctx.house);
+    expect((await errorOf(() => ctx.tables.rematch(ctx.house, t.id))).code).toBe('HOUSE_WAITS');
+  });
 });
 
 describe('vs house and quick match', () => {

@@ -376,13 +376,22 @@ export class TableManager {
       return this.info(t, identity.id);
     }
     if (t.status !== 'finished') throw conflict('TABLE_BUSY', 'The match is still on.');
+    if (identity.isHouse) throw forbidden('HOUSE_WAITS', 'House bots join tables; they never host.');
     this.assertFree(identity);
     if (this.atTable(identity.id)) throw conflict('AT_TABLE', "You're already at a table. Leave it first.");
     const blocked = new Set<string>();
     for (const p of t.lastPlayers) {
       if (p.id !== identity.id && (await this.deps.relations.blocks(p.id, identity.id))) blocked.add(p.id);
     }
-    if (t.status !== 'finished' || !this.tables.has(t.id)) throw conflict('TABLE_BUSY', 'Someone else just called it.');
+    // The table's state may have moved on while we awaited the block lookups: it may have been
+    // cleared, or another of the last players' rematch() may already have flipped it to forming
+    // (in which case this press seats/accepts, same as pressing Rematch once it's gathering).
+    const now = this.tables.get(t.id);
+    if (!now) throw notFound('NO_TABLE', 'There is no such table. It may have been cleared.');
+    if (now.status === 'forming') return this.rematch(identity, tableId);
+    if (now.status !== 'finished') throw conflict('TABLE_BUSY', 'Someone else just called it.');
+    this.assertFree(identity);
+    if (this.atTable(identity.id)) throw conflict('AT_TABLE', "You're already at a table. Leave it first.");
     this.deps.clock.clearTimeout(t.timer);
     t.status = 'forming';
     t.host = identity;
