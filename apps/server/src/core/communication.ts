@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gt, lt } from 'drizzle-orm';
 import { censorText, containsSlur } from '@cs/shared/filter';
 import {
   DIARY_CHANNEL,
+  tableChannel,
   type ChatMessage,
   type IdentityPublic,
   type InboxEvent,
@@ -19,10 +20,15 @@ import { toPublic, type IdentityManager } from './identity';
 
 const INBOX_SIZE = 500;
 const MAX_TEXT = 500;
-const TABLE_RE = /^match:([A-Za-z0-9_]+)$/;
+const TABLE_RE = /^table:([A-Za-z0-9_]+)$/;
+const RAIL_RE = /^rail:([A-Za-z0-9_]+)$/;
+const MATCH_RE = /^match:([A-Za-z0-9_]+)$/;
 const MENTION_RE = /@([A-Za-z0-9_-]{3,20})/g;
 
-type TableAccess = (matchId: string) => { playerIds: string[] } | null;
+/** Who may post at a table (or at a tableless match): null means it doesn't exist (any more). */
+type Access = (id: string) => { posters: string[] } | null;
+type MatchTable = (matchId: string) => Promise<string | null>;
+export type ChannelKind = 'public' | 'diary' | 'table' | 'rail' | 'match';
 /** True means "don't deliver": the mentioned person ignores or blocks the author. */
 type MentionFilter = (ownerId: string, authorId: string) => Promise<boolean>;
 type Row = { m: typeof messages.$inferSelect; i: typeof identities.$inferSelect | null };
@@ -50,7 +56,9 @@ export class CommunicationManager {
   private inboxes = new Map<string, { cursor: number; events: InboxEvent[] }>();
   private waiters = new Map<string, Set<() => void>>();
   private flood: RateLimiter;
-  private tableAccess: TableAccess = () => null;
+  private tableAccess: Access = () => null;
+  private matchAccess: Access = () => null;
+  private matchTable: MatchTable = async () => null;
   private mentionFilter: MentionFilter = async () => false;
 
   constructor(
@@ -63,31 +71,57 @@ export class CommunicationManager {
     this.flood = new RateLimiter(clock, 5, 1 / 2000);
   }
 
-  setTableAccess(fn: TableAccess): void {
+  /** TableManager: who may post at `table:<id>` (and whether `rail:<id>` still exists). */
+  setTableAccess(fn: Access): void {
     this.tableAccess = fn;
+  }
+
+  /** GameManager: who may post at a tableless match's `match:<id>`. */
+  setMatchAccess(fn: Access): void {
+    this.matchAccess = fn;
+  }
+
+  /** The table a match was played at, so `match:<id>` can stand for `table:<id>`. */
+  setMatchTable(fn: MatchTable): void {
+    this.matchTable = fn;
   }
 
   setMentionFilter(fn: MentionFilter): void {
     this.mentionFilter = fn;
   }
 
-  channelKind(channel: string): 'public' | 'diary' | 'table' | null {
+  channelKind(channel: string): ChannelKind | null {
     if (channel === DIARY_CHANNEL) return 'diary';
     if (this.opts.publicChannels.includes(channel)) return 'public';
     if (TABLE_RE.test(channel)) return 'table';
+    if (RAIL_RE.test(channel)) return 'rail';
+    if (MATCH_RE.test(channel)) return 'match';
     return null;
   }
 
-  async post(author: IdentityPublic, channel: string, rawText: unknown): Promise<ChatMessage> {
+  /** `match:<id>` names its match's table channel when the match has one; everything else is itself. */
+  async resolve(channel: string): Promise<string> {
+    const m = MATCH_RE.exec(channel);
+    if (!m) return channel;
+    const tableId = await this.matchTable(m[1]);
+    return tableId ? tableChannel(tableId) : channel;
+  }
+
+  async post(author: IdentityPublic, rawChannel: string, rawText: unknown): Promise<ChatMessage> {
+    const channel = await this.resolve(rawChannel);
     const kind = this.channelKind(channel);
-    if (!kind) throw notFound('NO_CHANNEL', `There is no channel "${channel}".`);
+    if (!kind) throw notFound('NO_CHANNEL', `There is no channel "${rawChannel}".`);
     this.opts.guard.assert(author, 'chat');
     if (kind === 'diary' && author.role !== 'admin') throw forbidden('READ_ONLY', "#diary is the Proprietor's channel.");
-    if (kind === 'table') {
-      const table = this.tableAccess(channel.slice('match:'.length));
-      if (!table || !table.playerIds.includes(author.id)) {
+    if (kind === 'table' || kind === 'match') {
+      const id = channel.slice(channel.indexOf(':') + 1);
+      const access = kind === 'table' ? this.tableAccess(id) : this.matchAccess(id);
+      if (!access || !access.posters.includes(author.id)) {
         throw forbidden('NOT_AT_TABLE', 'Only the players can talk at this table.');
       }
+    }
+    if (kind === 'rail' && !this.tableAccess(channel.slice('rail:'.length))) {
+      throw notFound('NO_TABLE', 'This table has been cleared.');
     }
     const text = typeof rawText === 'string' ? rawText.trim() : '';
     if (!text) throw badRequest('EMPTY', 'Say something.');
@@ -95,7 +129,8 @@ export class CommunicationManager {
     // Slurs are refused everywhere, table chat included; trash talk stays, cruelty does not.
     if (containsSlur(text)) throw badRequest('FILTERED', 'That message contains a slur. Not here, not ever.');
     if (!this.flood.take(author.id)) throw tooMany('SLOW_DOWN', 'Easy there — one message every two seconds.');
-    return this.insert(channel, author, kind === 'public' ? censorText(text) : text, false);
+    // Players' table talk is uncensored (trash talk is the point); the rail is a public room.
+    return this.insert(channel, author, kind === 'public' || kind === 'rail' ? censorText(text) : text, false);
   }
 
   postSystem(channel: string, text: string): Promise<ChatMessage> {
@@ -117,12 +152,12 @@ export class CommunicationManager {
     const notified = new Set<string>();
     if (message.author) notified.add(message.author.id);
     const table = TABLE_RE.exec(message.channel);
-    if (table) {
-      for (const id of this.tableAccess(table[1])?.playerIds ?? []) {
-        if (notified.has(id)) continue;
-        this.deliver(id, { type: 'chat.table', message });
-        notified.add(id);
-      }
+    const legacy = MATCH_RE.exec(message.channel);
+    const posters = table ? this.tableAccess(table[1])?.posters : legacy ? this.matchAccess(legacy[1])?.posters : undefined;
+    for (const id of posters ?? []) {
+      if (notified.has(id)) continue;
+      this.deliver(id, { type: 'chat.table', message });
+      notified.add(id);
     }
     for (const m of message.text.matchAll(MENTION_RE)) {
       const target = await this.identities.getByHandle(m[1]);
@@ -138,10 +173,11 @@ export class CommunicationManager {
   }
 
   async history(
-    channel: string,
+    rawChannel: string,
     opts: { since?: number; limit?: number; viewer?: IdentityPublic | null } = {},
   ): Promise<ChatMessage[]> {
-    if (!this.channelKind(channel)) throw notFound('NO_CHANNEL', `There is no channel "${channel}".`);
+    const channel = await this.resolve(rawChannel);
+    if (!this.channelKind(channel)) throw notFound('NO_CHANNEL', `There is no channel "${rawChannel}".`);
     const limit = Math.min(200, Math.max(1, opts.limit ?? 50));
     const where =
       opts.since !== undefined ? and(eq(messages.channel, channel), gt(messages.id, opts.since)) : eq(messages.channel, channel);

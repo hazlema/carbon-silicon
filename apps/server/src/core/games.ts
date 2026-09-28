@@ -74,9 +74,10 @@ export class GameManager {
   ) {
     this.modules = new Map(modules.map((m) => [m.meta.id, m]));
     this.opts = { ...DEFAULTS, ...opts };
-    comms.setTableAccess((matchId) => {
+    // A match without a table (tests, and anything from before tables) keeps its own channel.
+    comms.setMatchAccess((matchId) => {
       const ids = this.playerIds(matchId);
-      return ids ? { playerIds: ids } : null;
+      return ids ? { posters: ids } : null;
     });
   }
 

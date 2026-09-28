@@ -63,6 +63,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   if (opts.countdownMs !== undefined) gameOpts.countdownMs = opts.countdownMs;
   if (opts.seed) gameOpts.seed = opts.seed;
   const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], guard, gameOpts);
+  comms.setMatchTable((matchId) => games.tableIdOf(matchId));
   const invites = new InviteManager(games, presence, bus, clock, guard, { houseFallbackMs: opts.houseFallbackMs ?? 8000 });
   const leaderboard = new LeaderboardManager(database.db);
   const diary = new DiaryService(opts.diaryDir);

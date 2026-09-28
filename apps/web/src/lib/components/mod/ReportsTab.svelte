@@ -80,7 +80,7 @@
   {#each reports as r (r.id)}
     <article class="report panel" aria-label="Report about {who(r)}">
       <header>
-        <span class="about">Report about <strong>{who(r)}</strong> in <span class="chan">{r.snapshot.channel.startsWith('match:') ? 'a table' : `#${r.snapshot.channel}`}</span></span>
+        <span class="about">Report about <strong>{who(r)}</strong> in <span class="chan">{(/^(match|table):/).test(r.snapshot.channel) ? 'a table' : r.snapshot.channel.startsWith('rail:') ? 'a rail' : `#${r.snapshot.channel}`}</span></span>
         <span class="when">{relativeTime(r.createdAt)}</span>
       </header>
       <ol class="context">
