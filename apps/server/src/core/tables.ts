@@ -293,6 +293,11 @@ export class TableManager {
     if (!t.open) throw forbidden('NOT_OPEN', 'This table is invite-only.');
     this.assertFree(identity);
     if (await this.deps.relations.blocks(t.host.id, identity.id)) throw forbidden('NOT_OPEN', 'This table is invite-only.');
+    // Another sit()/invite()/accept() may have landed at this table while we awaited the block lookup.
+    if (t.seated.some((x) => x.id === identity.id)) return this.info(t, identity.id);
+    const mineNow = t.invites.find((i) => i.to.id === identity.id);
+    if (mineNow) return this.accept(identity, mineNow.id);
+    this.assertFree(identity);
     this.assertForming(t);
     if (this.taken(t) >= this.size(t)) throw conflict('TABLE_FULL', fullText(t));
     this.seat(t, identity);
@@ -319,7 +324,7 @@ export class TableManager {
       return this.info(t, identity.id);
     }
     const who = t.seated.find((x) => x.handle.toLowerCase() === handle && x.id !== t.host.id);
-    if (!who) throw notFound('NOT_SEATED', `@${handle} isn't at this table.`);
+    if (!who) throw forbidden('NOT_SEATED', `@${handle} isn't at this table.`);
     this.unseat(t, who.id, 'removed');
     return this.info(t, identity.id);
   }
@@ -442,6 +447,7 @@ export class TableManager {
   }
 
   private seat(t: Table, identity: IdentityPublic): void {
+    if (t.seated.some((x) => x.id === identity.id)) return;
     const other = this.seatOf.get(identity.id);
     if (other && other !== t.id) {
       const o = this.tables.get(other);

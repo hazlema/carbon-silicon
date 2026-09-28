@@ -212,7 +212,18 @@ describe('gathering', () => {
     expect([now.seated.length, now.invites.length]).toEqual([1, 0]);
     expect((await events(ctx, ctx.ben, 'table.closed')).at(-1)).toMatchObject({ reason: 'removed' });
     expect((await events(ctx, ctx.cat, 'invite.cancelled')).at(-1)).toMatchObject({ reason: 'withdrawn' });
-    expect((await errorOf(() => ctx.tables.remove(ctx.ann, t.id, ctx.dan.handle))).code).toBe('NOT_SEATED');
+    const notSeated = await errorOf(() => ctx.tables.remove(ctx.ann, t.id, ctx.dan.handle));
+    expect([notSeated.status, notSeated.code]).toEqual([403, 'NOT_SEATED']);
+  });
+  test('two concurrent sits for the same person only seat them once', async () => {
+    const ctx = await setup();
+    const t = await ctx.tables.host(ctx.ann, 'critical-mass', { open: true });
+    const [a, b] = await Promise.all([ctx.tables.sit(ctx.ben, t.id), ctx.tables.sit(ctx.ben, t.id)]);
+    expect(a.seated.filter((s) => s.id === ctx.ben.id)).toHaveLength(1);
+    expect(b.seated.filter((s) => s.id === ctx.ben.id)).toHaveLength(1);
+    const now = ctx.tables.get(t.id, null);
+    expect(now.seated.filter((s) => s.id === ctx.ben.id)).toHaveLength(1);
+    expect(now.seated).toHaveLength(2);
   });
   test('ten invites a minute, then SLOW_DOWN', async () => {
     const ctx = await setup();
