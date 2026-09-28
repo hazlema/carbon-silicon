@@ -86,6 +86,7 @@ test('revoking a session closes exactly that session’s sockets, with 4001', as
   await core.accounts.revokeSession(identity.id, second.sessionId!);
   expect(b.closedWith).toBe(SIGNED_OUT);
   expect(a.closedWith).toBeNull();
+  expect(SIGNED_OUT).toBe(4001); // pinned to the constraint's exact close code
 });
 
 test('an IP ban closes the sockets from that address', async () => {

@@ -84,8 +84,11 @@ export function startServer(core: Core, app: Hono<AppEnv>, opts: ServerOptions):
         }
         const auth = await core.identities.authenticateSession(cookieValue(req.headers.get('cookie'), 'cs_key'));
         if (!auth || auth.identity.kind !== 'human') return new Response('Unauthorized', { status: 401 });
+        // An IP ban doesn't refuse the upgrade — a signed-in session still logs in over HTTP from a
+        // banned address (M2a policy: only new guest names/agent registrations are refused there),
+        // so refusing here would strand a locked account with no live connection. The `ip.banned`
+        // bus event closes this socket with SIGNED_OUT if/when the address is banned (R-11).
         const ip = clientIp(req.headers.get('x-forwarded-for'), srv.requestIP(req)?.address, opts.trustProxy ?? false);
-        if (core.moderation.isIpBanned(ip)) return new Response('Forbidden', { status: 403 });
         const data: WsData = {
           identity: auth.identity,
           sessionId: auth.sessionId,
