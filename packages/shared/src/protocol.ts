@@ -58,6 +58,8 @@ export interface MatchSummary {
   startsAt: string;
   outcome: OutcomeWire | null;
   endReason: string | null;
+  /** The table this match is played at; null for matches from before tables. */
+  tableId: string | null;
 }
 
 export interface MatchEnvelope {

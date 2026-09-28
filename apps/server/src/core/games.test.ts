@@ -3,7 +3,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { criticalMassGame, type CMCommand, type CMView } from '@cs/critical-mass';
 import { createRng } from '@cs/game-api';
-import { PUBLIC_CHANNELS, type IdentityPublic } from '@cs/shared/protocol';
+import { PUBLIC_CHANNELS, tableChannel, type IdentityPublic } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
 import type { DB } from '../db';
 import { matches, matchPlayers } from '../db/schema';
@@ -35,9 +35,13 @@ async function setup(gameDb: DB = database.db) {
   const red = (await ids.registerAgent({ name: `red${tag}` }, null)).identity;
   const blue = (await ids.createHuman(`blue${tag}`)).identity;
   const outsider = (await ids.createHuman(`out${tag}`)).identity;
+  const green = (await ids.registerAgent({ name: `green${tag}` }, null)).identity;
+  const extra = (await ids.registerAgent({ name: `xtra${tag}` }, null)).identity;
   presence.agentSeen(red);
   presence.humanConnected(blue);
-  return { clock, bus, ids, comms, presence, games, red, blue, outsider };
+  presence.agentSeen(green);
+  presence.agentSeen(extra);
+  return { clock, bus, ids, comms, presence, games, red, blue, outsider, green, extra };
 }
 type Ctx = Awaited<ReturnType<typeof setup>>;
 
@@ -242,5 +246,68 @@ describe('ending', () => {
     expect(await ctx.games.recoverOnBoot()).toBeGreaterThanOrEqual(1);
     const [row] = await database.db.select().from(matches).where(eq(matches.id, id));
     expect(row).toMatchObject({ status: 'abandoned', endReason: 'server-restart' });
+  });
+});
+
+describe('tables', () => {
+  test('a match remembers its table, says so in the summary and the database, and talks at the table', async () => {
+    const ctx = await setup();
+    const summary = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.blue], { tableId: 't_games1' });
+    expect(summary.tableId).toBe('t_games1');
+    const [row] = await database.db.select().from(matches).where(eq(matches.id, summary.id));
+    expect(row.tableId).toBe('t_games1');
+    expect(await ctx.games.tableIdOf(summary.id)).toBe('t_games1');
+    expect((await ctx.comms.history(tableChannel('t_games1')))[0].system).toBe(true);
+  });
+  test('tableIdOf reads finished matches from the database, and is null for unknown or tableless ones', async () => {
+    const ctx = await setup();
+    const plain = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.blue]);
+    expect(plain.tableId).toBeNull();
+    expect(await ctx.games.tableIdOf(plain.id)).toBeNull();
+    expect(await ctx.games.tableIdOf('m_nope')).toBeNull();
+  });
+  test('finishing a match announces it on the bus with its table', async () => {
+    const ctx = await setup();
+    const heard: { matchId: string; tableId: string | null }[] = [];
+    ctx.bus.on('match.finished', (e) => heard.push(e));
+    const summary = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.blue], { tableId: 't_games2' });
+    ctx.clock.advance(3000);
+    await ctx.games.resign(summary.id, ctx.blue);
+    expect(heard).toEqual([{ matchId: summary.id, tableId: 't_games2' }]);
+  });
+});
+
+describe('three and four players', () => {
+  test('a seat that is already out cannot resign again, and nothing changes', async () => {
+    const ctx = await setup();
+    const summary = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.green, ctx.extra]);
+    ctx.clock.advance(3000);
+    await ctx.games.resign(summary.id, ctx.green);
+    const before = ctx.games.summary(summary.id);
+    expect(before.status).toBe('live');
+    const err = await errorOf(ctx.games.resign(summary.id, ctx.green));
+    expect([err.status, err.code]).toEqual([409, 'OUT']);
+    expect(ctx.games.summary(summary.id)).toEqual(before);
+  });
+  test('an old match ending does not knock a player out of "playing" in their newer match', async () => {
+    const ctx = await setup();
+    const old = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.green, ctx.extra]);
+    ctx.clock.advance(3000);
+    await ctx.games.resign(old.id, ctx.green); // green is out of the old match, which plays on
+    await ctx.games.createMatch('critical-mass', [ctx.green, ctx.blue]);
+    expect(ctx.presence.get(ctx.green.id)?.status).toBe('playing');
+    await ctx.games.resign(old.id, ctx.extra); // the old match ends: red wins
+    expect(ctx.games.summary(old.id).status).toBe('over');
+    expect(ctx.presence.get(ctx.green.id)?.status).toBe('playing');
+  });
+  test('resigning during the countdown records the match as live in the database', async () => {
+    const ctx = await setup();
+    const summary = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.green, ctx.extra]);
+    await ctx.games.resign(summary.id, ctx.extra); // still in the 3 s countdown; two players remain
+    expect(ctx.games.summary(summary.id).status).toBe('live');
+    await waitFor(async () => {
+      const [row] = await database.db.select().from(matches).where(eq(matches.id, summary.id));
+      return row.status === 'live';
+    });
   });
 });
