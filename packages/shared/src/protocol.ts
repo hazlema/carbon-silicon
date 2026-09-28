@@ -300,6 +300,10 @@ export interface MeResponse {
   activeMatch: string | null;
   queued: string | null;
   sanction: SanctionInfo | null;
+  /** The table you're at (gathering, starting or playing), if any. */
+  table: TableInfo | null;
+  /** Invites waiting for your answer. */
+  invites: InviteOffer[];
 }
 
 export type WsClientMsg =
