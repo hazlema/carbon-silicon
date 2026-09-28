@@ -97,4 +97,12 @@ test('a spectator lands on the rail, and the player sees it only by switching ta
   await page.getByRole('button', { name: 'Resign' }).click();
   await page.getByRole('button', { name: 'Yes, resign' }).click();
   await expect(page.getByRole('button', { name: 'Rematch' })).toBeVisible();
+
+  // Calling a rematch does not touch the finished match's id (the table only points at a new one
+  // once the host starts it), so the old verdict must still be showing right after the click —
+  // this is the flip side of the fix in +page.svelte's match effect: it must reset `env` only
+  // when the table's matchId actually changes, never just because the table itself changed.
+  await page.getByRole('button', { name: 'Rematch' }).click();
+  await expect(page.getByRole('heading', { name: 'You lose.' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Rematch' })).toHaveCount(0);
 });

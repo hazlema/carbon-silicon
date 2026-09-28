@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import type { CMView } from '@cs/critical-mass';
   import { railChannel, tableChannel, type MatchEnvelope, type SeatInfo, type TableInfo } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
@@ -68,6 +68,10 @@
     const mid = matchId;
     if (!mid) return;
     let alive = true;
+    // Never show an envelope for a match other than the table's current one: a rematch's new
+    // match id lands here before its envelope does, and the previous (finished) match's board
+    // and verdict must not linger in that gap.
+    if (untrack(() => env?.match.id) !== mid) env = null;
     focusedOver = false;
     const off = live.watchMatch(mid, accept);
     api<MatchEnvelope>('GET', `/api/matches/${mid}`)
