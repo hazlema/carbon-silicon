@@ -28,7 +28,7 @@
 
 {#if secs > 0}
   <div class="invite panel" role="group" aria-label="Invite from @{offer.from.handle}">
-    <p><IdentityChip identity={offer.from} badge={false} /> invites you to {name} · <span class="secs">{secs}s</span></p>
+    <p><IdentityChip identity={offer.from} badge={false} /> invites you to {name} · <span class="secs" aria-hidden="true">{secs}s</span></p>
     <div class="row">
       <button class="btn primary" type="button" onclick={() => run(() => tableApi.accept(offer.invite.id))}>Accept</button>
       <button class="btn" type="button" onclick={() => run(() => tableApi.decline(offer.invite.id))}>Decline</button>

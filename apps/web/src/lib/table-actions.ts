@@ -34,8 +34,8 @@ export const tableApi = {
     return mine(t);
   },
   decline: async (inviteId: string) => {
-    live.offers = live.offers.filter((o) => o.invite.id !== inviteId);
     await api('POST', `/api/invites/${inviteId}/decline`);
+    live.offers = live.offers.filter((o) => o.invite.id !== inviteId);
   },
 };
 
