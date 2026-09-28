@@ -12,6 +12,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { BRAND } from '@cs/shared/brand';
+  import CornerDock from '$lib/components/CornerDock.svelte';
   import HandleGate from '$lib/components/HandleGate.svelte';
   import Lattice from '$lib/components/Lattice.svelte';
   import Nav from '$lib/components/Nav.svelte';
@@ -47,6 +48,7 @@
 </div>
 <!-- After the page in the tab order; fixed to the corner (and clickable) all the same. -->
 {#if showLattice}<div inert={gated}><Lattice /></div>{/if}
+{#if live.me}<div inert={gated}><CornerDock /></div>{/if}
 {#if gated}<HandleGate />{/if}
 
 <style>

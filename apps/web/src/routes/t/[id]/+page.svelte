@@ -6,6 +6,7 @@
   import { api, ApiError } from '$lib/api';
   import Avatar from '$lib/components/Avatar.svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
+  import GatheringCard from '$lib/components/GatheringCard.svelte';
   import IdentityChip from '$lib/components/IdentityChip.svelte';
   import Board from '$lib/games/critical-mass/Board.svelte';
   import { live } from '$lib/live.svelte';
@@ -318,13 +319,16 @@
     <div class="verdict panel" role="dialog" aria-labelledby="verdict-title">
       <h2 id="verdict-title" bind:this={verdictHeading} tabindex="-1">{verdict}</h2>
       <p>{REASONS[match.endReason ?? ''] ?? match.endReason}</p>
+      {#if regathering && table.status === 'forming'}
+        <GatheringCard {table} />
+      {/if}
       {#if mySeat && live.me && live.me.kind === 'human' && !live.me.locked && verdict === 'You win.'}
         <p class="note">Lock in @{live.me.handle} to put this win on the board. <a href="/u/{live.me.handle}">Lock your name</a></p>
       {/if}
       {#if live.queued}
         <p class="waiting" role="status">Looking for an opponent. If nobody turns up in a few seconds, a house machine sits down.</p>
       {/if}
-      <div class="row">
+      {#if !regathering}<div class="row">
         {#if live.queued}
           <button class="btn" type="button" onclick={stopLooking}>Stop looking</button>
         {:else}
@@ -335,7 +339,7 @@
         {/if}
         <!-- Leaving the table calls off a search started here, so no match starts behind your back. -->
         <a class="btn" href="/" onclick={() => live.queued && void stopLooking()}>Back to the lobby</a>
-      </div>
+      </div>{/if}
       {#if table.status === 'forming' && !regathering}
         <p class="note">@{table.host.handle} called a rematch.</p>
       {/if}

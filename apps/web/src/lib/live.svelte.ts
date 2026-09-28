@@ -1,7 +1,9 @@
 import type {
   ChatMessage,
+  GameInfo,
   IdentityPublic,
   InboxEvent,
+  InviteOffer,
   MatchEnvelope,
   MeResponse,
   PresenceInfo,
@@ -36,6 +38,11 @@ class Live {
   relations = $state<RelationsInfo>({ ignores: [], blocks: [] });
   /** The lobby's tables: open ones gathering, and ones playing now (pushed by the server). */
   tables = $state<TableInfo[]>([]);
+  /** The table you're at (gathering, starting or playing). */
+  myTable = $state<TableInfo | null>(null);
+  /** Invites waiting for your answer. */
+  offers = $state<InviteOffer[]>([]);
+  games = $state<GameInfo[]>([]);
   /** Everyone you ignore or block; their chat is hidden for you. */
   hiddenAuthors: Set<string> = $derived(new Set([...this.relations.ignores, ...this.relations.blocks].map((i) => i.id)));
   myStatus: Status = $derived(this.presence.find((p) => p.identity.id === this.me?.id)?.status ?? 'offline');
@@ -53,11 +60,20 @@ class Live {
     try {
       await this.refreshMe();
       this.connect();
+      void this.loadGames();
       void this.loadRelations();
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 401)) console.error(e);
     } finally {
       this.checked = true;
+    }
+  }
+
+  async loadGames(): Promise<void> {
+    try {
+      this.games = (await api<{ games: GameInfo[] }>('GET', '/api/games')).games;
+    } catch (e) {
+      console.error(e);
     }
   }
 
@@ -68,6 +84,8 @@ class Live {
     this.activeMatch = r.activeMatch;
     this.queued = r.queued;
     this.sanction = r.sanction;
+    this.myTable = r.table;
+    this.offers = r.invites;
   }
 
   async join(handle: string): Promise<void> {
@@ -172,11 +190,20 @@ class Live {
       }
       this.#handle(msg);
     };
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       this.connected = false;
       this.#ws = null;
+      if (e.code === 4001) {
+        void this.refreshMe().catch(() => {
+          this.me = null;
+          this.myTable = null;
+          this.offers = [];
+        });
+      }
       const delay = Math.min(10_000, 500 * 2 ** this.#retry++);
-      setTimeout(() => this.connect(), delay);
+      setTimeout(() => {
+        if (this.me) this.connect();
+      }, delay);
     };
   }
 
@@ -209,6 +236,7 @@ class Live {
         if (msg.event.type === 'match.over' && this.activeMatch === msg.event.matchId) this.activeMatch = null;
         // A sanction started or ended: the server may also have resigned a match or dropped a queue entry.
         if (msg.event.type === 'moderation') void this.refreshMe().catch((e) => console.error(e));
+        this.#tableEvent(msg.event);
         for (const fn of this.#inbox) fn(msg.event);
         break;
       case 'match':
@@ -224,6 +252,34 @@ class Live {
         for (const fn of this.#tableWatch.get(msg.tableId) ?? []) fn(null);
         break;
       case 'pong':
+        break;
+    }
+  }
+
+  /** Keeps `myTable` and `offers` in step with the inbox. */
+  #tableEvent(event: InboxEvent): void {
+    const meId = this.me?.id;
+    switch (event.type) {
+      case 'invite.received':
+        this.offers = [...this.offers.filter((o) => o.invite.id !== event.invite.id), { invite: event.invite, from: event.from, table: event.table }];
+        break;
+      case 'invite.cancelled':
+        this.offers = this.offers.filter((o) => o.invite.id !== event.inviteId);
+        break;
+      case 'table.updated': {
+        const t = event.table;
+        const seated = !!meId && t.seated.some((p) => p.id === meId);
+        if (seated && t.status !== 'finished') this.myTable = t;
+        else if (this.myTable?.id === t.id) this.myTable = null;
+        this.offers = this.offers.map((o) => (o.table.id === t.id ? { ...o, table: t } : o));
+        break;
+      }
+      case 'table.closed':
+        if (this.myTable?.id === event.tableId) this.myTable = null;
+        this.offers = this.offers.filter((o) => o.table.id !== event.tableId);
+        break;
+      case 'match.over':
+        if (this.myTable?.matchId === event.matchId) this.myTable = null;
         break;
     }
   }

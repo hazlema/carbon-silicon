@@ -1,22 +1,15 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import type { GameInfo } from '@cs/shared/protocol';
-  import { api } from '$lib/api';
   import { live } from '$lib/live.svelte';
+  import { tableApi } from '$lib/table-actions';
+  import GatheringCard from './GatheringCard.svelte';
 
-  let games = $state<GameInfo[]>([]);
+  const games = $derived(live.games);
   let gameId = $state('critical-mass');
+  $effect(() => {
+    if (games.length > 0 && !games.some((g) => g.id === gameId)) gameId = games[0].id;
+  });
   let error = $state('');
   let busy = $state(false);
-
-  onMount(async () => {
-    try {
-      games = (await api<{ games: GameInfo[] }>('GET', '/api/games')).games;
-      if (games.length > 0 && !games.some((g) => g.id === gameId)) gameId = games[0].id;
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  });
 
   const game = $derived(games.find((g) => g.id === gameId));
 
@@ -40,35 +33,67 @@
       error = (e as Error).message;
     }
   }
+
+  async function hostTable() {
+    error = '';
+    busy = true;
+    try {
+      await tableApi.host(gameId);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      busy = false;
+    }
+  }
+  async function vsHouse() {
+    error = '';
+    busy = true;
+    try {
+      await tableApi.vsHouse(gameId);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      busy = false;
+    }
+  }
 </script>
 
-<section class="play panel" aria-labelledby="play-title">
-  <div class="eyebrow">
-    <h2 id="play-title">Play</h2>
-    {#if game}<span class="players">{game.minPlayers}–{game.maxPlayers} players</span>{/if}
-  </div>
-  {#if games.length > 1}
-    <label class="pick">Game
-      <select bind:value={gameId}>
-        {#each games as g}<option value={g.id}>{g.name}</option>{/each}
-      </select>
-    </label>
-  {/if}
-  {#if game}
-    <h3>{game.name}</h3>
-    <p class="tagline">{game.tagline} {game.mode === 'turn' ? 'Turn-based' : 'Real-time'}. <a href="/games">Rules</a></p>
-  {/if}
-  {#if live.activeMatch}
-    <a class="btn primary" href="/play/{live.activeMatch}">Back to your table</a>
-  {:else if live.queued}
-    <p class="waiting" role="status">Looking for an opponent. If nobody turns up in a few seconds, a house machine sits down.</p>
-    <button class="btn" type="button" onclick={stop}>Stop looking</button>
-  {:else}
-    <button class="btn primary" type="button" onclick={find} disabled={busy || !live.me || live.myStatus !== 'ready'}>Find a match</button>
-    {#if live.myStatus === 'afk'}<p class="hint">You're set to AFK. Switch to Ready to play.</p>{/if}
-  {/if}
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
-</section>
+{#if live.myTable?.status === 'forming'}
+  <GatheringCard table={live.myTable} />
+{:else}
+  <section class="play panel" aria-labelledby="play-title">
+    <div class="eyebrow">
+      <h2 id="play-title">Play</h2>
+      {#if game}<span class="players">{game.minPlayers}–{game.maxPlayers} players</span>{/if}
+    </div>
+    {#if games.length > 1}
+      <label class="pick">Game
+        <select bind:value={gameId}>
+          {#each games as g}<option value={g.id}>{g.name}</option>{/each}
+        </select>
+      </label>
+    {/if}
+    {#if game}
+      <h3>{game.name}</h3>
+      <p class="tagline">{game.tagline} {game.mode === 'turn' ? 'Turn-based' : 'Real-time'}. <a href="/games">Rules</a></p>
+    {/if}
+    {#if live.activeMatch}
+      <a class="btn primary" href={live.myTable ? `/t/${live.myTable.id}` : `/play/${live.activeMatch}`}>Back to your table</a>
+    {:else if live.queued}
+      <p class="waiting" role="status">Looking for an opponent. If nobody turns up in a few seconds, a house machine sits down.</p>
+      <button class="btn" type="button" onclick={stop}>Stop looking</button>
+    {:else}
+      {@const off = busy || !live.me || live.myStatus !== 'ready'}
+      <div class="actions">
+        <button class="btn primary" type="button" onclick={find} disabled={off}>Find a match</button>
+        <button class="btn" type="button" onclick={hostTable} disabled={off}>Host a table</button>
+        <button class="btn" type="button" onclick={vsHouse} disabled={off}>Vs house</button>
+      </div>
+      {#if live.myStatus === 'afk'}<p class="hint">You're set to AFK. Switch to Ready to play.</p>{/if}
+    {/if}
+    {#if error}<p class="error" role="alert">{error}</p>{/if}
+  </section>
+{/if}
 
 <style>
   .play {
@@ -111,7 +136,7 @@
     font-size: var(--step--1);
     margin: 0 0 0.9rem;
   }
-  .btn + .hint {
+  .actions + .hint {
     margin: 0.7rem 0 0;
   }
   .pick {
@@ -123,5 +148,10 @@
   .btn {
     width: 100%;
     padding: 0.8rem 1rem;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
 </style>
