@@ -339,7 +339,15 @@ export async function runBot(opts: BotOptions): Promise<void> {
     await sleep(lo + Math.random() * Math.max(0, hi - lo), opts.signal);
     if (opts.signal?.aborted) return;
     try {
-      if (playing.size > 0) {
+      // Busy is decided from the server's own truth (the same activeMatch the server used to
+      // decide the invite was sendable), not the bot's local `playing` set: the server marks a
+      // finished match's players free the instant it ends, well before the bot's own playMatch
+      // loop notices and wraps up (posts its outcome line, clears `playing`) — a race that would
+      // otherwise make the bot decline a rematch pressed right after the match, breaking "always
+      // accept". Accepting while the old playMatch is still wrapping up is safe: play() is keyed
+      // by the new matchId.
+      const { activeMatch } = await client.me();
+      if (activeMatch) {
         await client.decline(event.invite.id);
         // Only a table's last players may talk there, so a busy "no" is said only to a rematch.
         if (myId && event.table.lastPlayers.some((p) => p.id === myId)) {

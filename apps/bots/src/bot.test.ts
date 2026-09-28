@@ -218,11 +218,7 @@ describe('tables', () => {
     const { match } = await human.startTable(tableId);
     await human.call('POST', `/api/matches/${match.id}/resign`);
     const chat = async () => (await human.call<{ messages: { author: { id: string } | null }[] }>('GET', `/api/chat/table:${tableId}?since=0&limit=200`)).messages;
-    // Sprocket says two things before it's done with this match: its hello, then its outcome line
-    // (win/lose). The server marks it "ready" the instant the resign lands, well before Sprocket's
-    // own poll loop notices and finishes playMatch — so wait for both of its lines, not just one,
-    // before treating it as free for a rematch.
-    for (let i = 0; i < 100 && (await chat()).filter((m) => m.author?.id === bot.id).length < 2; i++) await Bun.sleep(50);
+    for (let i = 0; i < 100 && !(await chat()).some((m) => m.author?.id === bot.id); i++) await Bun.sleep(50);
     for (let i = 0; i < 100 && (await sprocketNow()).status !== 'ready'; i++) await Bun.sleep(50);
     await human.call('POST', `/api/tables/${tableId}/rematch`);
     for (let i = 0; i < 100; i++) {
