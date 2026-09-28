@@ -7,6 +7,7 @@ export interface BusEvents {
   inbox: { identityId: string; event: InboxEvent };
   'match.updated': { matchId: string; revision: number };
   'match.finished': { matchId: string; tableId: string | null };
+  'table.changed': { tableId: string };
 }
 
 type Handler<K extends keyof BusEvents> = (payload: BusEvents[K]) => void;
