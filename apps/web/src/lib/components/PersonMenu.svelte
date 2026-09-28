@@ -10,10 +10,13 @@
   let { identity, inline = false }: { identity: IdentityPublic; inline?: boolean } = $props();
 
   let open = $state(false);
+  /** True when the popover would overflow the right edge at its default left-anchor, so it's flipped to hang from the right instead. */
+  let flip = $state(false);
   let note = $state('');
   let error = $state('');
   let root: HTMLSpanElement | undefined = $state();
   let trigger: HTMLButtonElement | undefined = $state();
+  let pop: HTMLDivElement | undefined = $state();
   let firstItem: HTMLElement | undefined = $state();
 
   const status = $derived(live.presence.find((p) => p.identity.id === identity.id)?.status ?? null);
@@ -25,19 +28,27 @@
   async function show() {
     if (isMe || !live.me) return;
     open = true;
+    flip = false;
     note = '';
     error = '';
     await tick();
+    // A mention late in a wrapped chat line can sit near the right edge; keep the popover on-screen
+    // at phone width by hanging it from the right instead when it would overflow.
+    if (pop && pop.getBoundingClientRect().right > window.innerWidth - 8) flip = true;
     firstItem?.focus();
   }
   function close() {
     open = false;
+    flip = false;
     trigger?.focus();
   }
   $effect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (root && !root.contains(e.target as Node)) open = false;
+      if (root && !root.contains(e.target as Node)) {
+        open = false;
+        flip = false;
+      }
     };
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
@@ -77,7 +88,7 @@
     {#if hint}<span class="plus" aria-hidden="true">+</span>{/if}
   </button>
   {#if open}
-    <div class="pop panel">
+    <div class="pop panel" class:flip bind:this={pop}>
       <div role="menu" aria-label="@{identity.handle}">
         {#if choice?.kind === 'invite'}
           <button bind:this={firstItem} role="menuitem" type="button" disabled={!!choice.disabled} onclick={() => run(() => inviteHandle(identity.handle), `Invited @${identity.handle}.`)}
@@ -152,6 +163,10 @@
     padding: 0.4rem;
     background: var(--panel-2);
     box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 0.4);
+  }
+  .pop.flip {
+    left: auto;
+    right: 0;
   }
   [role='menu'] {
     display: grid;

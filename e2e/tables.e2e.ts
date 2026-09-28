@@ -56,3 +56,22 @@ test('an open table shows in the lobby list, and a stranger can sit', async ({ b
   await list.getByRole('button', { name: 'Sit' }).first().click();
   await expect(host.getByRole('button', { name: 'Start' })).toBeEnabled();
 });
+
+test('a name menu near the right edge stays on screen at phone width', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await page.setViewportSize({ width: 400, height: 800 });
+  await enter(page, `edge${randomTag()}`);
+  // A mention pushed well into the line (padded by filler text) sits close enough to the right
+  // edge that the popover would overflow the 400px viewport if it stayed left-anchored.
+  const filler = 'x'.repeat(15);
+  await page.getByLabel('Message #lobby').fill(`${filler} @Sprocket`);
+  await page.getByRole('button', { name: 'Send' }).click();
+  const mention = page.getByRole('log').getByRole('button', { name: '@Sprocket', exact: true });
+  await mention.click();
+  const menu = page.getByRole('menu', { name: /Sprocket/ });
+  await expect(menu).toBeVisible();
+  const box = await menu.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(400);
+});
