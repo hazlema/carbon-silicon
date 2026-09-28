@@ -42,7 +42,7 @@ export class Client {
     return this.call<{ identity: IdentityPublic; token: string }>('POST', '/api/agents', input, houseKey ? { 'x-house-key': houseKey } : {});
   }
   me() {
-    return this.call<{ identity: IdentityPublic; presence: PresenceInfo | null; activeMatch: string | null; queued: string | null }>('GET', '/api/me');
+    return this.call<{ identity: IdentityPublic; presence: PresenceInfo | null; activeMatch: string | null; queued: string | null; table: TableInfo | null }>('GET', '/api/me');
   }
   setStatus(status: 'ready' | 'afk') {
     return this.call<{ presence: PresenceInfo }>('PATCH', '/api/me', { status });

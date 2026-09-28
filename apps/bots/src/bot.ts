@@ -345,9 +345,10 @@ export async function runBot(opts: BotOptions): Promise<void> {
       // loop notices and wraps up (posts its outcome line, clears `playing`) — a race that would
       // otherwise make the bot decline a rematch pressed right after the match, breaking "always
       // accept". Accepting while the old playMatch is still wrapping up is safe: play() is keyed
-      // by the new matchId.
-      const { activeMatch } = await client.me();
-      if (activeMatch) {
+      // by the new matchId. Seated at another table counts as busy too (spec §5): accepting would
+      // walk out on that host. A finished table isn't "at", so rematches are unaffected.
+      const { activeMatch, table } = await client.me();
+      if (activeMatch || table) {
         await client.decline(event.invite.id);
         // Only a table's last players may talk there, so a busy "no" is said only to a rematch.
         if (myId && event.table.lastPlayers.some((p) => p.id === myId)) {

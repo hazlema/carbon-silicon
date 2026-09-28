@@ -233,6 +233,27 @@ describe('tables', () => {
     // The hello was said at the first match only: the table remembers it.
     expect(await botSaidHelloTimes(human, tableId, bot.id)).toBe(1);
   }, 30_000);
+  test('Sprocket seated at one table declines an invite to another, and stays put', async () => {
+    const a = await newAgent(running.url, `hosta${randomTag()}`);
+    const b = await newAgent(running.url, `hostb${randomTag()}`);
+    type Who = { presence: { identity: { id: string; handle: string; isHouse: boolean }; status: string }[] };
+    const sprocketNow = async () =>
+      (await a.client.call<Who>('GET', '/api/who')).presence.find((p) => p.identity.isHouse && p.identity.handle.startsWith('Sprocket'))!;
+    for (let i = 0; i < 100 && (await sprocketNow()).status !== 'ready'; i++) await Bun.sleep(50);
+    const bot = (await sprocketNow()).identity;
+    type T = { table: { seated: { id: string }[]; invites: unknown[] } };
+    const first = (await a.client.hostTable('critical-mass', [bot.handle])).table.id;
+    await until(async () => (await a.client.call<T>('GET', `/api/tables/${first}`)).table.seated.length === 2);
+    const second = (await b.client.hostTable('critical-mass', [bot.handle])).table.id;
+    const answered = await until(async () => {
+      const t = (await b.client.call<T>('GET', `/api/tables/${second}`)).table;
+      return t.invites.length === 0 ? t : null;
+    });
+    expect(answered.seated.map((p) => p.id)).not.toContain(bot.id);
+    expect((await a.client.call<T>('GET', `/api/tables/${first}`)).table.seated.map((p) => p.id)).toContain(bot.id);
+    await a.client.call('DELETE', `/api/tables/${first}`);
+    await b.client.call('DELETE', `/api/tables/${second}`);
+  }, 30_000);
 });
 
 type Said = { messages: { id: number; author: { handle: string } | null; text: string }[] };
