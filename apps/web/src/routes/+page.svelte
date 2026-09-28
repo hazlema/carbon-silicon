@@ -2,6 +2,7 @@
   import ChatPanel from '$lib/components/ChatPanel.svelte';
   import QuickMatch from '$lib/components/QuickMatch.svelte';
   import Scoreboard from '$lib/components/Scoreboard.svelte';
+  import TablesList from '$lib/components/TablesList.svelte';
   import WhoList from '$lib/components/WhoList.svelte';
 
   const channels = [
@@ -47,6 +48,7 @@
 
   <aside class="right">
     <QuickMatch />
+    <TablesList />
     <div class="whowrap" class:hide={tab !== 'who'}><WhoList /></div>
   </aside>
 </div>

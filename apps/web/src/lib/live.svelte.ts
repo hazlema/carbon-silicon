@@ -116,6 +116,9 @@ class Live {
       console.error(e);
     }
     this.connect();
+    // init() skips loadGames() when the page first loads signed out (a fresh guest's 401 short-circuits
+    // it), so the catalog wouldn't otherwise arrive until a later reload — load it here too.
+    if (this.games.length === 0) void this.loadGames();
     void this.loadRelations();
   }
 
