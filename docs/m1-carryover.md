@@ -8,15 +8,15 @@ Decisions and deferred findings from building M1 ("Doors open"). Read this befor
 - Table chat has no slur filter (ruling R3) — add it with moderation.
 - Idle guest names are never released (spec §3, 30 days).
 - TRUST_PROXY switch for x-forwarded-for; prune rate-limit buckets; require auth (or cap waitMs) for unauthenticated match long-polls.
-- Keyboard users can't tab across disabled (non-legal) board cells; consider aria-disabled.
-- 3–4 player entry points: eliminated seats can spam resign; release() can knock a player out of 'playing' in a newer match; resign during countdown leaves the DB row at 'countdown'.
-- A human who reconnects mid-match after the 15 s grace shows 'ready' in presence.
+- Keyboard users can't tab across disabled (non-legal) board cells; consider aria-disabled. — already done in M2a (`e2e/match.e2e.ts` keyboard test; M2b ruling P1)
+- 3–4 player entry points: eliminated seats can spam resign; release() can knock a player out of 'playing' in a newer match; resign during countdown leaves the DB row at 'countdown'. — done in M2b Task 2 (an eliminated seat's resign gets `409 OUT`; release() leaves a newer match alone; a resign in the countdown writes the finished status)
+- A human who reconnects mid-match after the 15 s grace shows 'ready' in presence. — already done in M2a (`apps/server/src/ws/hub.test.ts`; M2b ruling P1)
 - Verify the postgres-js path against a real Postgres before/at first deploy (only PGlite was exercised).
 
 ## M2b must-do
 
-- Close a person's open WebSockets when their session is revoked, their name is released or their IP is banned (M2a leaves them open until reload).
-- A released person's open WebSocket keeps them in presence under the old handle (which is free to claim) — refresh presence identity on release.
+- Close a person's open WebSockets when their session is revoked, their name is released or their IP is banned (M2a leaves them open until reload). — done in M2b Task 7 (close code 4001)
+- A released person's open WebSocket keeps them in presence under the old handle (which is free to claim) — refresh presence identity on release. — done in M2b Task 7 (release closes the socket and drops the presence entry)
 
 M2a's sanctions and bans take effect on the next authenticated HTTP request (and, since Task 12, on the next WebSocket open too — see `refreshMe()` in `ws.onopen`), but a socket that's already open keeps receiving public chat and its own inbox pushes until the browser reloads. DMs and invites (M2b) raise the cost of that gap, so it's a must-do before they ship, not a nice-to-have.
 
@@ -74,6 +74,6 @@ M2a's sanctions and bans take effect on the next authenticated HTTP request (and
 
 ## Added after M1 (redesign from docs/mock)
 
-- The lobby mock has a "vs house" button. Quick match already seats a house machine after `houseFallbackMs` (8 s); a direct "play the house now" needs a server entry point that skips the wait.
+- The lobby mock has a "vs house" button. Quick match already seats a house machine after `houseFallbackMs` (8 s); a direct "play the house now" needs a server entry point that skips the wait. — done in M2b Task 5 (`POST /api/vs-house`) and Task 10 (the Vs house button)
 - The lobby mock gives humans a one-line bio in Here now ("Human. Asks about technology."). Only agents have a `tagline`; humans need a way to set one.
 - Seat colours: one human against one machine plays Carbon orange against Silicon cyan; every other table takes orange, cyan, green, violet in seat order (`apps/web/src/lib/seats.ts`). With two humans, one of them is cyan.

@@ -2,6 +2,52 @@
 
 Rule 13: a feature exists only when it is tested and verified running. Each run below lists what was run, what it printed, and what broke along the way. Newest first.
 
+## M2b "Tables", 2026-09-28
+
+**Tree:** `20092eb` before this task's commit (Task 12 adds only docs, the diary entry and four `llms.txt` needles in `apps/server/src/docs.test.ts`).
+
+Run 2026-09-28 18:05:29Z to 18:08:20Z UTC:
+
+```sh
+bun run verify 2>&1 | tail -30
+# = bun run typecheck && bun test && bun run build && bun run e2e
+```
+
+| Stage | Result |
+|---|---|
+| `tsc -p tsconfig.json` | clean, no output |
+| `svelte-check` (apps/web) | `COMPLETED 410 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS` |
+| `bun test` (PGlite) | `496 pass`, `1 skip`, `0 fail`, `5392 expect() calls`, `Ran 497 tests across 48 files.` |
+| `bun run build` | adapter-static `Wrote site to "build"` |
+| `playwright test` | `32 passed (1.2m)` |
+
+The `bun test` output still prints the two expected `error: boom` traces (the EventBus failure-isolation test) and three `error: PGlite is closed` traces: a match's `goLive` status write firing after its test has already closed that core's database. None fails a test; it's logged as a deferred minor in `docs/m2b-carryover.md` (Task 7). Postgres was not re-run for this milestone.
+
+The docs test was run RED first: with `'POST /api/tables'`, `'invite.received'`, `'/api/invites/'` and `'rematch'` added to its `llms.txt` needles, `bun test apps/server/src/docs.test.ts` failed (`Expected to contain: "POST /api/tables"`, 2 pass 1 fail). With the table flow written into `docs/llms.txt`, it passed (3 pass, 0 fail).
+
+### Live
+
+Run by the Task 12 implementer on a **copy** of the dev PGlite database on port 3200. The Foreman hasn't approved the merge, so the running `:3000` site and its `.data/pglite` were not touched. The bots used a scratch token dir; OLD IRON's voice read `.data/llm.json` as usual (`openai/gpt-6-luna`).
+
+- Setup: `bun run build`; `DATABASE_URL=pglite:<copy> PORT=3200 ADMIN_KEY=<scratch> bun apps/server/src/main.ts` → `Carbon & Silicon is open at http://127.0.0.1:3200`. `CS_BASE=http://127.0.0.1:3200 BOT_TOKEN_DIR=<scratch> bun apps/bots/src/main.ts` → `[Sprocket] registered as @Sprocket`, `[OLD_IRON] registered as @OLD_IRON`, `[Bouncer] registered as @Bouncer`.
+- `GET /api` → 55 endpoints, 15 of them table, invite or vs-house routes. `GET /api/tables` before anything → `{"tables":[]}`.
+- **As an agent, over HTTP only** (a bun script with two fresh agents, `LiveHost6612` and `LiveRail6612`):
+  - `POST /api/tables {"gameId":"critical-mass","invite":["OLD_IRON"]}` → `201`, table `t_ecd9ae94119c471b`, `forming`, one invite.
+  - OLD IRON sat **3.4 s** later. The host's inbox held `chat.table, table.updated, invite.answered(accepted), table.updated, chat.table`.
+  - `POST /api/tables/t_ecd9ae94119c471b/start` → `200`, match `m_ea3ebdca88a54b2a` in `countdown`. `GET /api/tables` (no auth) → that table, `playing`, seated `LiveHost6612, OLD_IRON`, with its `matchId`.
+  - The second agent's `POST /api/chat/rail:t_ecd9ae94119c471b` → `201`; the same agent at `table:t_ecd9ae94119c471b` → `403 NOT_AT_TABLE`. The host's table-talk post → `201`.
+  - `POST /api/matches/m_ea3ebdca88a54b2a/resign` → `200`; the match reads `over`, reason `resign`; the table reads `finished`, `lastPlayers` OLD_IRON and LiveHost6612.
+  - `POST /api/tables/t_ecd9ae94119c471b/rematch`, pressed at once → `200`, `forming`, OLD_IRON invited. He accepted **2.2 s** later: no "busy" from bookkeeping lag. Start → a new match id at the same table.
+  - The table's chat afterwards: `opened a table for Critical Mass`, `@OLD_IRON sat down.`, the match line, the host's "Good luck, old man.", OLD IRON's hello ("WELCOME TO THE GRID, CALCULATOR; …") and one more line from him, `resigns`, `wins (resign). GG.`, `@LiveHost6612 wants a rematch.`, `@OLD_IRON sat down.`, the second match line. There was no second hello: greet-once holds across a rematch. The rail held only "Go on, OLD IRON, show them."
+- **In a browser** (a Playwright script driving Chromium against :3200):
+  - A guest entered the lobby, pressed **Host a table** (the gathering card read "Click a name to invite them."), clicked OLD_IRON in Here now and chose **Invite to Critical Mass**. **Start** was enabled 3.6 s later. Start went to `/t/t_aa028fd9822e4aa4`.
+  - A second browser at 400 px entered as another guest and opened that table. It landed on the **Rail** tab (`aria-selected="true"`) and posted "rail says: carbon is toast". The host's header showed "Watching: 1" and the tab read "Rail (1)"; the line wasn't in the host's Table log until the host switched to Rail.
+  - Resign → "You lose. By resignation." with **Rematch**. Rematch → the gathering card formed on the table page, and Start was enabled 2.1 s later (OLD IRON accepted). Start → a live board at the same URL. Resigned again.
+  - The host's only console error was the expected `401` on `/api/me` before a handle is chosen.
+  - Seen in the screenshots: after inviting from Here now, the name menu stays open (a known deferred minor) and is clipped at the bottom of the Here now panel. The gathering card shows two hints, "Click a name to invite more, or start." and "Click a name to invite them.".
+- Bot log: `[OLD_IRON] sat down at t_… for @…` twice per table (first match, then rematch) and `match … over: resign` for all four matches.
+- The :3200 server and its bots were stopped afterwards (`Closing up the parlor…`), and the copy and the scratch token dir were deleted. `:3000` kept running throughout.
+
 ## M2a "Keys & Bouncers", 2026-09-27
 
 **Tree:** `241d983` before this task's commit.
