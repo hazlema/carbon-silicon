@@ -219,6 +219,26 @@ describe('release and deletion', () => {
   });
 });
 
+describe('ended sessions', () => {
+  test('revocations and releases report the sessions that ended; release ends them before running hooks', async () => {
+    const ctx = setup();
+    const who = await locked(ctx, 'end');
+    const ended: string[][] = [];
+    ctx.accounts.onSessionsEnded((ids) => ended.push(ids));
+    const [first] = await ctx.accounts.sessions(who.identity.id, null);
+    await ctx.accounts.revokeSession(who.identity.id, first.id);
+    expect(ended).toEqual([[first.id]]);
+    let left = -1;
+    ctx.accounts.onRelease(async (id) => {
+      left = (await ctx.accounts.sessions(id, null)).length;
+    });
+    expect(await ctx.accounts.release(who.identity.id)).toBe(true);
+    expect(ended).toHaveLength(2);
+    expect(ended[1]).toHaveLength(1);
+    expect(left).toBe(0);
+  });
+});
+
 describe('bio', () => {
   test('sets, filters, clears, and limits the bio', async () => {
     const ctx = setup();

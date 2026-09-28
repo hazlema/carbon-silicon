@@ -36,6 +36,7 @@ async function verify(pw: unknown, hash: string | null): Promise<boolean> {
 /** Locked names, sign-in from anywhere, recovery, sessions, and giving names back. */
 export class AccountManager {
   private releaseHooks: ((identityId: string) => Promise<void>)[] = [];
+  private endedHooks: ((sessionIds: string[]) => void)[] = [];
   private idleGuestMs: number;
   private idleMatchedMs: number;
 
@@ -53,6 +54,22 @@ export class AccountManager {
   /** Runs inside release(), once the name is scrubbed (e.g. to drop ignore and block lists, lift sanctions). */
   onRelease(fn: (identityId: string) => Promise<void>): void {
     this.releaseHooks.push(fn);
+  }
+
+  /** Runs whenever sessions stop working (revoked, signed out elsewhere, IP ban, release), so open sockets can close. */
+  onSessionsEnded(fn: (sessionIds: string[]) => void): void {
+    this.endedHooks.push(fn);
+  }
+
+  private ended(sessionIds: string[]): void {
+    if (sessionIds.length === 0) return;
+    for (const fn of this.endedHooks) {
+      try {
+        fn(sessionIds);
+      } catch (e) {
+        console.error('[accounts] sessions-ended hook failed', e);
+      }
+    }
   }
 
   private async require(identityId: string): Promise<IdentityRow> {
@@ -141,6 +158,7 @@ export class AccountManager {
       .where(and(eq(sessions.identityId, identityId), eq(sessions.id, sessionId)))
       .returning({ id: sessions.id });
     this.identities.evict(identityId);
+    this.ended(gone.map((g) => g.id));
     return gone.length > 0;
   }
 
@@ -150,12 +168,14 @@ export class AccountManager {
       : eq(sessions.identityId, identityId);
     const gone = await this.db.delete(sessions).where(where).returning({ id: sessions.id });
     this.identities.evict(identityId);
+    this.ended(gone.map((g) => g.id));
     return gone.length;
   }
 
   async revokeByIp(ip: string): Promise<number> {
-    const gone = await this.db.delete(sessions).where(eq(sessions.ip, ip)).returning({ identityId: sessions.identityId });
+    const gone = await this.db.delete(sessions).where(eq(sessions.ip, ip)).returning({ id: sessions.id, identityId: sessions.identityId });
     for (const id of new Set(gone.map((g) => g.identityId))) this.identities.evict(id);
+    this.ended(gone.map((g) => g.id));
     return gone.length;
   }
 
@@ -191,9 +211,11 @@ export class AccountManager {
       .where(and(...where))
       .returning({ id: identities.id });
     if (done.length === 0) return false;
-    for (const hook of this.releaseHooks) await hook(identityId);
-    await this.db.delete(sessions).where(eq(sessions.identityId, identityId));
+    // Sessions go first, so a hook that throws can't leave a signed-in tombstone (M2a final review).
+    const gone = await this.db.delete(sessions).where(eq(sessions.identityId, identityId)).returning({ id: sessions.id });
     this.identities.evict(identityId);
+    this.ended(gone.map((g) => g.id));
+    for (const hook of this.releaseHooks) await hook(identityId);
     return true;
   }
 

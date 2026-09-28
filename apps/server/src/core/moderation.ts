@@ -341,6 +341,7 @@ export class ModerationManager {
       .values({ ip: addr, reason: why, actorId: actorIdOf(actor), createdAt: new Date(this.clock.now()) })
       .onConflictDoUpdate({ target: ipBans.ip, set: { reason: why } });
     this.bans.add(addr);
+    this.bus.emit('ip.banned', { ip: addr });
     const signedOut = await this.deps.accounts.revokeByIp(addr);
     await this.record(actor, 'ip-ban', null, why, { ip: addr, signedOut });
   }

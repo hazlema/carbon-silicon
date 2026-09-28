@@ -4,6 +4,7 @@ import type { Server } from 'bun';
 import type { Hono } from 'hono';
 import type { Core } from './core/core';
 import type { AppEnv } from './http/app';
+import { clientIp } from './lib/ip';
 import { WsHub, type WsData } from './ws/hub';
 
 export interface ServerOptions {
@@ -11,6 +12,7 @@ export interface ServerOptions {
   hostname: string;
   webDir: string | null;
   allowedOrigins: string[];
+  trustProxy?: boolean;
 }
 
 export interface RunningServer {
@@ -80,9 +82,19 @@ export function startServer(core: Core, app: Hono<AppEnv>, opts: ServerOptions):
         if (!originAllowed(req.headers.get('origin'), url.host, opts.allowedOrigins)) {
           return new Response('Forbidden origin', { status: 403 });
         }
-        const identity = await core.identities.authenticate(cookieValue(req.headers.get('cookie'), 'cs_key'));
-        if (!identity || identity.kind !== 'human') return new Response('Unauthorized', { status: 401 });
-        if (srv.upgrade(req, { data: { identity, channels: new Set<string>(), matches: new Set<string>() } })) return undefined;
+        const auth = await core.identities.authenticateSession(cookieValue(req.headers.get('cookie'), 'cs_key'));
+        if (!auth || auth.identity.kind !== 'human') return new Response('Unauthorized', { status: 401 });
+        const ip = clientIp(req.headers.get('x-forwarded-for'), srv.requestIP(req)?.address, opts.trustProxy ?? false);
+        if (core.moderation.isIpBanned(ip)) return new Response('Forbidden', { status: 403 });
+        const data: WsData = {
+          identity: auth.identity,
+          sessionId: auth.sessionId,
+          ip,
+          channels: new Set<string>(),
+          matches: new Set<string>(),
+          tables: new Set<string>(),
+        };
+        if (srv.upgrade(req, { data })) return undefined;
         return new Response('Expected a WebSocket upgrade', { status: 426 });
       }
       if (url.pathname === '/api' || url.pathname.startsWith('/api/') || url.pathname === '/llms.txt') {

@@ -64,6 +64,11 @@ export class PresenceManager {
     this.bus.emit('presence.changed', { ...entry.info, status: 'offline', since: this.iso() });
   }
 
+  /** Forget someone at once (a released name must not linger in "Here now" under its old handle). */
+  drop(id: string): void {
+    this.goOffline(id);
+  }
+
   private armIdle(entry: Entry): void {
     this.clock.clearTimeout(entry.idleTimer);
     entry.idleTimer = this.clock.setTimeout(() => {
