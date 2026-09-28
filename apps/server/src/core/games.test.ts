@@ -6,7 +6,7 @@ import { createRng } from '@cs/game-api';
 import { PUBLIC_CHANNELS, tableChannel, type IdentityPublic } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
 import type { DB } from '../db';
-import { matches, matchPlayers } from '../db/schema';
+import { matches, matchPlayers, messages } from '../db/schema';
 import { FakeClock } from '../lib/clock';
 import type { AppError } from '../lib/errors';
 import { newId } from '../lib/ids';
@@ -257,7 +257,8 @@ describe('tables', () => {
     const [row] = await database.db.select().from(matches).where(eq(matches.id, summary.id));
     expect(row.tableId).toBe('t_games1');
     expect(await ctx.games.tableIdOf(summary.id)).toBe('t_games1');
-    expect((await ctx.comms.history(tableChannel('t_games1')))[0].system).toBe(true);
+    const lines = await database.db.select().from(messages).where(eq(messages.channel, tableChannel('t_games1')));
+    expect(lines.some((m) => m.system)).toBe(true);
   });
   test('tableIdOf reads finished matches from the database, and is null for unknown or tableless ones', async () => {
     const ctx = await setup();
