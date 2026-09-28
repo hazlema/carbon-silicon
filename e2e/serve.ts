@@ -29,6 +29,7 @@ void runBot({
   houseKey: 'e2e-house',
   tokenFile: join(root, `.data/e2e/${crypto.randomUUID()}.token`),
   thinkMs: [30, 80],
+  inviteThinkMs: [200, 400],
   pollWaitMs: 5000,
   signal: controller.signal,
   log: () => {},

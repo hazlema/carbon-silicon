@@ -21,6 +21,8 @@ export interface Personality {
     ambient: string[];
     /** Answers to a human's public line that nobody else answered; only bots with a voice use it. */
     unanswered?: string[];
+    /** Turning down an invite because the bot is already busy playing. */
+    busy?: string[];
   };
 }
 

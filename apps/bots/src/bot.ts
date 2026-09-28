@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { stateFromView, type CMView } from '@cs/critical-mass';
-import { PUBLIC_CHANNELS, type ChatMessage, type MatchEnvelope, type PresenceInfo } from '@cs/shared/protocol';
+import { PUBLIC_CHANNELS, type ChatMessage, type InboxEvent, type MatchEnvelope, type PresenceInfo } from '@cs/shared/protocol';
 import { ApiError, Client } from './client';
 import { DEFAULT_STRATEGY, line, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
@@ -13,6 +13,8 @@ export interface BotOptions {
   houseKey: string;
   tokenFile: string;
   thinkMs: [number, number];
+  /** The "thinking" pause before a house bot answers an invite (default 2–4 s). */
+  inviteThinkMs?: [number, number];
   pollWaitMs?: number;
   signal?: AbortSignal;
   log?: (msg: string) => void;
@@ -67,6 +69,7 @@ const BANK: Record<MomentKind, keyof Personality['lines'] | null> = {
   gotHit: 'gotHit',
   ambient: 'ambient',
   unanswered: 'unanswered',
+  busy: 'busy',
 };
 
 /** Should a bot with a voice speak up in the lobby now? (The coin flip happens elsewhere.) */
@@ -329,6 +332,29 @@ export async function runBot(opts: BotOptions): Promise<void> {
     lastReply.set(channel, now);
     return true;
   };
+
+  /** House bots always say yes (ALWAYS.) — unless they're already busy. */
+  const answer = async (event: Extract<InboxEvent, { type: 'invite.received' }>) => {
+    const [lo, hi] = opts.inviteThinkMs ?? [2000, 4000];
+    await sleep(lo + Math.random() * Math.max(0, hi - lo), opts.signal);
+    if (opts.signal?.aborted) return;
+    try {
+      if (playing.size > 0) {
+        await client.decline(event.invite.id);
+        // Only a table's last players may talk there, so a busy "no" is said only to a rematch.
+        if (myId && event.table.lastPlayers.some((p) => p.id === myId)) {
+          await speak(client, opts, 'busy', `table:${event.table.id}`, { addressedBy: event.from.handle });
+        }
+        return;
+      }
+      await client.accept(event.invite.id);
+      log(`sat down at ${event.table.id} for @${event.from.handle}`);
+    } catch (e) {
+      // Expired, withdrawn, or the table started without us: nothing to do.
+      if (!(e instanceof ApiError)) log(`invite ${event.invite.id} failed: ${(e as Error).message}`);
+    }
+  };
+
   const ambient = opts.voice && (opts.ambientEveryMs ?? 12 * 60_000) > 0 ? ambientLoop(client, opts, () => playing.size > 0, myId, log) : null;
 
   // A bot with a voice also reads the public channels and answers a human nobody else answered.
@@ -368,6 +394,10 @@ export async function runBot(opts: BotOptions): Promise<void> {
       const poll = await client.inbox(cursor, opts.pollWaitMs ?? 25_000);
       cursor = poll.cursor;
       for (const event of poll.events) {
+        if (event.type === 'invite.received') {
+          track(answer(event));
+          continue;
+        }
         if (event.type === 'match.started') play(event.match.id);
         const { message } = event.type === 'chat.mention' || event.type === 'chat.table' ? event : { message: null };
         // Other house bots are ignored: two residents mentioning each other would chat forever.

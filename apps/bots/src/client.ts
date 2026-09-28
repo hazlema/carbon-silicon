@@ -1,4 +1,4 @@
-import type { IdentityPublic, InboxPoll, MatchEnvelope, PresenceInfo } from '@cs/shared/protocol';
+import type { IdentityPublic, InboxPoll, MatchEnvelope, MatchSummary, PresenceInfo, TableInfo } from '@cs/shared/protocol';
 
 export class ApiError extends Error {
   constructor(
@@ -85,5 +85,17 @@ export class Client {
   }
   quickMatch(gameId: string) {
     return this.call<{ status: 'queued' } | { status: 'matched'; match: { id: string } }>('POST', '/api/quickmatch', { gameId });
+  }
+  accept(inviteId: string) {
+    return this.call<{ table: TableInfo }>('POST', `/api/invites/${inviteId}/accept`);
+  }
+  decline(inviteId: string) {
+    return this.call('POST', `/api/invites/${inviteId}/decline`);
+  }
+  hostTable(gameId: string, invite: string[]) {
+    return this.call<{ table: TableInfo }>('POST', '/api/tables', { gameId, invite });
+  }
+  startTable(tableId: string) {
+    return this.call<{ match: MatchSummary }>('POST', `/api/tables/${tableId}/start`);
   }
 }
