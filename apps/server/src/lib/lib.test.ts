@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { EventBus } from '../core/bus';
 import { FakeClock } from './clock';
+import { gone } from './errors';
 import { hashSecret, newId, newSecret } from './ids';
 import { clientIp, isLoopback } from './ip';
 import { RateLimiter } from './ratelimit';
@@ -130,5 +131,12 @@ describe('EventBus', () => {
     off();
     bus.emit('match.updated', { matchId: 'm', revision: 2 });
     expect(got).toEqual([1]);
+  });
+});
+
+describe('gone', () => {
+  test('is a 410 AppError with the code and message', () => {
+    const e = gone('INVITE_GONE', 'That invite has expired.');
+    expect([e.status, e.code, e.message]).toEqual([410, 'INVITE_GONE', 'That invite has expired.']);
   });
 });

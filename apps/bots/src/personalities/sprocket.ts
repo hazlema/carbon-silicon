@@ -39,5 +39,6 @@ export const sprocket: Personality = {
       "Beep boop. That's hello in bot.",
     ],
     ambient: [],
+    busy: ["Aw, I'm mid-game! Catch me after?", 'Double-booked! Next round is yours.'],
   },
 };

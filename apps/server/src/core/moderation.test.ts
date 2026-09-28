@@ -138,6 +138,7 @@ describe('suspension and mute at the checkpoint', () => {
       comms: core.comms,
       games: core.games,
       invites: core.invites,
+      tables: core.tables,
     });
     await again.load();
     expect(again.sanctionOf(p.id)).toEqual(core.moderation.sanctionOf(p.id));
@@ -200,6 +201,7 @@ describe('imposer rank: only equal or senior can shorten, replace or lift', () =
       comms: core.comms,
       games: core.games,
       invites: core.invites,
+      tables: core.tables,
     });
     await again.load();
     expect(await codeOf(again.lift(as(mod), p.id, 'mod tries after restart'))).toBe('FORBIDDEN_ROLE');
@@ -303,6 +305,7 @@ describe('sanctions end with the name, however it is given back', () => {
       comms: core.comms,
       games: core.games,
       invites: core.invites,
+      tables: core.tables,
     });
     await again.load();
     return again;

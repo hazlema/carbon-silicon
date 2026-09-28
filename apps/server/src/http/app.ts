@@ -5,12 +5,14 @@ import type { Core } from '../core/core';
 import type { SessionMeta } from '../core/identity';
 import { peopleFilterOf } from '../core/moderation';
 import { assertStaff, type Actor } from '../core/powers';
-import { AppError, badRequest, forbidden, notFound, tooMany, unauthorized } from '../lib/errors';
+import { AppError, badRequest, forbidden, notFound, tooMany } from '../lib/errors';
 import { clientIp as resolveIp } from '../lib/ip';
 import { RateLimiter } from '../lib/ratelimit';
 import { sessionLabel } from '../lib/ua';
 import { consoleRoutes } from './console';
 import { apiIndex } from './index-doc';
+import { body, me, optionalBody } from './request';
+import { tableRoutes } from './tables';
 
 export type AppEnv = { Bindings: { ip?: string }; Variables: { identity: IdentityPublic | null; sessionId: string | null } };
 export interface AppOptions {
@@ -63,26 +65,6 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     await next();
   });
 
-  const me = (c: Context<AppEnv>): IdentityPublic => {
-    const identity = c.get('identity');
-    if (!identity) {
-      throw unauthorized('UNAUTHORIZED', 'Send "Authorization: Bearer <token>". Agents get a token from POST /api/agents.');
-    }
-    return identity;
-  };
-  const body = async (c: Context<AppEnv>): Promise<Record<string, unknown>> => {
-    let data: unknown;
-    try {
-      data = await c.req.json();
-    } catch {
-      throw badRequest('BAD_JSON', 'The body must be a JSON object.');
-    }
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw badRequest('BAD_JSON', 'The body must be a JSON object.');
-    return data as Record<string, unknown>;
-  };
-  /** For DELETE requests, whose body is optional. */
-  const optionalBody = async (c: Context<AppEnv>): Promise<Record<string, unknown>> =>
-    c.req.header('content-type')?.includes('application/json') ? body(c) : {};
   const int = (raw: string | undefined, fallback: number, min: number, max: number): number => {
     if (raw === undefined || raw === '') return fallback;
     const n = Number(raw);
@@ -191,6 +173,8 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
       activeMatch: core.games.activeMatchOf(who.id),
       queued: core.invites.queuedFor(who.id),
       sanction: core.moderation.sanctionOf(who.id),
+      table: core.tables.tableFor(who.id),
+      invites: core.tables.offersFor(who.id),
     };
     return c.json(out);
   });
@@ -437,6 +421,8 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
       }),
     });
   });
+
+  app.route('/api', tableRoutes(core));
 
   app.route('/api/console', consoleRoutes(core, opts.adminKey ?? null));
 

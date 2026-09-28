@@ -12,6 +12,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { BRAND } from '@cs/shared/brand';
+  import CornerDock from '$lib/components/CornerDock.svelte';
   import HandleGate from '$lib/components/HandleGate.svelte';
   import Lattice from '$lib/components/Lattice.svelte';
   import Nav from '$lib/components/Nav.svelte';
@@ -24,7 +25,7 @@
   onMount(() => {
     void live.init();
     return live.onInbox((event) => {
-      if (event.type === 'match.started') void goto(`/play/${event.match.id}`);
+      if (event.type === 'match.started') void goto(event.match.tableId ? `/t/${event.match.tableId}` : `/play/${event.match.id}`);
     });
   });
 
@@ -32,7 +33,7 @@
   const gated = $derived(live.checked && !live.me && !readingOnly);
   // The corner tiles are a lobby/table flourish (the mocks show them nowhere else); other pages
   // reserve no space for them (see --lattice-room, used only by those two).
-  const showLattice = $derived(page.url.pathname === '/' || page.url.pathname.startsWith('/play/'));
+  const showLattice = $derived(page.url.pathname === '/' || page.url.pathname.startsWith('/t/') || page.url.pathname.startsWith('/play/'));
 </script>
 
 <svelte:head><title>{BRAND.name}</title></svelte:head>
@@ -47,6 +48,7 @@
 </div>
 <!-- After the page in the tab order; fixed to the corner (and clickable) all the same. -->
 {#if showLattice}<div inert={gated}><Lattice /></div>{/if}
+{#if live.me}<div inert={gated}><CornerDock /></div>{/if}
 {#if gated}<HandleGate />{/if}
 
 <style>

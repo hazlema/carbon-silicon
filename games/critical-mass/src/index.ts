@@ -249,6 +249,7 @@ export const criticalMassGame: GameModule<CMState> = {
   view,
   outcome,
   forfeit,
+  isOut: (s, seat) => s.eliminated.includes(seat),
   turn: {
     turnSeconds: 90,
     toMove: (s) => (s.turn ? [s.turn] : []),

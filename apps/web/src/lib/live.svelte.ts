@@ -1,13 +1,16 @@
 import type {
   ChatMessage,
+  GameInfo,
   IdentityPublic,
   InboxEvent,
+  InviteOffer,
   MatchEnvelope,
   MeResponse,
   PresenceInfo,
   RelationsInfo,
   SanctionInfo,
   Status,
+  TableInfo,
   WsClientMsg,
   WsServerMsg,
 } from '@cs/shared/protocol';
@@ -33,6 +36,13 @@ class Live {
   /** Your active mute or suspension, if any. */
   sanction = $state<SanctionInfo | null>(null);
   relations = $state<RelationsInfo>({ ignores: [], blocks: [] });
+  /** The lobby's tables: open ones gathering, and ones playing now (pushed by the server). */
+  tables = $state<TableInfo[]>([]);
+  /** The table you're at (gathering, starting or playing). */
+  myTable = $state<TableInfo | null>(null);
+  /** Invites waiting for your answer. */
+  offers = $state<InviteOffer[]>([]);
+  games = $state<GameInfo[]>([]);
   /** Everyone you ignore or block; their chat is hidden for you. */
   hiddenAuthors: Set<string> = $derived(new Set([...this.relations.ignores, ...this.relations.blocks].map((i) => i.id)));
   myStatus: Status = $derived(this.presence.find((p) => p.identity.id === this.me?.id)?.status ?? 'offline');
@@ -42,6 +52,7 @@ class Live {
   #everOpened = false;
   #chat = new Map<string, Set<Listener<ChatMessage>>>();
   #removed = new Map<string, Set<Listener<Removal>>>();
+  #tableWatch = new Map<string, Set<Listener<TableInfo | null>>>();
   #matches = new Map<string, Set<Listener<MatchEnvelope>>>();
   #inbox = new Set<Listener<InboxEvent>>();
 
@@ -49,11 +60,20 @@ class Live {
     try {
       await this.refreshMe();
       this.connect();
+      void this.loadGames();
       void this.loadRelations();
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 401)) console.error(e);
     } finally {
       this.checked = true;
+    }
+  }
+
+  async loadGames(): Promise<void> {
+    try {
+      this.games = (await api<{ games: GameInfo[] }>('GET', '/api/games')).games;
+    } catch (e) {
+      console.error(e);
     }
   }
 
@@ -64,6 +84,8 @@ class Live {
     this.activeMatch = r.activeMatch;
     this.queued = r.queued;
     this.sanction = r.sanction;
+    this.myTable = r.table;
+    this.offers = r.invites;
   }
 
   async join(handle: string): Promise<void> {
@@ -94,6 +116,9 @@ class Live {
       console.error(e);
     }
     this.connect();
+    // init() skips loadGames() when the page first loads signed out (a fresh guest's 401 short-circuits
+    // it), so the catalog wouldn't otherwise arrive until a later reload — load it here too.
+    if (this.games.length === 0) void this.loadGames();
     void this.loadRelations();
   }
 
@@ -157,6 +182,7 @@ class Live {
       void this.refreshMe().catch((e) => console.error(e));
       for (const channel of this.#chat.keys()) this.#send({ type: 'subscribe', channel });
       for (const matchId of this.#matches.keys()) this.#send({ type: 'watch', matchId });
+      for (const tableId of this.#tableWatch.keys()) this.#send({ type: 'watchTable', tableId });
     };
     ws.onmessage = (e) => {
       let msg: WsServerMsg;
@@ -167,11 +193,20 @@ class Live {
       }
       this.#handle(msg);
     };
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       this.connected = false;
       this.#ws = null;
+      if (e.code === 4001) {
+        void this.refreshMe().catch(() => {
+          this.me = null;
+          this.myTable = null;
+          this.offers = [];
+        });
+      }
       const delay = Math.min(10_000, 500 * 2 ** this.#retry++);
-      setTimeout(() => this.connect(), delay);
+      setTimeout(() => {
+        if (this.me) this.connect();
+      }, delay);
     };
   }
 
@@ -186,8 +221,14 @@ class Live {
         this.presence = [...msg.presence].sort(byHandle);
         break;
       case 'presence': {
+        const before = this.presence.find((p) => p.identity.id === msg.presence.identity.id)?.status;
         const rest = this.presence.filter((p) => p.identity.id !== msg.presence.identity.id);
         this.presence = msg.presence.status === 'offline' ? rest : [...rest, msg.presence].sort(byHandle);
+        // Out of a match that plays on without you (resigned, forfeited, eliminated): no match.over
+        // comes until it ends, so ask the server where you stand now.
+        if (msg.presence.identity.id === this.me?.id && before === 'playing' && msg.presence.status !== 'playing' && this.activeMatch) {
+          void this.refreshMe().catch((e) => console.error(e));
+        }
         break;
       }
       case 'chat':
@@ -204,12 +245,50 @@ class Live {
         if (msg.event.type === 'match.over' && this.activeMatch === msg.event.matchId) this.activeMatch = null;
         // A sanction started or ended: the server may also have resigned a match or dropped a queue entry.
         if (msg.event.type === 'moderation') void this.refreshMe().catch((e) => console.error(e));
+        this.#tableEvent(msg.event);
         for (const fn of this.#inbox) fn(msg.event);
         break;
       case 'match':
         for (const fn of this.#matches.get(msg.envelope.match.id) ?? []) fn(msg.envelope);
         break;
+      case 'tables':
+        this.tables = msg.tables;
+        break;
+      case 'table':
+        for (const fn of this.#tableWatch.get(msg.table.id) ?? []) fn(msg.table);
+        break;
+      case 'table.gone':
+        for (const fn of this.#tableWatch.get(msg.tableId) ?? []) fn(null);
+        break;
       case 'pong':
+        break;
+    }
+  }
+
+  /** Keeps `myTable` and `offers` in step with the inbox. */
+  #tableEvent(event: InboxEvent): void {
+    const meId = this.me?.id;
+    switch (event.type) {
+      case 'invite.received':
+        this.offers = [...this.offers.filter((o) => o.invite.id !== event.invite.id), { invite: event.invite, from: event.from, table: event.table }];
+        break;
+      case 'invite.cancelled':
+        this.offers = this.offers.filter((o) => o.invite.id !== event.inviteId);
+        break;
+      case 'table.updated': {
+        const t = event.table;
+        const seated = !!meId && t.seated.some((p) => p.id === meId);
+        if (seated && t.status !== 'finished') this.myTable = t;
+        else if (this.myTable?.id === t.id) this.myTable = null;
+        this.offers = this.offers.map((o) => (o.table.id === t.id ? { ...o, table: t } : o));
+        break;
+      }
+      case 'table.closed':
+        if (this.myTable?.id === event.tableId) this.myTable = null;
+        this.offers = this.offers.filter((o) => o.table.id !== event.tableId);
+        break;
+      case 'match.over':
+        if (this.myTable?.matchId === event.matchId) this.myTable = null;
         break;
     }
   }
@@ -258,6 +337,24 @@ class Live {
       if (set.size === 0) {
         this.#matches.delete(matchId);
         this.#send({ type: 'unwatch', matchId });
+      }
+    };
+  }
+
+  /** Follow one table (seats, status, watchers). `null` means it was cleared. */
+  watchTable(tableId: string, fn: Listener<TableInfo | null>): () => void {
+    let set = this.#tableWatch.get(tableId);
+    if (!set) {
+      set = new Set();
+      this.#tableWatch.set(tableId, set);
+      this.#send({ type: 'watchTable', tableId });
+    }
+    set.add(fn);
+    return () => {
+      set.delete(fn);
+      if (set.size === 0) {
+        this.#tableWatch.delete(tableId);
+        this.#send({ type: 'unwatchTable', tableId });
       }
     };
   }

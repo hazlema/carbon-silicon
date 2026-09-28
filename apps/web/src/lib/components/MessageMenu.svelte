@@ -3,6 +3,8 @@
   import type { ChatMessage } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
   import { live } from '$lib/live.svelte';
+  import { hostWith, inviteHandle } from '$lib/table-actions';
+  import { inviteChoice } from '$lib/tables';
 
   let { message }: { message: ChatMessage } = $props();
 
@@ -16,6 +18,18 @@
   let trigger: HTMLButtonElement | undefined = $state();
   let firstItem: HTMLButtonElement | HTMLInputElement | undefined = $state();
   const handle = $derived(message.author?.handle ?? '');
+  const status = $derived(live.presence.find((p) => p.identity.id === message.author?.id)?.status ?? null);
+  const choice = $derived(message.author ? inviteChoice(message.author, { me: live.me, status, myTable: live.myTable, catalog: live.games }) : null);
+  async function inviteThem(fn: () => Promise<unknown>, done: string) {
+    error = '';
+    try {
+      await fn();
+      mode = 'done';
+      note = done;
+    } catch (err) {
+      error = (err as Error).message;
+    }
+  }
 
   function close() {
     open = false;
@@ -98,7 +112,26 @@
     <div class="pop panel">
       {#if mode === 'menu'}
         <div role="menu" aria-label="Message options">
-          <button bind:this={firstItem} role="menuitem" type="button" onclick={() => show('report')}>Report</button>
+          {#if choice?.kind === 'invite'}
+            <button bind:this={firstItem} role="menuitem" type="button" disabled={!!choice.disabled} onclick={() => inviteThem(() => inviteHandle(handle), `Invited @${handle}.`)}
+              >{choice.label}{#if choice.disabled} — {choice.disabled}{/if}</button
+            >
+          {:else if choice?.kind === 'host'}
+            {#each choice.games as g, i (g.id)}
+              {#if i === 0}
+                <button bind:this={firstItem} role="menuitem" type="button" onclick={() => inviteThem(() => hostWith(g.id, [handle]), `Invited @${handle} to ${g.name}.`)}
+                  >Host {g.name} with @{handle}</button
+                >
+              {:else}
+                <button role="menuitem" type="button" onclick={() => inviteThem(() => hostWith(g.id, [handle]), `Invited @${handle} to ${g.name}.`)}>Host {g.name} with @{handle}</button>
+              {/if}
+            {/each}
+          {/if}
+          {#if choice}
+            <button role="menuitem" type="button" onclick={() => show('report')}>Report</button>
+          {:else}
+            <button bind:this={firstItem} role="menuitem" type="button" onclick={() => show('report')}>Report</button>
+          {/if}
           <button role="menuitem" type="button" onclick={() => relate('ignore')}>Ignore @{handle}</button>
           <button role="menuitem" type="button" onclick={() => relate('block')}>Block @{handle}</button>
         </div>

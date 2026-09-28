@@ -57,8 +57,7 @@ export class RelationManager {
     };
   }
 
-  /** Does `ownerId` ignore or block `authorId`? */
-  async mutes(ownerId: string, authorId: string): Promise<boolean> {
+  private async lookup(ownerId: string): Promise<Map<string, RelationKind>> {
     let byTarget = this.cache.get(ownerId);
     if (!byTarget) {
       const rows = await this.db
@@ -68,7 +67,17 @@ export class RelationManager {
       byTarget = new Map(rows.map((r) => [r.targetId, r.kind as RelationKind]));
       this.cache.set(ownerId, byTarget);
     }
-    return byTarget.has(authorId);
+    return byTarget;
+  }
+
+  /** Does `ownerId` ignore or block `authorId`? */
+  async mutes(ownerId: string, authorId: string): Promise<boolean> {
+    return (await this.lookup(ownerId)).has(authorId);
+  }
+
+  /** Does `ownerId` block `targetId`? A block means no invites from them. */
+  async blocks(ownerId: string, targetId: string): Promise<boolean> {
+    return (await this.lookup(ownerId)).get(targetId) === 'block';
   }
 
   /** On release: the released person's own lists go. Relations that point at them stay — a

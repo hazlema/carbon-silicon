@@ -6,9 +6,12 @@
   import { untilText } from '$lib/format';
   import { applyRemoval, chatItems, hiddenLabel } from '$lib/hidden';
   import { live } from '$lib/live.svelte';
+  import { runInviteCommand } from '$lib/table-actions';
+  import { parseInviteCommand } from '$lib/tables';
   import Avatar from './Avatar.svelte';
   import IdentityChip from './IdentityChip.svelte';
   import MessageMenu from './MessageMenu.svelte';
+  import PersonMenu from './PersonMenu.svelte';
 
   let {
     channel,
@@ -32,6 +35,7 @@
   let messages = $state<ChatMessage[]>([]);
   let draft = $state('');
   let error = $state('');
+  let notice = $state('');
   let sending = $state(false);
   let log: HTMLDivElement | undefined = $state();
   let pinned = true;
@@ -52,6 +56,7 @@
     messages = [];
     revealed = new Set();
     error = '';
+    notice = '';
     const off = live.onChat(ch, (m) => merge([m]));
     const isStaff = !!live.me && (live.me.role === 'mod' || live.me.role === 'admin');
     const offRemoved = live.onChatRemoved(ch, (r) => (messages = applyRemoval(messages, r.id, r.by, isStaff)));
@@ -93,6 +98,18 @@
     e.preventDefault();
     const text = draft.trim();
     if (!text) return;
+    const words = parseInviteCommand(text);
+    if (words) {
+      error = '';
+      notice = '';
+      try {
+        notice = await runInviteCommand(words, channel);
+        draft = '';
+      } catch (err) {
+        error = (err as Error).message;
+      }
+      return;
+    }
     sending = true;
     error = '';
     try {
@@ -144,7 +161,7 @@
             {#if m.author}<Avatar kind={m.author.kind} />{:else}<span></span>{/if}
             <div class="body">
               <div class="meta">
-                {#if m.author}<IdentityChip identity={m.author} badge={false} />{/if}
+                {#if m.author}{#if canMenu(m)}<PersonMenu identity={m.author} />{:else}<IdentityChip identity={m.author} badge={false} />{/if}{/if}
                 <span class="right">
                   <time datetime={m.createdAt}>{time(m.createdAt)}</time>
                   {#if canMenu(m)}<MessageMenu message={m} />{/if}
@@ -155,8 +172,10 @@
                 {#if m.text}<p class="removed-text">{m.text}</p>{/if}
               {:else}
                 <p class="text">
-                  {#each splitMessage(m.text) as p}{#if p.kind === 'mention'}<span class="at">{p.value}</span>{:else if p.kind === 'link'}<a
-                        href={p.value}>{p.value}</a
+                  {#each splitMessage(m.text) as p}{#if p.kind === 'mention'}{@const who = live.presence.find((x) => `@${x.identity.handle}`.toLowerCase() === p.value.toLowerCase())?.identity}{#if who && who.id !== live.me?.id}<PersonMenu
+                          identity={who}
+                          inline
+                        />{:else}<span class="at">{p.value}</span>{/if}{:else if p.kind === 'link'}<a href={p.value}>{p.value}</a
                       >{:else}{p.value}{/if}{/each}
                 </p>
               {/if}
@@ -183,6 +202,7 @@
       <button class="btn light" type="submit" disabled={sending || !draft.trim()}>Send</button>
     </form>
   {/if}
+  {#if notice}<p class="note pad" role="status">{notice}</p>{/if}
   {#if error}<p class="error pad" role="alert">{error}</p>{/if}
 </section>
 

@@ -36,6 +36,8 @@ export interface GameModule<S = unknown> {
   outcome(state: S): Outcome | null;
   /** Remove a seat (resign, timeout, disconnect). Must return a state whose outcome reflects it. */
   forfeit(state: S, seat: SeatId, reason: string): S;
+  /** Is this seat already out of the game (eliminated or forfeited)? Optional; without it a seat is never out. */
+  isOut?(state: S, seat: SeatId): boolean;
   turn?: TurnRules<S>;
   realtime?: RealtimeRules<S>;
 }

@@ -14,8 +14,8 @@ test('an HTTP-only agent and a browser human play each other and talk', async ({
 
   expect((await (await request.post('/api/quickmatch', { headers: auth, data: { gameId: 'critical-mass' } })).json()).status).toBe('queued');
   await page.getByRole('button', { name: 'Find a match' }).click();
-  await page.waitForURL(/\/play\/m_/, { timeout: 20_000 });
-  const matchId = page.url().split('/').pop()!;
+  await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
+  const matchId = (await (await request.get('/api/me', { headers: auth })).json()).activeMatch as string;
   await expect(page.getByText(identity.handle).first()).toBeVisible();
 
   await request.post(`/api/chat/match:${matchId}`, { headers: auth, data: { text: 'Your move, carbon.' } });

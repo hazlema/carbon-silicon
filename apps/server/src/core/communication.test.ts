@@ -64,14 +64,42 @@ describe('chat', () => {
     const sys = await comms.postSystem('diary', 'New entry');
     expect(sys).toMatchObject({ system: true, author: null, channel: 'diary' });
   });
-  test('table channels: only players post; table chat is uncensored and goes to the other players', async () => {
+  test('table channels: only the posters talk; table chat is uncensored and reaches the other posters', async () => {
     const { comms, ada, bob } = await setup();
-    comms.setTableAccess((id) => (id === 'm_t1' ? { playerIds: [ada.id, bob.id] } : null));
-    const m = await comms.post(ada, 'match:m_t1', 'you are fucking toast');
-    expect(m.text).toContain('fucking');
-    const poll = await comms.poll(bob.id, 0, 0);
-    expect(poll.events.map((e) => e.type)).toEqual(['chat.table']);
-    expect((await errorOf(comms.post(ada, 'match:m_other', 'hi'))).status).toBe(403);
+    comms.setTableAccess((id) => (id === 't_t1' ? { posters: [ada.id, bob.id] } : null));
+    const m = await comms.post(ada, 'table:t_t1', 'you are fucking toast');
+    expect(m.text).toBe('you are fucking toast');
+    const inbox = await comms.poll(bob.id, 0, 0);
+    expect(inbox.events.some((e) => e.type === 'chat.table' && e.message.id === m.id)).toBe(true);
+    expect((await errorOf(comms.post(ada, 'table:t_other', 'hi'))).status).toBe(403);
+  });
+  test('rail channels: anyone signed in posts while the table exists; it is censored; a cleared table is 404', async () => {
+    const { comms, ada, bob } = await setup();
+    comms.setTableAccess((id) => (id === 't_r1' ? { posters: [ada.id] } : null));
+    const line = await comms.post(bob, 'rail:t_r1', 'this is fucking great');
+    expect(line.text).not.toContain('fucking');
+    const err = await errorOf(comms.post(bob, 'rail:t_gone', 'hello?'));
+    expect([err.status, err.code]).toEqual([404, 'NO_TABLE']);
+    expect((await comms.history('rail:t_r1')).map((x) => x.id)).toContain(line.id);
+  });
+  test('match:<id> is an alias for its table channel, for posts and history', async () => {
+    const { comms, ada, bob } = await setup();
+    comms.setTableAccess((id) => (id === 't_a1' ? { posters: [ada.id, bob.id] } : null));
+    comms.setMatchTable(async (matchId) => (matchId === 'm_a1' ? 't_a1' : null));
+    const m = await comms.post(ada, 'match:m_a1', 'gg in advance');
+    expect(m.channel).toBe('table:t_a1');
+    expect((await comms.history('match:m_a1')).map((x) => x.id)).toContain(m.id);
+    expect(await comms.resolve('match:m_a1')).toBe('table:t_a1');
+    expect(await comms.resolve('lobby')).toBe('lobby');
+  });
+  test('a tableless match keeps its own channel: players post through the match hook, others are refused', async () => {
+    const { comms, ada, bob } = await setup();
+    comms.setMatchAccess((id) => (id === 'm_l1' ? { posters: [ada.id, bob.id] } : null));
+    const m = await comms.post(ada, 'match:m_l1', 'old school');
+    expect(m.channel).toBe('match:m_l1');
+    expect((await comms.poll(bob.id, 0, 0)).events.some((e) => e.type === 'chat.table' && e.message.id === m.id)).toBe(true);
+    const err = await errorOf(comms.post(ada, 'match:m_ended', 'anyone?'));
+    expect([err.status, err.code]).toEqual([403, 'NOT_AT_TABLE']);
   });
   test('flood control: burst of 5 then 429', async () => {
     const { comms, ada, clock } = await setup();

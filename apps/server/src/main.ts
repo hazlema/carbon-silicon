@@ -44,6 +44,7 @@ const running = startServer(core, app, {
     ...(production ? [] : ['http://localhost:5173', 'http://127.0.0.1:5173']),
     ...(env.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   ],
+  trustProxy: env.TRUST_PROXY === '1' || env.TRUST_PROXY === 'true',
 });
 console.log(`${BRAND.name} is open at ${running.url}`);
 

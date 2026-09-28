@@ -66,6 +66,8 @@ export const matches = pgTable(
     rated: boolean('rated').notNull().default(false),
     outcome: jsonb('outcome'),
     endReason: text('end_reason'),
+    /** The table the match was played at (M2b); null for matches from before tables. */
+    tableId: text('table_id'),
     createdAt: ts('created_at').notNull().defaultNow(),
     endedAt: ts('ended_at'),
   },

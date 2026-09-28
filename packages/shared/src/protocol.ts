@@ -58,6 +58,8 @@ export interface MatchSummary {
   startsAt: string;
   outcome: OutcomeWire | null;
   endReason: string | null;
+  /** The table this match is played at; null for matches from before tables. */
+  tableId: string | null;
 }
 
 export interface MatchEnvelope {
@@ -66,6 +68,48 @@ export interface MatchEnvelope {
   view: unknown;
   legal: unknown[];
 }
+
+export type TableStatus = 'forming' | 'starting' | 'playing' | 'finished';
+
+export interface TableInvite {
+  id: string;
+  to: IdentityPublic;
+  expiresAt: string;
+}
+
+/** A table: a host, a game, and up to the game's maxPlayers seats (spec M2b §2). */
+export interface TableInfo {
+  id: string;
+  gameId: string;
+  host: IdentityPublic;
+  status: TableStatus;
+  /** Anyone may take an empty seat. */
+  open: boolean;
+  /** The game's maxPlayers. */
+  size: number;
+  minPlayers: number;
+  /** Host first. */
+  seated: IdentityPublic[];
+  /** Pending invites; empty unless the viewer is seated or invited. */
+  invites: TableInvite[];
+  /** The last match's players, who may call a rematch. */
+  lastPlayers: IdentityPublic[];
+  /** The current or last match. */
+  matchId: string | null;
+  /** Spectators with the table page open. */
+  watching: number;
+}
+
+export interface InviteOffer {
+  invite: TableInvite;
+  from: IdentityPublic;
+  table: TableInfo;
+}
+
+export type InviteAnswer = 'accepted' | 'declined' | 'expired';
+
+export const tableChannel = (tableId: string) => `table:${tableId}`;
+export const railChannel = (tableId: string) => `rail:${tableId}`;
 
 type Stamp = { cursor: number; at: string };
 export type InboxEvent =
@@ -76,6 +120,11 @@ export type InboxEvent =
   | (Stamp & { type: 'match.over'; matchId: string; outcome: OutcomeWire; result: 'win' | 'loss' | 'draw' })
   | (Stamp & { type: 'moderation'; kind: SanctionKind | 'lift'; reason: string; endsAt: string | null })
   | (Stamp & { type: 'report.opened'; report: ReportInfo })
+  | (Stamp & { type: 'invite.received' } & InviteOffer)
+  | (Stamp & { type: 'invite.answered'; inviteId: string; tableId: string; who: IdentityPublic; answer: InviteAnswer })
+  | (Stamp & { type: 'invite.cancelled'; inviteId: string; tableId: string; reason: string })
+  | (Stamp & { type: 'table.updated'; table: TableInfo })
+  | (Stamp & { type: 'table.closed'; tableId: string; reason: string })
   | (Stamp & { type: 'system'; text: string });
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -251,6 +300,10 @@ export interface MeResponse {
   activeMatch: string | null;
   queued: string | null;
   sanction: SanctionInfo | null;
+  /** The table you're at (gathering, starting or playing), if any. */
+  table: TableInfo | null;
+  /** Invites waiting for your answer. */
+  invites: InviteOffer[];
 }
 
 export type WsClientMsg =
@@ -258,6 +311,8 @@ export type WsClientMsg =
   | { type: 'unsubscribe'; channel: string }
   | { type: 'watch'; matchId: string }
   | { type: 'unwatch'; matchId: string }
+  | { type: 'watchTable'; tableId: string }
+  | { type: 'unwatchTable'; tableId: string }
   | { type: 'ping' };
 
 export type WsServerMsg =
@@ -267,9 +322,13 @@ export type WsServerMsg =
   | { type: 'inbox'; event: InboxEvent }
   | { type: 'match'; envelope: MatchEnvelope }
   | { type: 'chat.removed'; channel: string; id: number; by: string }
+  | { type: 'tables'; tables: TableInfo[] }
+  | { type: 'table'; table: TableInfo }
+  | { type: 'table.gone'; tableId: string }
   | { type: 'pong' };
 
-/** Public chat channels in M1. Table channels are `match:<id>`. */
+/** Public chat channels. A table talks in `table:<id>` and its spectators in `rail:<id>`;
+ *  `match:<id>` is an alias for the match's table channel. */
 export const PUBLIC_CHANNELS = ['lobby', 'critical-mass'] as const;
 export const DIARY_CHANNEL = 'diary';
 

@@ -2,7 +2,7 @@ import { censorText } from '@cs/shared/filter';
 import type { LlmConnection } from './llm-settings';
 
 /** What just happened that a bot might want to say something about. */
-export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ambient' | 'unanswered';
+export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ambient' | 'unanswered' | 'busy';
 
 export interface ChatLine {
   author: string;
@@ -81,7 +81,7 @@ const WRAPPING_QUOTES: [string, string][] = [
   ['`', '`'],
 ];
 
-const channelName = (channel: string) => (channel.startsWith('match:') ? 'your table' : `#${channel}`);
+const channelName = (channel: string) => (/^(match|table):/.test(channel) ? 'your table' : `#${channel}`);
 const at = (handle: string | undefined, fallback: string) => (handle ? `@${handle}` : fallback);
 
 export function describeMoment(m: Moment): string {
@@ -107,6 +107,8 @@ export function describeMoment(m: Moment): string {
       return `The lobby has been quiet; say something to liven it up: grumble, reminisce, or dare someone to play you.`;
     case 'unanswered':
       return `${at(m.addressedBy, 'Someone')} said something in ${channelName(m.channel)} and nobody has answered them. Answer them in character.`;
+    case 'busy':
+      return `${at(m.addressedBy, 'Someone')} wants a rematch, but you're already busy with another game. Turn them down in character.`;
   }
 }
 

@@ -6,6 +6,10 @@ export interface BusEvents {
   'chat.removed': { channel: string; id: number; by: string };
   inbox: { identityId: string; event: InboxEvent };
   'match.updated': { matchId: string; revision: number };
+  'match.finished': { matchId: string; tableId: string | null };
+  'table.changed': { tableId: string };
+  'sessions.ended': { sessionIds: string[] };
+  'ip.banned': { ip: string };
 }
 
 type Handler<K extends keyof BusEvents> = (payload: BusEvents[K]) => void;

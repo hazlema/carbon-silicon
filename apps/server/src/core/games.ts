@@ -2,6 +2,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { createRng, GameRuleError, type GameModule, type Outcome, type Rng, type SeatId } from '@cs/game-api';
 import {
   seasonOf,
+  tableChannel,
   type GameInfo,
   type IdentityPublic,
   type MatchEnvelope,
@@ -36,6 +37,7 @@ const DEFAULTS: GameManagerOptions = {
 interface LiveMatch {
   id: string;
   gameId: string;
+  tableId: string | null;
   module: GameModule<any>;
   state: unknown;
   seats: SeatInfo[];
@@ -72,9 +74,10 @@ export class GameManager {
   ) {
     this.modules = new Map(modules.map((m) => [m.meta.id, m]));
     this.opts = { ...DEFAULTS, ...opts };
-    comms.setTableAccess((matchId) => {
+    // A match without a table (tests, and anything from before tables) keeps its own channel.
+    comms.setMatchAccess((matchId) => {
       const ids = this.playerIds(matchId);
-      return ids ? { playerIds: ids } : null;
+      return ids ? { posters: ids } : null;
     });
   }
 
@@ -105,6 +108,19 @@ export class GameManager {
     return m ? m.seats.map((s) => s.identity.id) : null;
   }
 
+  /** Where a match's system lines go: its table's channel, or the old per-match channel without one. */
+  private chatOf(m: LiveMatch): string {
+    return m.tableId ? tableChannel(m.tableId) : `match:${m.id}`;
+  }
+
+  /** The table a match was played at: from memory while it's retained, else from the database. */
+  async tableIdOf(matchId: string): Promise<string | null> {
+    const live = this.matches.get(matchId);
+    if (live) return live.tableId;
+    const [row] = await this.db.select({ tableId: matches.tableId }).from(matches).where(eq(matches.id, matchId)).limit(1);
+    return row?.tableId ?? null;
+  }
+
   async recoverOnBoot(): Promise<number> {
     const stale = await this.db
       .update(matches)
@@ -120,7 +136,7 @@ export class GameManager {
     return stale.length;
   }
 
-  async createMatch(gameId: string, players: IdentityPublic[]): Promise<MatchSummary> {
+  async createMatch(gameId: string, players: IdentityPublic[], opts: { tableId?: string } = {}): Promise<MatchSummary> {
     const module = this.module(gameId);
     const { minPlayers, maxPlayers, seats: seatNames, name } = module.meta;
     if (players.length < minPlayers || players.length > maxPlayers) {
@@ -137,6 +153,7 @@ export class GameManager {
     const m: LiveMatch = {
       id,
       gameId,
+      tableId: opts.tableId ?? null,
       module,
       state: module.setup({ seats: seats.map((s) => s.seat), seed }),
       seats,
@@ -164,6 +181,7 @@ export class GameManager {
         await tx.insert(matches).values({
           id,
           gameId,
+          tableId: opts.tableId ?? null,
           status: 'countdown',
           seed,
           season: seasonOf(now),
@@ -186,7 +204,7 @@ export class GameManager {
     const summary = this.toSummary(m);
     for (const s of seats) this.comms.deliver(s.identity.id, { type: 'match.started', match: summary });
     await this.comms.postSystem(
-      `match:${id}`,
+      this.chatOf(m),
       `${seats.map((s) => `@${s.identity.handle}`).join(' vs ')} — ${name}. Talk trash; play fair.`,
     );
     this.changed(m);
@@ -239,6 +257,8 @@ export class GameManager {
       await this.finish(m, outcome);
       return;
     }
+    // A seat that's out (resigned, forfeited or eliminated) is free to go while the others play on.
+    for (const s of m.seats) if (m.module.isOut?.(m.state, s.seat)) this.release(m, s.identity.id);
     this.startTurn(m);
     this.changed(m);
   }
@@ -273,10 +293,21 @@ export class GameManager {
     const seat = this.seatOf(m, identity.id);
     if (!seat) throw forbidden('NOT_SEATED', 'You are not playing in this match.');
     if (m.status === 'over' || m.status === 'abandoned') throw conflict('MATCH_OVER', 'This match is already over.');
-    if (m.status === 'countdown') m.status = 'live';
+    if (m.module.isOut?.(m.state, seat)) throw conflict('OUT', "You're already out of this match.");
+    let wentLive: Promise<unknown> | null = null;
+    if (m.status === 'countdown') {
+      m.status = 'live';
+      // The goLive timer will now find the match live and do nothing, so record it here. The guard
+      // keeps a faster finish() write ('over') from being overwritten.
+      wentLive = this.db
+        .update(matches)
+        .set({ status: 'live' })
+        .where(and(eq(matches.id, m.id), eq(matches.status, 'countdown')));
+    }
     const done = this.advance(m, m.module.forfeit(m.state, seat, 'resign'));
     if ((m.status as MatchStatus) !== 'over') this.release(m, identity.id);
-    await this.comms.postSystem(`match:${m.id}`, `@${identity.handle} resigns.`);
+    await this.comms.postSystem(this.chatOf(m), `@${identity.handle} resigns.`);
+    await wentLive?.catch((e) => console.error(`[games] could not record ${m.id} as live`, e));
     await done;
     return this.envelope(matchId, identity.id);
   }
@@ -288,7 +319,7 @@ export class GameManager {
     const seat = turn.toMove(m.state)[0];
     if (!seat) return;
     const who = this.seatInfo(m, seat).identity;
-    const table = `match:${m.id}`;
+    const table = this.chatOf(m);
     m.timeouts[seat] = (m.timeouts[seat] ?? 0) + 1;
     const legal = turn.legal(m.state, seat);
     if (m.timeouts[seat] >= this.opts.maxTimeouts || legal.length === 0) {
@@ -313,6 +344,7 @@ export class GameManager {
     m.deadline = null;
     for (const s of m.seats) this.release(m, s.identity.id);
     this.changed(m);
+    this.bus.emit('match.finished', { matchId: m.id, tableId: m.tableId });
     m.timer = this.clock.setTimeout(() => this.matches.delete(m.id), this.opts.retainMs);
     try {
       await this.db.transaction(async (tx) => {
@@ -335,7 +367,7 @@ export class GameManager {
     for (const s of m.seats) {
       this.comms.deliver(s.identity.id, { type: 'match.over', matchId: m.id, outcome, result: resultFor(outcome, s.seat) });
     }
-    await this.comms.postSystem(`match:${m.id}`, this.verdict(m, outcome));
+    await this.comms.postSystem(this.chatOf(m), this.verdict(m, outcome));
   }
 
   private verdict(m: LiveMatch, o: Outcome): string {
@@ -346,7 +378,8 @@ export class GameManager {
 
   private release(m: LiveMatch, identityId: string): void {
     if (this.active.get(identityId) === m.id) this.active.delete(identityId);
-    this.presence.setPlaying(identityId, false);
+    // Someone already playing a newer match keeps their "playing".
+    if (!this.active.has(identityId)) this.presence.setPlaying(identityId, false);
   }
 
   async wait(matchId: string, since: number, waitMs: number): Promise<void> {
@@ -396,6 +429,7 @@ export class GameManager {
       startsAt: new Date(m.startsAt).toISOString(),
       outcome: m.outcome,
       endReason: m.endReason,
+      tableId: m.tableId,
     };
   }
 

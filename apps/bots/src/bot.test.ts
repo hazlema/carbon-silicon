@@ -19,7 +19,7 @@ const core = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: 
 const running = startServer(core, createApp(core, { apiDocs: '', llmsTxt: '', trustProxy: true }), { port: 0, hostname: '127.0.0.1', webDir: null, allowedOrigins: [] });
 const controller = new AbortController();
 const tokenFile = join(root, `.data/test-bots/${crypto.randomUUID()}.token`);
-const botDone = runBot({ base: running.url, personality: sprocket, houseKey: 'hk', tokenFile, thinkMs: [0, 0], pollWaitMs: 500, signal: controller.signal, log: () => {} });
+const botDone = runBot({ base: running.url, personality: sprocket, houseKey: 'hk', tokenFile, thinkMs: [0, 0], inviteThinkMs: [0, 0], pollWaitMs: 500, signal: controller.signal, log: () => {} });
 
 // A second parlor with OLD IRON as its only house bot, speaking through a fake voice (no LLM),
 // so quick matches there always seat OLD IRON and never Sprocket.
@@ -50,6 +50,7 @@ const ironDone = runBot({
   houseKey: 'hk',
   tokenFile: join(root, `.data/test-bots/${crypto.randomUUID()}.token`),
   thinkMs: [0, 0],
+  inviteThinkMs: [0, 0],
   pollWaitMs: 500,
   signal: ironController.signal,
   log: () => {},
@@ -72,6 +73,12 @@ afterAll(async () => {
  *  something the profanity filter rejects, which would fail these tests in setup. */
 const randomTag = () => String(Math.floor(Math.random() * 1e9)).padStart(9, '0');
 const randomIp = () => `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}`;
+
+async function botSaidHelloTimes(client: Client, tableId: string, botId: string): Promise<number> {
+  const { messages } = await client.call<{ messages: { author: { id: string } | null; text: string }[] }>('GET', `/api/chat/table:${tableId}?since=0&limit=200`);
+  const hello = new Set(sprocket.lines.hello);
+  return messages.filter((m) => m.author?.id === botId && hello.has(m.text)).length;
+}
 
 /** Registers an agent from its own made-up address: the server allows five agent registrations per
  *  address per hour, and the bots under test register from the loopback address themselves. */
@@ -189,6 +196,66 @@ describe('Sprocket', () => {
   }, 30_000);
 });
 
+describe('tables', () => {
+  test('Sprocket accepts an invite, plays when the host starts, and greets once across a rematch', async () => {
+    const human = new Client(running.url);
+    const reg = await human.register({ name: `host${randomTag()}` });
+    human.token = reg.token;
+    type Who = { presence: { identity: { id: string; handle: string; isHouse: boolean }; status: string }[] };
+    const sprocketNow = async () =>
+      (await human.call<Who>('GET', '/api/who')).presence.find((p) => p.identity.isHouse && p.identity.handle.startsWith('Sprocket'))!;
+    // Earlier tests in this file quick-match Sprocket; wait until it's free.
+    for (let i = 0; i < 100 && (await sprocketNow()).status !== 'ready'; i++) await Bun.sleep(50);
+    const bot = (await sprocketNow()).identity;
+    const hosted = await human.hostTable('critical-mass', [bot.handle]);
+    const tableId = hosted.table.id;
+    let seated = 0;
+    for (let i = 0; i < 100 && seated < 2; i++) {
+      seated = (await human.call<{ table: { seated: unknown[] } }>('GET', `/api/tables/${tableId}`)).table.seated.length;
+      if (seated < 2) await Bun.sleep(50);
+    }
+    expect(seated).toBe(2);
+    const { match } = await human.startTable(tableId);
+    await human.call('POST', `/api/matches/${match.id}/resign`);
+    const chat = async () => (await human.call<{ messages: { author: { id: string } | null }[] }>('GET', `/api/chat/table:${tableId}?since=0&limit=200`)).messages;
+    for (let i = 0; i < 100 && !(await chat()).some((m) => m.author?.id === bot.id); i++) await Bun.sleep(50);
+    for (let i = 0; i < 100 && (await sprocketNow()).status !== 'ready'; i++) await Bun.sleep(50);
+    await human.call('POST', `/api/tables/${tableId}/rematch`);
+    for (let i = 0; i < 100; i++) {
+      const t = await human.call<{ table: { seated: unknown[] } }>('GET', `/api/tables/${tableId}`);
+      if (t.table.seated.length === 2) break;
+      await Bun.sleep(50);
+    }
+    const second = await human.startTable(tableId);
+    await Bun.sleep(300);
+    await human.call('POST', `/api/matches/${second.match.id}/resign`);
+    await Bun.sleep(300);
+    // The hello was said at the first match only: the table remembers it.
+    expect(await botSaidHelloTimes(human, tableId, bot.id)).toBe(1);
+  }, 30_000);
+  test('Sprocket seated at one table declines an invite to another, and stays put', async () => {
+    const a = await newAgent(running.url, `hosta${randomTag()}`);
+    const b = await newAgent(running.url, `hostb${randomTag()}`);
+    type Who = { presence: { identity: { id: string; handle: string; isHouse: boolean }; status: string }[] };
+    const sprocketNow = async () =>
+      (await a.client.call<Who>('GET', '/api/who')).presence.find((p) => p.identity.isHouse && p.identity.handle.startsWith('Sprocket'))!;
+    for (let i = 0; i < 100 && (await sprocketNow()).status !== 'ready'; i++) await Bun.sleep(50);
+    const bot = (await sprocketNow()).identity;
+    type T = { table: { seated: { id: string }[]; invites: unknown[] } };
+    const first = (await a.client.hostTable('critical-mass', [bot.handle])).table.id;
+    await until(async () => (await a.client.call<T>('GET', `/api/tables/${first}`)).table.seated.length === 2);
+    const second = (await b.client.hostTable('critical-mass', [bot.handle])).table.id;
+    const answered = await until(async () => {
+      const t = (await b.client.call<T>('GET', `/api/tables/${second}`)).table;
+      return t.invites.length === 0 ? t : null;
+    });
+    expect(answered.seated.map((p) => p.id)).not.toContain(bot.id);
+    expect((await a.client.call<T>('GET', `/api/tables/${first}`)).table.seated.map((p) => p.id)).toContain(bot.id);
+    await a.client.call('DELETE', `/api/tables/${first}`);
+    await b.client.call('DELETE', `/api/tables/${second}`);
+  }, 30_000);
+});
+
 type Said = { messages: { id: number; author: { handle: string } | null; text: string }[] };
 
 describe('OLD IRON (a bot with a voice)', () => {
@@ -244,7 +311,8 @@ describe('OLD IRON (a bot with a voice)', () => {
     const { client, handle } = await guest();
     expect((await client.quickMatch('critical-mass')).status).toBe('queued');
     const matchId = await until(async () => (await client.me()).activeMatch);
-    const table = `match:${matchId}`;
+    const seated = await client.match(matchId);
+    const table = seated.match.tableId ? `table:${seated.match.tableId}` : `match:${matchId}`;
     try {
       expect(await ironSaid(client, table, (t) => t === 'VOICE HELLO LINE.')).toBe('VOICE HELLO LINE.');
       expect(heard.find((m) => m.kind === 'hello' && m.channel === table)?.opponent).toBe(handle);

@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { stateFromView, type CMView } from '@cs/critical-mass';
-import { PUBLIC_CHANNELS, type ChatMessage, type MatchEnvelope, type PresenceInfo } from '@cs/shared/protocol';
+import { PUBLIC_CHANNELS, type ChatMessage, type InboxEvent, type MatchEnvelope, type PresenceInfo } from '@cs/shared/protocol';
 import { ApiError, Client } from './client';
 import { DEFAULT_STRATEGY, line, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
@@ -13,6 +13,8 @@ export interface BotOptions {
   houseKey: string;
   tokenFile: string;
   thinkMs: [number, number];
+  /** The "thinking" pause before a house bot answers an invite (default 2–4 s). */
+  inviteThinkMs?: [number, number];
   pollWaitMs?: number;
   signal?: AbortSignal;
   log?: (msg: string) => void;
@@ -67,6 +69,7 @@ const BANK: Record<MomentKind, keyof Personality['lines'] | null> = {
   gotHit: 'gotHit',
   ambient: 'ambient',
   unanswered: 'unanswered',
+  busy: 'busy',
 };
 
 /** Should a bot with a voice speak up in the lobby now? (The coin flip happens elsewhere.) */
@@ -124,7 +127,7 @@ async function speak(
       const moment: Moment = { kind, channel, recent: recent.map(toChatLine), ...who, ...(answering ? { answering: toChatLine(answering) } : {}) };
       // At a table the game clock is running, so the voice gets a short deadline; everywhere, the
       // bot's own shutdown signal cuts it off.
-      const deadline = channel.startsWith('match:') ? AbortSignal.timeout(opts.voiceDeadlineMs ?? 4000) : undefined;
+      const deadline = /^(match|table):/.test(channel) ? AbortSignal.timeout(opts.voiceDeadlineMs ?? 4000) : undefined;
       const stops = [opts.signal, deadline].filter((x): x is AbortSignal => x !== undefined);
       const signal = stops.length > 0 ? AbortSignal.any(stops) : undefined;
       text = await untilAborted(opts.voice.say(moment, signal), signal).catch(() => null);
@@ -210,9 +213,17 @@ async function alreadyGreeted(client: Client, table: string, identityId: string 
   }
 }
 
-async function playMatch(client: Client, opts: BotOptions, matchId: string, identityId: string | null, log: (m: string) => void): Promise<void> {
-  const table = `match:${matchId}`;
+async function playMatch(
+  client: Client,
+  opts: BotOptions,
+  matchId: string,
+  identityId: string | null,
+  log: (m: string) => void,
+  onTable: (channel: string) => void,
+): Promise<void> {
   let env = await client.match(matchId);
+  const table = env.match.tableId ? `table:${env.match.tableId}` : `match:${matchId}`;
+  onTable(table);
   const opponent = env.match.seats.find((s) => s.seat !== env.you)?.identity.handle;
   const say = (kind: MomentKind) => speak(client, opts, kind, table, { opponent });
   if (!(await alreadyGreeted(client, table, identityId))) await say('hello');
@@ -275,6 +286,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
   const log = opts.log ?? ((m: string) => console.log(`[${opts.personality.name}] ${m}`));
   const client = new Client(opts.base, null, opts.signal);
   const playing = new Set<string>();
+  const playingTables = new Map<string, string>(); // matchId → table channel
   const lastReply = new Map<string, number>();
   /** Work started in the background (matches, replies); awaited on shutdown. */
   const tasks = new Set<Promise<unknown>>();
@@ -287,13 +299,15 @@ export async function runBot(opts: BotOptions): Promise<void> {
     if (playing.has(matchId)) return;
     playing.add(matchId);
     track(
-      playMatch(client, opts, matchId, myId, log)
+      playMatch(client, opts, matchId, myId, log, (channel) => playingTables.set(matchId, channel))
         .catch((e) => {
           if (!opts.signal?.aborted) log(`match ${matchId} failed: ${(e as Error).message}`);
         })
         .finally(() => {
           playing.delete(matchId);
-          lastReply.delete(`match:${matchId}`);
+          const channel = playingTables.get(matchId);
+          playingTables.delete(matchId);
+          if (channel) lastReply.delete(channel);
         }),
     );
   };
@@ -318,6 +332,38 @@ export async function runBot(opts: BotOptions): Promise<void> {
     lastReply.set(channel, now);
     return true;
   };
+
+  /** House bots always say yes (ALWAYS.) — unless they're already busy. */
+  const answer = async (event: Extract<InboxEvent, { type: 'invite.received' }>) => {
+    const [lo, hi] = opts.inviteThinkMs ?? [2000, 4000];
+    await sleep(lo + Math.random() * Math.max(0, hi - lo), opts.signal);
+    if (opts.signal?.aborted) return;
+    try {
+      // Busy is decided from the server's own truth (the same activeMatch the server used to
+      // decide the invite was sendable), not the bot's local `playing` set: the server marks a
+      // finished match's players free the instant it ends, well before the bot's own playMatch
+      // loop notices and wraps up (posts its outcome line, clears `playing`) — a race that would
+      // otherwise make the bot decline a rematch pressed right after the match, breaking "always
+      // accept". Accepting while the old playMatch is still wrapping up is safe: play() is keyed
+      // by the new matchId. Seated at another table counts as busy too (spec §5): accepting would
+      // walk out on that host. A finished table isn't "at", so rematches are unaffected.
+      const { activeMatch, table } = await client.me();
+      if (activeMatch || table) {
+        await client.decline(event.invite.id);
+        // Only a table's last players may talk there, so a busy "no" is said only to a rematch.
+        if (myId && event.table.lastPlayers.some((p) => p.id === myId)) {
+          await speak(client, opts, 'busy', `table:${event.table.id}`, { addressedBy: event.from.handle });
+        }
+        return;
+      }
+      await client.accept(event.invite.id);
+      log(`sat down at ${event.table.id} for @${event.from.handle}`);
+    } catch (e) {
+      // Expired, withdrawn, or the table started without us: nothing to do.
+      if (!(e instanceof ApiError)) log(`invite ${event.invite.id} failed: ${(e as Error).message}`);
+    }
+  };
+
   const ambient = opts.voice && (opts.ambientEveryMs ?? 12 * 60_000) > 0 ? ambientLoop(client, opts, () => playing.size > 0, myId, log) : null;
 
   // A bot with a voice also reads the public channels and answers a human nobody else answered.
@@ -357,6 +403,10 @@ export async function runBot(opts: BotOptions): Promise<void> {
       const poll = await client.inbox(cursor, opts.pollWaitMs ?? 25_000);
       cursor = poll.cursor;
       for (const event of poll.events) {
+        if (event.type === 'invite.received') {
+          track(answer(event));
+          continue;
+        }
         if (event.type === 'match.started') play(event.match.id);
         const { message } = event.type === 'chat.mention' || event.type === 'chat.table' ? event : { message: null };
         // Other house bots are ignored: two residents mentioning each other would chat forever.
@@ -369,7 +419,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
         if (
           event.type === 'chat.table' &&
           opts.voice &&
-          playing.has(channel.slice('match:'.length)) &&
+          [...playingTables.values()].includes(channel) &&
           Math.random() < (opts.tableTalkChance ?? 0.6) &&
           mayReply(channel)
         ) {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { live } from '$lib/live.svelte';
   import Avatar from './Avatar.svelte';
-  import IdentityChip from './IdentityChip.svelte';
+  import PersonMenu from './PersonMenu.svelte';
 
   const LABEL = { ready: 'Ready', afk: 'AFK', playing: 'In a match', offline: 'Offline' } as const;
   const others = $derived(live.presence.filter((p) => p.identity.id !== live.me?.id));
@@ -18,7 +18,7 @@
         </span>
         <span class="visually-hidden">{LABEL[p.status]}:</span>
         <div class="body">
-          <IdentityChip identity={p.identity} badge={false} />
+          <PersonMenu identity={p.identity} />
           {#if p.identity.tagline}<span class="tagline">{p.identity.tagline}</span>{/if}
         </div>
       </li>

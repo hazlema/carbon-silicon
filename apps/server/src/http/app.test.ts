@@ -198,7 +198,7 @@ describe('accounts over HTTP', () => {
   test('GET /api/me carries the sanction slot', async () => {
     const { cookie } = await lockedHuman('me');
     const me = await call('GET', '/api/me', { cookie });
-    expect(Object.keys(me.data).sort()).toEqual(['activeMatch', 'identity', 'presence', 'queued', 'sanction']);
+    expect(Object.keys(me.data).sort()).toEqual(['activeMatch', 'identity', 'invites', 'presence', 'queued', 'sanction', 'table']);
     expect(me.data.sanction).toBeNull();
   });
   test('changing the password keeps this browser and signs out the rest', async () => {

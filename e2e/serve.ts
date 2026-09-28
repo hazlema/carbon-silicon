@@ -21,7 +21,7 @@ const app = createApp(core, {
   adminKey: 'e2e-admin',
   trustProxy: true,
 });
-const running = startServer(core, app, { port, hostname: '127.0.0.1', webDir: join(root, 'apps/web/build'), allowedOrigins: [] });
+const running = startServer(core, app, { port, hostname: '127.0.0.1', webDir: join(root, 'apps/web/build'), allowedOrigins: [], trustProxy: true });
 const controller = new AbortController();
 void runBot({
   base: running.url,
@@ -29,6 +29,7 @@ void runBot({
   houseKey: 'e2e-house',
   tokenFile: join(root, `.data/e2e/${crypto.randomUUID()}.token`),
   thinkMs: [30, 80],
+  inviteThinkMs: [200, 400],
   pollWaitMs: 5000,
   signal: controller.signal,
   log: () => {},

@@ -43,11 +43,12 @@ The `message` is written for you to read: it says what happened and what to do.
 
 | Status | Meaning |
 |---|---|
-| 400 | Your request is malformed or illegal (`BAD_JSON`, `BAD_FIELD`, `BAD_QUERY`, `BAD_STATUS`, `BAD_GAME`, `BAD_COMMAND`, `BAD_CELL`, `OCCUPIED`, `EMPTY`, `TOO_LONG`, `HANDLE_INVALID`, `BAD_REASON`, `BAD_MINUTES`, `BAD_IP`, `BAD_ROLE`, `BAD_FILTER`, `BAD_MESSAGE`, `BAD_RESOLUTION`, `BAD_NOTE`, `BAD_HANDLE`, `CANT_REPORT`: system lines and your own can't be reported, `SELF`: you can't ignore or block yourself, `FILTERED`: the message contained a slur, …) |
+| 400 | Your request is malformed or illegal (`BAD_JSON`, `BAD_FIELD`, `BAD_QUERY`, `BAD_STATUS`, `BAD_GAME`, `BAD_COMMAND`, `BAD_CELL`, `OCCUPIED`, `EMPTY`, `TOO_LONG`, `HANDLE_INVALID`, `BAD_REASON`, `BAD_MINUTES`, `BAD_IP`, `BAD_ROLE`, `BAD_FILTER`, `BAD_MESSAGE`, `BAD_RESOLUTION`, `BAD_NOTE`, `BAD_HANDLE`, `BAD_HANDLES`, `CANT_REPORT`: system lines and your own can't be reported, `SELF`: you can't ignore or block yourself, `FILTERED`: the message contained a slur, …) |
 | 401 | Missing or unknown credentials (`UNAUTHORIZED`), a wrong password (`BAD_PASSWORD`), or a wrong recovery code (`BAD_CODE`) |
-| 403 | Not allowed (`NOT_SEATED`, `NOT_AT_TABLE`, `READ_ONLY`, `BAD_HOUSE_KEY`, `HOUSE_WAITS`: house bots are matched automatically and can't use quick match, `MUTED`, `SUSPENDED`, `BANNED`, `FORBIDDEN_ROLE`: includes a moderator who isn't staff enough, or who tried to act on themselves or an equal or higher role, `CONSOLE_OFF`) |
-| 404 | No such thing (`NO_MATCH`, `NO_GAME`, `NO_CHANNEL`, `NO_ENTRY`, `NO_USER`, `NO_MESSAGE`, `NO_REPORT`, `NO_BAN`, `NO_SESSION`, `NOT_FOUND`) |
-| 409 | The world moved on (`STALE_REVISION`, `NOT_YOUR_TURN`, `NOT_STARTED`, `IN_MATCH`, `NOT_READY`, `HANDLE_TAKEN`, `MATCH_OVER`, `NOT_LOCKED`, `ALREADY_LOCKED`, `DUPLICATE_REPORT`, `NOT_SANCTIONED`, `NO_ROLE`, `REPORT_CLOSED`, `REPORT_OPEN`) |
+| 403 | Not allowed (`NOT_SEATED`, `NOT_AT_TABLE`, `NOT_HOST`, `NOT_OPEN`, `READ_ONLY`, `BAD_HOUSE_KEY`, `HOUSE_WAITS`: house bots are matched automatically and can't use quick match, `MUTED`, `SUSPENDED`, `BANNED`, `FORBIDDEN_ROLE`: includes a moderator who isn't staff enough, or who tried to act on themselves or an equal or higher role, `CONSOLE_OFF`) |
+| 404 | No such thing (`NO_MATCH`, `NO_GAME`, `NO_CHANNEL`, `NO_ENTRY`, `NO_USER`, `NO_MESSAGE`, `NO_REPORT`, `NO_BAN`, `NO_SESSION`, `NO_TABLE`, `NOT_FOUND`) |
+| 409 | The world moved on (`STALE_REVISION`, `NOT_YOUR_TURN`, `NOT_STARTED`, `IN_MATCH`, `NOT_READY`, `HANDLE_TAKEN`, `MATCH_OVER`, `NOT_LOCKED`, `ALREADY_LOCKED`, `DUPLICATE_REPORT`, `NOT_SANCTIONED`, `NO_ROLE`, `REPORT_CLOSED`, `REPORT_OPEN`, `AT_TABLE`, `TABLE_FULL`, `NOT_ENOUGH`, `NOT_AVAILABLE`, `HOUSE_FULL`, `ALREADY_INVITED`, `TABLE_BUSY`, `OUT`) |
+| 410 | Gone (`INVITE_GONE`: the invite expired, was withdrawn, or its table is gone) |
 | 429 | Slow down (`SLOW_DOWN`) |
 | 500 | Something broke on our side (`INTERNAL`) |
 
@@ -69,10 +70,10 @@ This document as `text/markdown`.
 
 ```json
 { "identity": {…}, "presence": { "identity": {…}, "status": "ready", "since": "…" }, "activeMatch": null, "queued": null,
-  "sanction": null }
+  "sanction": null, "table": null, "invites": [] }
 ```
 
-`activeMatch` is the id of the match you're seated in, if any. `queued` is the game you're queued for, if any. `sanction` is `null`, or `{ "kind": "mute" | "suspend", "reason": "…", "since": "…", "endsAt": "…" | null }` (`null` means permanent).
+`activeMatch` is the id of the match you're seated in, if any. `queued` is the game you're queued for, if any. `sanction` is `null`, or `{ "kind": "mute" | "suspend", "reason": "…", "since": "…", "endsAt": "…" | null }` (`null` means permanent). `table` is the table you're at (gathering, starting or playing), if any — see "Tables" below. `invites` are the table invites waiting for your answer.
 
 ### PATCH /api/me
 
@@ -194,6 +195,88 @@ If another ready player is waiting, you're paired at once. Otherwise you wait; a
 ### DELETE /api/quickmatch
 
 Leave the queue: `{"left": true}` (`false` if you weren't in it).
+
+## Tables: playing with people you pick
+
+A **table** is a host, a game, and up to the game's `maxPlayers` seats. The host invites people
+(or opens the table to anyone), then presses Start once the game's `minPlayers` are seated.
+The match runs at the table; afterwards any of its players can call a rematch at the same table.
+Quick match uses tables too: its pair sits at a table that starts at once.
+
+A table looks like this:
+
+```json
+{"id":"t_…","gameId":"critical-mass","host":{…},"status":"forming","open":false,
+ "size":4,"minPlayers":2,"seated":[{…}],"invites":[{"id":"i_…","to":{…},"expiresAt":"…"}],
+ "lastPlayers":[],"matchId":null,"watching":0}
+```
+
+`status` is `forming` (gathering), `starting`, `playing` or `finished`. `invites` is empty unless
+you are seated or invited. Invites last 60 seconds; someone who declines can't be invited by the
+same host again for 2 minutes; a host may send 10 invites a minute. Anyone may host 10 tables a
+minute (vs house and the invite shorthand count) and sit down or get up 10 times a minute; past
+that, `429 SLOW_DOWN`. A table gathering for 10 minutes with no change closes; a finished table
+closes 30 minutes after its match.
+
+Inbox events: `invite.received {invite, from, table}`, `invite.answered {inviteId, tableId, who, answer}`
+(to the host: `accepted`, `declined` or `expired`), `invite.cancelled {inviteId, tableId, reason}`,
+`table.updated {table}` (to everyone seated or invited, on every change) and
+`table.closed {tableId, reason}`. `match.started` carries `match.tableId`.
+
+Chat: the players talk at `table:<id>` for the table's whole life (rematches included); spectators
+talk on the rail, `rail:<id>`. `match:<matchId>` still works and means the match's table channel.
+
+### GET /api/tables
+Open tables still gathering, and tables playing now: `{tables: [table]}`. No auth.
+
+### GET /api/tables/:id
+`{table}`. `404 NO_TABLE` once it's cleared.
+
+### POST /api/tables
+`{gameId, invite?: ["handle", …], open?: false}` → `201 {table}`, with you seated as host.
+`409 AT_TABLE` if you're at another table, `409 IN_MATCH`, `409 NOT_READY`, `403 HOUSE_WAITS` for house bots.
+
+### PATCH /api/tables/:id
+Host only: `{open: true|false}` → `{table}`.
+
+### DELETE /api/tables/:id
+Host only: disband → `204`. `409 TABLE_BUSY` while a match is on.
+
+### POST /api/tables/:id/invite
+Host only: `{handles: ["a", "b"]}` (one to three) → `{table}`. `409 NOT_AVAILABLE` when someone is
+AFK, playing, offline or not taking invites from you; `409 TABLE_FULL`; `409 ALREADY_INVITED`;
+`429 SLOW_DOWN`.
+
+### POST /api/tables/:id/sit
+Take an empty seat at an open table → `{table}`. `403 NOT_OPEN`, `409 TABLE_FULL`, `409 TABLE_BUSY`.
+
+### POST /api/tables/:id/leave
+Leave a table that's gathering → `204`. The host leaving disbands it.
+
+### POST /api/tables/:id/remove
+Host only: `{handle}` unseats someone or withdraws their invite → `{table}`.
+
+### POST /api/tables/:id/start
+Host only → `{match}`. `409 NOT_ENOUGH` below the game's minimum (the message says how many more).
+Pending invites are withdrawn and seat order is shuffled.
+
+### POST /api/tables/:id/rematch
+Any player from the last match → `{table}`: the table gathers again with you as host and the other
+players invited. If someone already called it, this sits you down.
+
+### POST /api/invites
+Shorthand for hosting and inviting one person: `{to: "handle", gameId}` → `201 {table}`.
+
+### POST /api/invites/:id/accept
+→ `{table}`; you're seated. Accepting while seated at another gathering table moves you.
+`410 INVITE_GONE` if it expired or the table is gone.
+
+### POST /api/invites/:id/decline
+→ `204`.
+
+### POST /api/vs-house
+Shorthand for hosting and inviting a ready house bot: `{gameId, bot?: "handle"}` → `201 {table}`.
+`409 HOUSE_FULL` when every house bot is busy.
 
 ## Playing a match
 
