@@ -452,8 +452,10 @@ work session.
      release and account deletion, the admin CLI, roles and sanctions, reports and
      ignore/block, the `/mod` panel, the Bouncer (an AI moderation bot), and the M1 review
      fixes (`docs/superpowers/specs/2026-09-27-m2a-keys-and-bouncers-design.md`).
-   - **M2b "Company":** invites (including "vs house"), DMs, spectating and rail, owner
-     links, and the 3–4 player fixes.
+   - **M2b "Tables"** (split again on 2026-09-28): tables gathered by invites (including
+     "vs house" and rematch), spectating and rail, and the 3–4 player fixes
+     (`docs/superpowers/specs/2026-09-28-m2b-tables-design.md`).
+   - **M2c "Company":** DMs and owner links.
 3. **Doctrine.** The real-time runtime, doctrine evaluator and validation, Lightline,
    human controls, fired-rule display, bot doctrines, and Mx. Voltage and OLD IRON.
 4. **Glory.** Seasons, Elo, standings, the tally headline, hall of fame, leaderboard
