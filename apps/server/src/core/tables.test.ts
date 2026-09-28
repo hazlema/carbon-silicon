@@ -244,6 +244,115 @@ describe('gathering', () => {
   });
 });
 
+async function played(ctx: Ctx, a: IdentityPublic, b: IdentityPublic) {
+  const t = await ctx.tables.host(a, 'critical-mass', { invite: [b.handle] });
+  ctx.tables.accept(b, await inviteOf(ctx, b));
+  const match = await ctx.tables.start(a, t.id);
+  ctx.clock.advance(0);
+  await ctx.games.resign(match.id, b);
+  return { t, match };
+}
+
+describe('rematch', () => {
+  test('a player calls it: they host, the others are invited; the other player pressing Rematch too sits down', async () => {
+    const ctx = await setup();
+    const { t, match } = await played(ctx, ctx.ann, ctx.ben);
+    const again = await ctx.tables.rematch(ctx.ben, t.id);
+    expect(again).toMatchObject({ status: 'forming', host: { id: ctx.ben.id } });
+    expect(again.invites.map((i) => i.to.id)).toEqual([ctx.ann.id]);
+    await said(ctx, t.id, `@${ctx.ben.handle} wants a rematch.`);
+    const both = await ctx.tables.rematch(ctx.ann, t.id);
+    expect(both.seated.map((p) => p.id)).toEqual([ctx.ben.id, ctx.ann.id]);
+    const next = await ctx.tables.start(ctx.ben, t.id);
+    expect(next.tableId).toBe(t.id);
+    expect(next.id).not.toBe(match.id);
+  });
+  test('only the last players may call it, and not while the match is on', async () => {
+    const ctx = await setup();
+    const { t } = await played(ctx, ctx.ann, ctx.ben);
+    expect((await errorOf(() => ctx.tables.rematch(ctx.cat, t.id))).code).toBe('NOT_SEATED');
+    await ctx.tables.rematch(ctx.ann, t.id);
+    ctx.tables.accept(ctx.ben, await inviteOf(ctx, ctx.ben));
+    await ctx.tables.start(ctx.ann, t.id);
+    expect((await errorOf(() => ctx.tables.rematch(ctx.ann, t.id))).code).toBe('TABLE_BUSY');
+  });
+  test('a last player who isn’t around gets no invite, and the table says so', async () => {
+    const ctx = await setup();
+    const { t } = await played(ctx, ctx.ann, ctx.ben);
+    ctx.presence.setManualStatus(ctx.ben, 'afk');
+    const again = await ctx.tables.rematch(ctx.ann, t.id);
+    expect(again.invites).toEqual([]);
+    await said(ctx, t.id, `@${ctx.ben.handle} isn't around for a rematch.`);
+  });
+});
+
+describe('vs house and quick match', () => {
+  test('vs house invites a ready house bot, or the one you name', async () => {
+    const ctx = await setup();
+    const t = await ctx.tables.vsHouse(ctx.ann, 'critical-mass');
+    expect(t.invites.map((i) => i.to.id)).toEqual([ctx.house.id]);
+    ctx.tables.disband(ctx.ann, t.id);
+    const named = await ctx.tables.vsHouse(ctx.ben, 'critical-mass', `@${ctx.house.handle}`);
+    expect(named.invites.map((i) => i.to.id)).toEqual([ctx.house.id]);
+  });
+  test('the house is full when every house bot is busy, invited or AFK', async () => {
+    const ctx = await setup();
+    await ctx.tables.vsHouse(ctx.ann, 'critical-mass'); // the only house bot is now invited
+    const err = await errorOf(() => ctx.tables.vsHouse(ctx.ben, 'critical-mass'));
+    expect([err.status, err.code, err.message]).toEqual([409, 'HOUSE_FULL', 'The house is full — try quick match.']);
+    expect((await errorOf(() => ctx.tables.vsHouse(ctx.ben, 'chess'))).code).toBe('NO_GAME');
+  });
+  test('startNow seats a pair at a new table and starts at once', async () => {
+    const ctx = await setup();
+    const match = await ctx.tables.startNow('critical-mass', [ctx.ann, ctx.ben]);
+    expect(match.tableId).not.toBeNull();
+    expect(ctx.tables.get(match.tableId!, null)).toMatchObject({ status: 'playing', matchId: match.id });
+    expect(ctx.tables.atTable(ctx.ann.id)).toBe(match.tableId);
+  });
+  test('a player out of a running 3-player match is no longer at its table', async () => {
+    const ctx = await setup();
+    const t = await ctx.tables.host(ctx.ann, 'critical-mass', { invite: [ctx.ben.handle, ctx.cat.handle] });
+    ctx.tables.accept(ctx.ben, await inviteOf(ctx, ctx.ben));
+    ctx.tables.accept(ctx.cat, await inviteOf(ctx, ctx.cat));
+    const match = await ctx.tables.start(ctx.ann, t.id);
+    ctx.clock.advance(0);
+    await ctx.games.resign(match.id, ctx.cat);
+    expect(ctx.tables.atTable(ctx.cat.id)).toBeNull();
+    expect(ctx.tables.atTable(ctx.ann.id)).toBe(t.id);
+    expect((await ctx.tables.host(ctx.cat, 'critical-mass')).host.id).toBe(ctx.cat.id);
+  });
+});
+
+describe('the rest of the parlor', () => {
+  test('a match starting elsewhere withdraws your pending invites', async () => {
+    const ctx = await setup();
+    const waiting = await ctx.tables.host(ctx.cat, 'critical-mass', { invite: [ctx.ann.handle] });
+    await ctx.tables.startNow('critical-mass', [ctx.ann, ctx.ben]);
+    expect(ctx.tables.get(waiting.id, ctx.cat.id).invites).toEqual([]);
+    expect((await events(ctx, ctx.ann, 'invite.cancelled')).at(-1)).toMatchObject({ reason: 'unavailable' });
+  });
+  test('bench: a suspended or released person loses a forming seat and their invites', async () => {
+    const ctx = await setup();
+    const t = await ctx.tables.host(ctx.ann, 'critical-mass', { invite: [ctx.ben.handle, ctx.cat.handle] });
+    ctx.tables.accept(ctx.ben, await inviteOf(ctx, ctx.ben));
+    ctx.tables.bench(ctx.ben.id);
+    ctx.tables.bench(ctx.cat.id);
+    const now = ctx.tables.get(t.id, ctx.ann.id);
+    expect([now.seated.length, now.invites.length]).toEqual([1, 0]);
+  });
+  test('setWatching changes the count and announces it once', async () => {
+    const ctx = await setup();
+    const t = await ctx.tables.host(ctx.ann, 'critical-mass');
+    let heard = 0;
+    ctx.bus.on('table.changed', () => (heard += 1));
+    ctx.tables.setWatching(t.id, 2);
+    ctx.tables.setWatching(t.id, 2);
+    ctx.tables.setWatching('t_gone', 1);
+    expect(ctx.tables.get(t.id, null).watching).toBe(2);
+    expect(heard).toBe(1);
+  });
+});
+
 describe('starting', () => {
   test('Start needs the minimum; it drops pending invites and starts a match at the table', async () => {
     const ctx = await setup();

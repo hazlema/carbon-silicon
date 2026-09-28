@@ -16,6 +16,7 @@ import { PresenceManager } from './presence';
 import { ProfileService } from './profiles';
 import { RelationManager } from './relations';
 import { ReportManager } from './reports';
+import { TableManager } from './tables';
 
 export interface CoreOptions {
   databaseUrl?: string;
@@ -40,6 +41,7 @@ export interface Core {
   presence: PresenceManager;
   comms: CommunicationManager;
   games: GameManager;
+  tables: TableManager;
   invites: InviteManager;
   moderation: ModerationManager;
   relations: RelationManager;
@@ -64,15 +66,17 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   if (opts.seed) gameOpts.seed = opts.seed;
   const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], guard, gameOpts);
   comms.setMatchTable((matchId) => games.tableIdOf(matchId));
-  const invites = new InviteManager(games, presence, bus, clock, guard, { houseFallbackMs: opts.houseFallbackMs ?? 8000 });
+  const relations = new RelationManager(database.db, identities);
+  const tables = new TableManager({ games, presence, comms, identities, relations, guard, bus, clock });
+  const invites = new InviteManager(games, presence, bus, clock, guard, tables, { houseFallbackMs: opts.houseFallbackMs ?? 8000 });
+  tables.setQueueLeaver((identityId) => invites.leave(identityId));
   const leaderboard = new LeaderboardManager(database.db);
   const diary = new DiaryService(opts.diaryDir);
 
-  const moderation = new ModerationManager(database.db, bus, clock, { identities, accounts, profiles, comms, games, invites });
+  const moderation = new ModerationManager(database.db, bus, clock, { identities, accounts, profiles, comms, games, invites, tables });
   guard.install((identity, action) => moderation.check(identity, action));
   await moderation.load();
 
-  const relations = new RelationManager(database.db, identities);
   comms.setMentionFilter((ownerId, authorId) => relations.mutes(ownerId, authorId));
   accounts.onRelease((identityId) => relations.forget(identityId));
   accounts.onRelease((identityId) => moderation.liftOnRelease(identityId));
@@ -112,6 +116,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     presence,
     comms,
     games,
+    tables,
     invites,
     moderation,
     relations,

@@ -5,6 +5,7 @@ import type { EventBus } from './bus';
 import type { GameManager } from './games';
 import type { Guard } from './guard';
 import type { PresenceManager } from './presence';
+import type { TableManager } from './tables';
 
 interface QueueEntry {
   identity: IdentityPublic;
@@ -23,6 +24,7 @@ export class InviteManager {
     bus: EventBus,
     private clock: Clock,
     private guard: Guard,
+    private tables: TableManager,
     private opts: { houseFallbackMs: number } = { houseFallbackMs: 8000 },
   ) {
     bus.on('presence.changed', (p) => {
@@ -36,6 +38,7 @@ export class InviteManager {
     if (identity.isHouse) throw forbidden('HOUSE_WAITS', 'House bots are matched automatically.');
     if (this.games.activeMatchOf(identity.id)) throw conflict('IN_MATCH', 'Finish your current match first.');
     if (!this.presence.isReady(identity.id)) throw conflict('NOT_READY', 'Set your status to ready first.');
+    if (this.tables.atTable(identity.id)) throw conflict('AT_TABLE', "You're at a table. Leave it before quick match.");
     const existing = this.queue.get(identity.id);
     if (existing?.gameId === gameId) return { status: 'queued' };
     if (existing) this.leave(identity.id);
@@ -47,7 +50,7 @@ export class InviteManager {
       this.leave(partner.identity.id);
       const players = Math.random() < 0.5 ? [partner.identity, identity] : [identity, partner.identity];
       try {
-        return { status: 'matched', match: await this.games.createMatch(gameId, players) };
+        return { status: 'matched', match: await this.tables.startNow(gameId, players) };
       } catch (e) {
         this.queue.set(partnerEntry.identity.id, partnerEntry);
         this.arm(partnerEntry);
@@ -71,14 +74,21 @@ export class InviteManager {
     if (!entry) return;
     const bot = this.presence
       .list()
-      .find((p) => p.identity.isHouse && p.status === 'ready' && !this.games.activeMatchOf(p.identity.id) && this.mayPlay(p.identity));
+      .find(
+        (p) =>
+          p.identity.isHouse &&
+          p.status === 'ready' &&
+          !this.games.activeMatchOf(p.identity.id) &&
+          this.mayPlay(p.identity) &&
+          !this.tables.isBusy(p.identity.id),
+      );
     if (!bot) {
       this.arm(entry);
       return;
     }
     this.leave(identityId);
     try {
-      await this.games.createMatch(entry.gameId, [entry.identity, bot.identity]);
+      await this.tables.startNow(entry.gameId, [entry.identity, bot.identity]);
     } catch (e) {
       console.error('[invites] could not start house match', e);
       this.queue.set(identityId, entry);

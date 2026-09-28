@@ -24,6 +24,7 @@ import { toPublic, type IdentityManager } from './identity';
 import type { InviteManager } from './invites';
 import { actorName, checkPower, type Actor, type PowerRequest } from './powers';
 import type { ProfileService } from './profiles';
+import type { TableManager } from './tables';
 
 export type PeopleFilter = 'all' | 'suspended' | 'muted' | 'mods' | 'guests' | 'agents' | 'house';
 export const PEOPLE_FILTERS: readonly PeopleFilter[] = ['all', 'suspended', 'muted', 'mods', 'guests', 'agents', 'house'];
@@ -35,6 +36,7 @@ export interface ModerationDeps {
   comms: CommunicationManager;
   games: GameManager;
   invites: InviteManager;
+  tables: TableManager;
 }
 
 interface Active {
@@ -212,6 +214,7 @@ export class ModerationManager {
    *  Used by suspend() and release() — and by DELETE /api/me after deleteSelf() succeeds, so a
    *  self-delete leaves the queue and the table the same way a moderator's release does. */
   async bench(target: IdentityPublic): Promise<void> {
+    this.deps.tables.bench(target.id);
     this.deps.invites.leave(target.id);
     const matchId = this.deps.games.activeMatchOf(target.id);
     if (!matchId) return;

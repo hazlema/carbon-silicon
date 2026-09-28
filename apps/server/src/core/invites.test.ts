@@ -13,6 +13,8 @@ import { Guard } from './guard';
 import { IdentityManager } from './identity';
 import { InviteManager } from './invites';
 import { PresenceManager } from './presence';
+import { RelationManager } from './relations';
+import { TableManager } from './tables';
 
 const database = await openDatabase(await testDatabaseUrl());
 afterAll(() => database.close());
@@ -24,14 +26,17 @@ async function setup(guard = new Guard()) {
   const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS, guard: new Guard() });
   const presence = new PresenceManager(bus, clock);
   const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], new Guard());
-  const invites = new InviteManager(games, presence, bus, clock, guard, { houseFallbackMs: 8000 });
+  const relations = new RelationManager(database.db, ids);
+  const tables = new TableManager({ games, presence, comms, identities: ids, relations, guard: new Guard(), bus, clock });
+  const invites = new InviteManager(games, presence, bus, clock, guard, tables, { houseFallbackMs: 8000 });
+  tables.setQueueLeaver((id) => invites.leave(id));
   const tag = randomTag();
   const ann = (await ids.createHuman(`ann${tag}`)).identity;
   const ben = (await ids.createHuman(`ben${tag}`)).identity;
   const house = (await ids.registerAgent({ name: `house${tag}` }, 'hk')).identity;
   presence.humanConnected(ann);
   presence.humanConnected(ben);
-  return { clock, presence, games, invites, ann, ben, house };
+  return { clock, presence, games, invites, tables, ann, ben, house };
 }
 
 async function errorOf(p: Promise<unknown>): Promise<AppError> {
@@ -142,5 +147,27 @@ describe('quick match', () => {
       // Restore original
       games.createMatch = originalCreateMatch;
     }
+  });
+  test('quick-match pairs play at a table', async () => {
+    const { invites, ann, ben } = await setup();
+    await invites.quickMatch(ann, 'critical-mass');
+    const r = await invites.quickMatch(ben, 'critical-mass');
+    expect(r.status === 'matched' && r.match.tableId).toBeTruthy();
+  });
+  test('someone at a table cannot quick match, and sitting down leaves the queue', async () => {
+    const { invites, tables, ann } = await setup();
+    await invites.quickMatch(ann, 'critical-mass');
+    await tables.host(ann, 'critical-mass');
+    expect(invites.queuedFor(ann.id)).toBeNull();
+    expect((await errorOf(invites.quickMatch(ann, 'critical-mass'))).code).toBe('AT_TABLE');
+  });
+  test('the house fallback skips a bot that is invited to a table', async () => {
+    const { invites, tables, games, presence, clock, ann, ben, house } = await setup();
+    presence.agentSeen(house);
+    await tables.host(ben, 'critical-mass', { invite: [house.handle] });
+    await invites.quickMatch(ann, 'critical-mass');
+    clock.advance(8000);
+    await Bun.sleep(20);
+    expect(games.activeMatchOf(ann.id)).toBeNull();
   });
 });

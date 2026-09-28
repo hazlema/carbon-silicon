@@ -356,6 +356,110 @@ export class TableManager {
     this.close(t, 'disbanded');
   }
 
+  /**
+   * After a match, any of its players may call a rematch: the table gathers again with them as
+   * host and the other players invited. Pressing Rematch once it's gathering sits you down.
+   */
+  async rematch(identity: IdentityPublic, tableId: string): Promise<TableInfo> {
+    const t = this.require(tableId);
+    if (!t.lastPlayers.some((p) => p.id === identity.id)) {
+      throw forbidden('NOT_SEATED', "Only the last match's players can call a rematch.");
+    }
+    if (t.status === 'forming') {
+      if (t.seated.some((p) => p.id === identity.id)) return this.info(t, identity.id);
+      const mine = t.invites.find((i) => i.to.id === identity.id);
+      if (mine) return this.accept(identity, mine.id);
+      this.assertFree(identity);
+      if (this.taken(t) >= this.size(t)) throw conflict('TABLE_FULL', fullText(t));
+      this.seat(t, identity);
+      this.sat(t, identity);
+      return this.info(t, identity.id);
+    }
+    if (t.status !== 'finished') throw conflict('TABLE_BUSY', 'The match is still on.');
+    this.assertFree(identity);
+    if (this.atTable(identity.id)) throw conflict('AT_TABLE', "You're already at a table. Leave it first.");
+    const blocked = new Set<string>();
+    for (const p of t.lastPlayers) {
+      if (p.id !== identity.id && (await this.deps.relations.blocks(p.id, identity.id))) blocked.add(p.id);
+    }
+    if (t.status !== 'finished' || !this.tables.has(t.id)) throw conflict('TABLE_BUSY', 'Someone else just called it.');
+    this.deps.clock.clearTimeout(t.timer);
+    t.status = 'forming';
+    t.host = identity;
+    t.seated = [];
+    this.seat(t, identity);
+    this.say(t, `@${identity.handle} wants a rematch.`);
+    for (const p of t.lastPlayers) {
+      if (p.id === identity.id) continue;
+      if (blocked.has(p.id) || !this.available(p)) {
+        this.say(t, `@${p.handle} isn't around for a rematch.`);
+        continue;
+      }
+      this.addInvite(t, identity, p);
+    }
+    this.touch(t);
+    this.changed(t);
+    return this.info(t, identity.id);
+  }
+
+  /** Host a table and invite a ready house bot (the named one, if given). */
+  async vsHouse(identity: IdentityPublic, gameId: unknown, bot?: unknown): Promise<TableInfo> {
+    if (typeof gameId !== 'string') throw badRequest('BAD_GAME', 'Send {"gameId": "critical-mass"}.');
+    this.deps.games.module(gameId);
+    const want = typeof bot === 'string' && bare(bot) ? bare(bot).toLowerCase() : null;
+    const pick = this.deps.presence
+      .list()
+      .find(
+        (p) =>
+          p.identity.isHouse &&
+          p.identity.id !== identity.id &&
+          (!want || p.identity.handle.toLowerCase() === want) &&
+          !this.isBusy(p.identity.id) &&
+          this.available(p.identity),
+      );
+    if (!pick) throw conflict('HOUSE_FULL', 'The house is full — try quick match.');
+    return this.host(identity, gameId, { invite: [pick.identity.handle] });
+  }
+
+  /** Quick match: a pair who were matched to play sit at a new table that starts at once. */
+  async startNow(gameId: string, players: IdentityPublic[]): Promise<MatchSummary> {
+    const t: Table = {
+      id: newId('t'),
+      gameId,
+      host: players[0],
+      status: 'forming',
+      open: false,
+      seated: [],
+      invites: [],
+      lastPlayers: [],
+      matchId: null,
+      watching: 0,
+      timer: null,
+      lines: Promise.resolve(),
+    };
+    this.tables.set(t.id, t);
+    for (const p of players) this.seat(t, p);
+    try {
+      return await this.launch(t);
+    } catch (e) {
+      this.close(t, 'cancelled');
+      throw e;
+    }
+  }
+
+  /** A suspension or a release: out of any forming seat, and every invite to them withdrawn. */
+  bench(identityId: string): void {
+    this.onUnavailable(identityId);
+  }
+
+  /** The WebSocket hub counts the spectators with the table page open. */
+  setWatching(tableId: string, n: number): void {
+    const t = this.tables.get(tableId);
+    if (!t || t.watching === n) return;
+    t.watching = n;
+    this.deps.bus.emit('table.changed', { tableId });
+  }
+
   // ── inner workings ──
 
   private require(tableId: string): Table {
