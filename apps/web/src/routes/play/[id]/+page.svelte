@@ -228,7 +228,7 @@
 
     <div class="talk">
       <ChatPanel
-        channel={`match:${match.id}`}
+        channel={match.tableId ? `table:${match.tableId}` : `match:${match.id}`}
         title="Table talk"
         about="Talk trash; play fair."
         readOnly={!mySeat}

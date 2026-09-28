@@ -244,7 +244,8 @@ describe('OLD IRON (a bot with a voice)', () => {
     const { client, handle } = await guest();
     expect((await client.quickMatch('critical-mass')).status).toBe('queued');
     const matchId = await until(async () => (await client.me()).activeMatch);
-    const table = `match:${matchId}`;
+    const seated = await client.match(matchId);
+    const table = seated.match.tableId ? `table:${seated.match.tableId}` : `match:${matchId}`;
     try {
       expect(await ironSaid(client, table, (t) => t === 'VOICE HELLO LINE.')).toBe('VOICE HELLO LINE.');
       expect(heard.find((m) => m.kind === 'hello' && m.channel === table)?.opponent).toBe(handle);

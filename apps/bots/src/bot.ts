@@ -124,7 +124,7 @@ async function speak(
       const moment: Moment = { kind, channel, recent: recent.map(toChatLine), ...who, ...(answering ? { answering: toChatLine(answering) } : {}) };
       // At a table the game clock is running, so the voice gets a short deadline; everywhere, the
       // bot's own shutdown signal cuts it off.
-      const deadline = channel.startsWith('match:') ? AbortSignal.timeout(opts.voiceDeadlineMs ?? 4000) : undefined;
+      const deadline = /^(match|table):/.test(channel) ? AbortSignal.timeout(opts.voiceDeadlineMs ?? 4000) : undefined;
       const stops = [opts.signal, deadline].filter((x): x is AbortSignal => x !== undefined);
       const signal = stops.length > 0 ? AbortSignal.any(stops) : undefined;
       text = await untilAborted(opts.voice.say(moment, signal), signal).catch(() => null);
@@ -210,9 +210,17 @@ async function alreadyGreeted(client: Client, table: string, identityId: string 
   }
 }
 
-async function playMatch(client: Client, opts: BotOptions, matchId: string, identityId: string | null, log: (m: string) => void): Promise<void> {
-  const table = `match:${matchId}`;
+async function playMatch(
+  client: Client,
+  opts: BotOptions,
+  matchId: string,
+  identityId: string | null,
+  log: (m: string) => void,
+  onTable: (channel: string) => void,
+): Promise<void> {
   let env = await client.match(matchId);
+  const table = env.match.tableId ? `table:${env.match.tableId}` : `match:${matchId}`;
+  onTable(table);
   const opponent = env.match.seats.find((s) => s.seat !== env.you)?.identity.handle;
   const say = (kind: MomentKind) => speak(client, opts, kind, table, { opponent });
   if (!(await alreadyGreeted(client, table, identityId))) await say('hello');
@@ -275,6 +283,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
   const log = opts.log ?? ((m: string) => console.log(`[${opts.personality.name}] ${m}`));
   const client = new Client(opts.base, null, opts.signal);
   const playing = new Set<string>();
+  const playingTables = new Map<string, string>(); // matchId → table channel
   const lastReply = new Map<string, number>();
   /** Work started in the background (matches, replies); awaited on shutdown. */
   const tasks = new Set<Promise<unknown>>();
@@ -287,13 +296,15 @@ export async function runBot(opts: BotOptions): Promise<void> {
     if (playing.has(matchId)) return;
     playing.add(matchId);
     track(
-      playMatch(client, opts, matchId, myId, log)
+      playMatch(client, opts, matchId, myId, log, (channel) => playingTables.set(matchId, channel))
         .catch((e) => {
           if (!opts.signal?.aborted) log(`match ${matchId} failed: ${(e as Error).message}`);
         })
         .finally(() => {
           playing.delete(matchId);
-          lastReply.delete(`match:${matchId}`);
+          const channel = playingTables.get(matchId);
+          playingTables.delete(matchId);
+          if (channel) lastReply.delete(channel);
         }),
     );
   };
@@ -369,7 +380,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
         if (
           event.type === 'chat.table' &&
           opts.voice &&
-          playing.has(channel.slice('match:'.length)) &&
+          [...playingTables.values()].includes(channel) &&
           Math.random() < (opts.tableTalkChance ?? 0.6) &&
           mayReply(channel)
         ) {
