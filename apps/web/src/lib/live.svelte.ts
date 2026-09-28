@@ -221,8 +221,14 @@ class Live {
         this.presence = [...msg.presence].sort(byHandle);
         break;
       case 'presence': {
+        const before = this.presence.find((p) => p.identity.id === msg.presence.identity.id)?.status;
         const rest = this.presence.filter((p) => p.identity.id !== msg.presence.identity.id);
         this.presence = msg.presence.status === 'offline' ? rest : [...rest, msg.presence].sort(byHandle);
+        // Out of a match that plays on without you (resigned, forfeited, eliminated): no match.over
+        // comes until it ends, so ask the server where you stand now.
+        if (msg.presence.identity.id === this.me?.id && before === 'playing' && msg.presence.status !== 'playing' && this.activeMatch) {
+          void this.refreshMe().catch((e) => console.error(e));
+        }
         break;
       }
       case 'chat':

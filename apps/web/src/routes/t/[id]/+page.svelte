@@ -111,6 +111,8 @@
   const match = $derived(env?.match);
   const view = $derived(env?.view as CMView | undefined);
   const mySeat = $derived(env?.you ?? null);
+  /** Knocked out (or resigned) while the others play on. */
+  const iAmOut = $derived(!!mySeat && !!view && view.eliminated.includes(mySeat));
   const myTurn = $derived(!!match && match.status === 'live' && !!mySeat && match.toMove.includes(mySeat));
   const legalCells = $derived((env?.legal ?? []).map((l) => (l as { cell: string }).cell));
   const secondsLeft = $derived(match?.deadline ? Math.max(0, Math.ceil((Date.parse(match.deadline) - now) / 1000)) : null);
@@ -176,6 +178,8 @@
     if (!env) return;
     try {
       accept(await api<MatchEnvelope>('POST', `/api/matches/${env.match.id}/resign`));
+      // In a match that plays on, you're free now: the Play panel and invites should know.
+      void live.refreshMe().catch((e) => console.error(e));
     } catch (e) {
       error = (e as Error).message;
     }
@@ -281,7 +285,7 @@
           {#if status.detail}<span class="detail">{status.detail}</span>{/if}
         </p>
         {#if error}<p class="error" role="alert">{error}</p>{/if}
-        {#if mySeat && (match.status === 'live' || match.status === 'countdown')}
+        {#if mySeat && !iAmOut && (match.status === 'live' || match.status === 'countdown')}
           <div class="actions">
             {#if confirmResign}
               <span>Resign this match?</span>

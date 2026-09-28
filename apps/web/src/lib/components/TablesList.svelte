@@ -4,7 +4,7 @@
   import { tableApi } from '$lib/table-actions';
 
   let error = $state('');
-  const open = $derived(live.tables.filter((t) => t.status === 'forming' && t.open && t.id !== live.myTable?.id));
+  const open = $derived(live.tables.filter((t) => t.status === 'forming' && t.open && t.seated.length < t.size && t.id !== live.myTable?.id));
   const playing = $derived(live.tables.filter((t) => t.status === 'playing'));
   const nameOf = (t: TableInfo) => live.games.find((g) => g.id === t.gameId)?.name ?? t.gameId;
   const handles = (t: TableInfo, joiner: string) => t.seated.map((p) => `@${p.handle}`).join(joiner);

@@ -32,6 +32,8 @@ test('/invite from the lobby chat reaches someone on their profile page, and acc
   await enter(host, `host${randomTag()}`);
   await enter(guest, guestHandle);
   await guest.goto(`/u/${guestHandle}`);
+  // /invite needs the game catalog; the Play panel's game heading shows it has arrived.
+  await expect(host.getByRole('region', { name: 'Play' }).getByRole('heading', { name: 'Critical Mass' })).toBeVisible();
   await host.getByLabel('Message #lobby').fill(`/invite @${guestHandle}`);
   await host.getByRole('button', { name: 'Send' }).click();
   const card = guest.getByRole('group', { name: /Invite from/ });
@@ -74,4 +76,53 @@ test('a name menu near the right edge stays on screen at phone width', async ({ 
   expect(box).not.toBeNull();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(400);
+});
+
+test('an old /play/<match> link lands on the match\'s table', async ({ browser }) => {
+  const a = await newPlayer(browser);
+  const b = await newPlayer(browser);
+  await enter(a, `qa${randomTag()}`);
+  await enter(b, `qb${randomTag()}`);
+  await a.getByRole('button', { name: 'Find a match' }).click();
+  await b.getByRole('button', { name: 'Find a match' }).click();
+  await a.waitForURL(/\/t\/t_/, { timeout: 20_000 });
+  const tableUrl = new URL(a.url()).pathname;
+  const { activeMatch } = (await (await a.request.get('/api/me')).json()) as { activeMatch: string };
+  expect(activeMatch).toMatch(/^m_/);
+  await a.goto(`/play/${activeMatch}`);
+  await a.waitForURL((url) => url.pathname === tableUrl, { timeout: 10_000 });
+  await a.request.post(`/api/matches/${activeMatch}/resign`);
+});
+
+test('resigning a 3-player match that plays on frees you at once, and your Resign button goes', async ({ browser }) => {
+  const [host, guest, third] = [await newPlayer(browser), await newPlayer(browser), await newPlayer(browser)];
+  const guestHandle = `out${randomTag()}`;
+  const thirdHandle = `on${randomTag()}`;
+  await enter(host, `three${randomTag()}`);
+  await enter(guest, guestHandle);
+  await enter(third, thirdHandle);
+  const hosted = await host.request.post('/api/tables', { data: { gameId: 'critical-mass', invite: [guestHandle, thirdHandle] } });
+  expect(hosted.status()).toBe(201);
+  const tableId = ((await hosted.json()) as { table: { id: string } }).table.id;
+  for (const p of [guest, third]) {
+    const me = (await (await p.request.get('/api/me')).json()) as { invites: { invite: { id: string } }[] };
+    expect((await p.request.post(`/api/invites/${me.invites[0].invite.id}/accept`)).ok()).toBe(true);
+  }
+  const started = await host.request.post(`/api/tables/${tableId}/start`);
+  expect(started.ok()).toBe(true);
+  const matchId = ((await started.json()) as { match: { id: string } }).match.id;
+
+  // match.started takes the guest to the table, where they can resign…
+  await guest.waitForURL(`/t/${tableId}`, { timeout: 20_000 });
+  await expect(guest.getByRole('button', { name: 'Resign' })).toBeVisible();
+  // …but they resign from elsewhere (an agent's door): the page learns it from the pushes alone.
+  expect((await guest.request.post(`/api/matches/${matchId}/resign`)).ok()).toBe(true);
+  await expect(guest.getByRole('region', { name: 'Critical Mass' }).getByRole('status')).toHaveText(/Waiting for/);
+  await expect(guest.getByRole('button', { name: 'Resign' })).toHaveCount(0);
+  // Out while the others play on: back in the lobby (no reload), the Play panel offers a new match.
+  await guest.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Lobby' }).click();
+  await expect(guest.getByRole('button', { name: 'Find a match' })).toBeVisible();
+  await expect(guest.getByRole('link', { name: 'Back to your table' })).toHaveCount(0);
+
+  await host.request.post(`/api/matches/${matchId}/resign`); // ends it: the last one standing wins
 });
