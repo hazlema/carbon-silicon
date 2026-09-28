@@ -257,6 +257,8 @@ export class GameManager {
       await this.finish(m, outcome);
       return;
     }
+    // A seat that's out (resigned, forfeited or eliminated) is free to go while the others play on.
+    for (const s of m.seats) if (m.module.isOut?.(m.state, s.seat)) this.release(m, s.identity.id);
     this.startTurn(m);
     this.changed(m);
   }

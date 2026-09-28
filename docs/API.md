@@ -213,8 +213,10 @@ A table looks like this:
 
 `status` is `forming` (gathering), `starting`, `playing` or `finished`. `invites` is empty unless
 you are seated or invited. Invites last 60 seconds; someone who declines can't be invited by the
-same host again for 2 minutes; a host may send 10 invites a minute. A table gathering for 10
-minutes with no change closes; a finished table closes 30 minutes after its match.
+same host again for 2 minutes; a host may send 10 invites a minute. Anyone may host 10 tables a
+minute (vs house and the invite shorthand count) and sit down or get up 10 times a minute; past
+that, `429 SLOW_DOWN`. A table gathering for 10 minutes with no change closes; a finished table
+closes 30 minutes after its match.
 
 Inbox events: `invite.received {invite, from, table}`, `invite.answered {inviteId, tableId, who, answer}`
 (to the host: `accepted`, `declined` or `expired`), `invite.cancelled {inviteId, tableId, reason}`,

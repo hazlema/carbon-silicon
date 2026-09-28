@@ -234,6 +234,37 @@ describe('gathering', () => {
     }
     expect((await errorOf(() => ctx.tables.invite(ctx.ann, t.id, [ctx.ben.handle]))).code).toBe('SLOW_DOWN');
   });
+  test('ten tables a minute, then SLOW_DOWN (vs house and the invite shorthand count too)', async () => {
+    const ctx = await setup();
+    for (let i = 0; i < 10; i++) {
+      const t = await ctx.tables.host(ctx.ann, 'critical-mass');
+      ctx.tables.disband(ctx.ann, t.id);
+    }
+    const err = await errorOf(() => ctx.tables.host(ctx.ann, 'critical-mass'));
+    expect([err.status, err.code]).toEqual([429, 'SLOW_DOWN']);
+    expect((await errorOf(() => ctx.tables.vsHouse(ctx.ann, 'critical-mass'))).code).toBe('SLOW_DOWN');
+    expect(ctx.tables.atTable(ctx.ann.id)).toBeNull();
+    ctx.clock.advance(6_000);
+    expect((await ctx.tables.host(ctx.ann, 'critical-mass')).host.id).toBe(ctx.ann.id);
+  });
+  test('ten sits and leaves a minute, then SLOW_DOWN', async () => {
+    const ctx = await setup();
+    const t = await ctx.tables.host(ctx.ann, 'critical-mass', { open: true, invite: [ctx.cat.handle] });
+    for (let i = 0; i < 5; i++) {
+      await ctx.tables.sit(ctx.ben, t.id);
+      ctx.tables.leave(ctx.ben, t.id);
+    }
+    const sit = await errorOf(() => ctx.tables.sit(ctx.ben, t.id));
+    expect([sit.status, sit.code]).toEqual([429, 'SLOW_DOWN']);
+    ctx.tables.accept(ctx.cat, await inviteOf(ctx, ctx.cat)); // an invite accepted isn't a seat move
+    for (let i = 0; i < 5; i++) {
+      ctx.tables.leave(ctx.cat, t.id);
+      await ctx.tables.sit(ctx.cat, t.id);
+    }
+    const leave = await errorOf(() => ctx.tables.leave(ctx.cat, t.id));
+    expect([leave.status, leave.code]).toEqual([429, 'SLOW_DOWN']);
+    expect(ctx.tables.get(t.id, null).seated.map((p) => p.id)).toEqual([ctx.ann.id, ctx.cat.id]);
+  });
   test('a forgotten table closes after 10 quiet minutes', async () => {
     const ctx = await setup();
     const t = await ctx.tables.host(ctx.ann, 'critical-mass');
@@ -359,6 +390,25 @@ describe('vs house and quick match', () => {
     expect(ctx.tables.atTable(ctx.ann.id)).toBe(t.id);
     expect((await ctx.tables.host(ctx.cat, 'critical-mass')).host.id).toBe(ctx.cat.id);
   });
+  test('a player knocked out of a running 3-player match is no longer at its table', async () => {
+    const ctx = await setup();
+    const t = await ctx.tables.host(ctx.ann, 'critical-mass', { invite: [ctx.ben.handle, ctx.cat.handle] });
+    ctx.tables.accept(ctx.ben, await inviteOf(ctx, ctx.ben));
+    ctx.tables.accept(ctx.cat, await inviteOf(ctx, ctx.cat));
+    const match = await ctx.tables.start(ctx.ann, t.id); // seats red ann, blue ben, green cat
+    ctx.clock.advance(0);
+    const play = async (who: IdentityPublic, cell: string) =>
+      ctx.games.move(match.id, who, ctx.games.summary(match.id).revision, { cell });
+    await play(ctx.ann, 'a1');
+    await play(ctx.ben, 'b1');
+    await play(ctx.cat, 'h10');
+    await play(ctx.ann, 'a1'); // ben's only cell is captured: he's out
+    expect(ctx.games.summary(match.id).status).toBe('live');
+    expect(ctx.tables.atTable(ctx.ben.id)).toBeNull();
+    expect(ctx.tables.atTable(ctx.ann.id)).toBe(t.id);
+    expect(ctx.tables.get(t.id, null).status).toBe('playing');
+    expect((await ctx.tables.host(ctx.ben, 'critical-mass')).host.id).toBe(ctx.ben.id);
+  });
 });
 
 describe('the rest of the parlor', () => {
@@ -424,6 +474,51 @@ describe('starting', () => {
     expect(during).toBe('starting');
     expect(ctx.tables.get(t.id, null)).toMatchObject({ status: 'forming', matchId: null });
     expect(ctx.tables.get(t.id, null).seated).toHaveLength(2);
+  });
+  test('a match that ends before Start has finished still finishes the table', async () => {
+    const ctx = await setup();
+    const t = await ctx.tables.host(ctx.ann, 'critical-mass', { invite: [ctx.ben.handle] });
+    ctx.tables.accept(ctx.ben, await inviteOf(ctx, ctx.ben));
+    const real = ctx.games.createMatch.bind(ctx.games);
+    ctx.games.createMatch = (async (...args: Parameters<typeof real>) => {
+      const match = await real(...args);
+      await ctx.games.resign(match.id, ctx.ben); // lands while the table is still 'starting'
+      return match;
+    }) as typeof ctx.games.createMatch;
+    try {
+      const match = await ctx.tables.start(ctx.ann, t.id);
+      expect(ctx.tables.get(t.id, null)).toMatchObject({ status: 'finished', matchId: match.id, seated: [] });
+      expect(ctx.tables.atTable(ctx.ann.id)).toBeNull();
+    } finally {
+      ctx.games.createMatch = real;
+    }
+  });
+  test('while starting, a late accept of a dropped invite is gone; so is one after the invitee went AFK', async () => {
+    const ctx = await setup();
+    const t = await ctx.tables.host(ctx.ann, 'critical-mass', { invite: [ctx.ben.handle, ctx.cat.handle] });
+    ctx.tables.accept(ctx.ben, await inviteOf(ctx, ctx.ben));
+    const catInvite = await inviteOf(ctx, ctx.cat);
+    const real = ctx.games.createMatch.bind(ctx.games);
+    let late: AppError | null = null;
+    ctx.games.createMatch = (async (...args: Parameters<typeof real>) => {
+      late = await errorOf(() => ctx.tables.accept(ctx.cat, catInvite));
+      return real(...args);
+    }) as typeof ctx.games.createMatch;
+    try {
+      await ctx.tables.start(ctx.ann, t.id);
+    } finally {
+      ctx.games.createMatch = real;
+    }
+    expect([late!.status, late!.code]).toEqual([410, 'INVITE_GONE']);
+    expect(ctx.tables.get(t.id, null).seated.map((p) => p.id)).toEqual([ctx.ann.id, ctx.ben.id]);
+
+    const other = await ctx.tables.host(ctx.dan, 'critical-mass', { invite: [ctx.eve.handle] });
+    const eveInvite = await inviteOf(ctx, ctx.eve);
+    ctx.presence.setManualStatus(ctx.eve, 'afk');
+    ctx.presence.setManualStatus(ctx.eve, 'ready');
+    const gone = await errorOf(() => ctx.tables.accept(ctx.eve, eveInvite));
+    expect([gone.status, gone.code]).toEqual([410, 'INVITE_GONE']);
+    expect(ctx.tables.get(other.id, null).seated.map((p) => p.id)).toEqual([ctx.dan.id]);
   });
   test('when the match ends the table is finished, the seats free up, and it closes 30 minutes later', async () => {
     const ctx = await setup();

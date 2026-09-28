@@ -301,6 +301,23 @@ describe('three and four players', () => {
     expect(ctx.games.summary(old.id).status).toBe('over');
     expect(ctx.presence.get(ctx.green.id)?.status).toBe('playing');
   });
+  test('a seat eliminated by capture is released while the match plays on', async () => {
+    const ctx = await setup();
+    const summary = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.green, ctx.extra]); // seats red, blue, green
+    ctx.clock.advance(3000);
+    const play = async (who: IdentityPublic, cell: string) =>
+      ctx.games.move(summary.id, who, ctx.games.summary(summary.id).revision, { cell });
+    await play(ctx.red, 'a1');
+    await play(ctx.green, 'b1');
+    await play(ctx.extra, 'h10');
+    await play(ctx.red, 'a1'); // a1 bursts into b1: the blue seat (green) has nothing left
+    expect((ctx.games.envelope(summary.id, null).view as CMView).eliminated).toEqual(['blue']);
+    expect(ctx.games.summary(summary.id).status).toBe('live');
+    expect(ctx.games.activeMatchOf(ctx.green.id)).toBeNull();
+    expect(ctx.presence.get(ctx.green.id)?.status).not.toBe('playing');
+    expect(ctx.games.activeMatchOf(ctx.red.id)).toBe(summary.id);
+    expect(ctx.presence.get(ctx.extra.id)?.status).toBe('playing');
+  });
   test('resigning during the countdown records the match as live in the database', async () => {
     const ctx = await setup();
     const summary = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.green, ctx.extra]);

@@ -36,6 +36,10 @@ export interface TableOptions {
   retainMs: number;
   declineCooldownMs: number;
   invitesPerMinute: number;
+  /** Tables one person may host a minute (vs house and the invite shorthand host too). */
+  tablesPerMinute: number;
+  /** Sits and leaves one person may make a minute. */
+  seatMovesPerMinute: number;
   /** Seat order for a new match; tests pass the identity function. */
   shuffle: <T>(items: T[]) => T[];
 }
@@ -55,6 +59,8 @@ const DEFAULTS: TableOptions = {
   retainMs: 30 * 60_000,
   declineCooldownMs: 2 * 60_000,
   invitesPerMinute: 10,
+  tablesPerMinute: 10,
+  seatMovesPerMinute: 10,
   shuffle: shuffled,
 };
 
@@ -110,6 +116,8 @@ export class TableManager {
   /** `${hostId}:${targetId}` → when the host may invite them again. */
   private declined = new Map<string, number>();
   private limiter: RateLimiter;
+  private hostLimiter: RateLimiter;
+  private seatLimiter: RateLimiter;
   private leaveQueue: (identityId: string) => void = () => {};
   private opts: TableOptions;
 
@@ -119,6 +127,8 @@ export class TableManager {
   ) {
     this.opts = { ...DEFAULTS, ...opts };
     this.limiter = new RateLimiter(deps.clock, this.opts.invitesPerMinute, this.opts.invitesPerMinute / 60_000);
+    this.hostLimiter = new RateLimiter(deps.clock, this.opts.tablesPerMinute, this.opts.tablesPerMinute / 60_000);
+    this.seatLimiter = new RateLimiter(deps.clock, this.opts.seatMovesPerMinute, this.opts.seatMovesPerMinute / 60_000);
     deps.comms.setTableAccess((tableId) => {
       const t = this.tables.get(tableId);
       return t ? { posters: this.posters(t) } : null;
@@ -188,6 +198,7 @@ export class TableManager {
     this.assertFree(identity);
     if (this.atTable(identity.id)) throw conflict('AT_TABLE', "You're already at a table. Leave it first.");
     if (opts.open !== undefined && typeof opts.open !== 'boolean') throw badRequest('BAD_FIELD', 'open is true or false.');
+    if (!this.hostLimiter.take(identity.id)) throw tooMany('SLOW_DOWN', 'That is a lot of tables. Give it a minute.');
     const t: Table = {
       id: newId('t'),
       gameId,
@@ -300,6 +311,7 @@ export class TableManager {
     this.assertFree(identity);
     this.assertForming(t);
     if (this.taken(t) >= this.size(t)) throw conflict('TABLE_FULL', fullText(t));
+    this.takeSeatMove(identity);
     this.seat(t, identity);
     this.sat(t, identity);
     return this.info(t, identity.id);
@@ -309,6 +321,7 @@ export class TableManager {
     const t = this.require(tableId);
     if (!t.seated.some((x) => x.id === identity.id)) throw forbidden('NOT_SEATED', "You're not at this table.");
     if (t.status !== 'forming') throw conflict('TABLE_BUSY', 'The match is on. Resign to leave it.');
+    this.takeSeatMove(identity);
     this.unseat(t, identity.id, 'left');
   }
 
@@ -483,6 +496,10 @@ export class TableManager {
     return t;
   }
 
+  private takeSeatMove(identity: IdentityPublic): void {
+    if (!this.seatLimiter.take(identity.id)) throw tooMany('SLOW_DOWN', 'That is a lot of sitting down and getting up. Give it a minute.');
+  }
+
   private assertForming(t: Table): void {
     if (t.status !== 'forming' || !this.tables.has(t.id)) {
       throw conflict('TABLE_BUSY', 'That table is not gathering players right now.');
@@ -634,19 +651,30 @@ export class TableManager {
     t.timer = null;
     for (const inv of [...t.invites]) this.dropInvite(inv, 'started');
     const players = this.opts.shuffle(t.seated);
+    let match: MatchSummary;
     try {
-      const match = await this.deps.games.createMatch(t.gameId, players, { tableId: t.id });
-      t.status = 'playing';
-      t.matchId = match.id;
-      t.lastPlayers = players;
-      this.changed(t);
-      return match;
+      match = await this.deps.games.createMatch(t.gameId, players, { tableId: t.id });
     } catch (e) {
       t.status = 'forming';
       this.touch(t);
       this.changed(t);
       throw e;
     }
+    t.status = 'playing';
+    t.matchId = match.id;
+    t.lastPlayers = players;
+    this.changed(t);
+    // A resign or a bench can end the match before createMatch returns; its match.finished found
+    // no matchId here yet, so finish the table now.
+    let ended = true;
+    try {
+      const { status } = this.deps.games.summary(match.id);
+      ended = status === 'over' || status === 'abandoned';
+    } catch {
+      // Already reaped: long over.
+    }
+    if (ended) this.onFinished(t.id, match.id);
+    return match;
   }
 
   private onFinished(tableId: string, matchId: string): void {
