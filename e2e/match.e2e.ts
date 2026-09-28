@@ -105,4 +105,8 @@ test('a spectator lands on the rail, and the player sees it only by switching ta
   await page.getByRole('button', { name: 'Rematch' }).click();
   await expect(page.getByRole('heading', { name: 'You lose.' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Rematch' })).toHaveCount(0);
+  // Clear the gathering rematch: a house bot seated at a table declines every other invite, so
+  // leaving Sprocket sat here would turn later tests' invites down.
+  const tableId = new URL(tableUrl).pathname.split('/').pop();
+  expect((await page.request.delete(`/api/tables/${tableId}`)).status()).toBe(204);
 });
