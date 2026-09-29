@@ -412,10 +412,9 @@ export async function runBot(opts: BotOptions): Promise<void> {
         if (event.type === 'chat.dm') {
           const m = event.message;
           // Never another house bot (two residents would talk forever), and within the hourly caps.
+          // No "thinking" pause: someone is waiting in a private conversation, and a voice takes its own time anyway.
           if (m.author && m.author.id !== myId && !m.author.isHouse && dmBudget.take(m.author.id, m.author.kind, Date.now())) {
-            const [lo, hi] = opts.thinkMs;
-            const from = m.author.handle;
-            track(sleep(lo + Math.random() * Math.max(0, hi - lo), opts.signal).then(() => speak(client, opts, 'dm', m.channel, { addressedBy: from, answering: m })));
+            track(speak(client, opts, 'dm', m.channel, { addressedBy: m.author.handle, answering: m }));
           }
           continue;
         }
