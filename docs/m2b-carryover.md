@@ -31,6 +31,7 @@ Each line: what was decided — why — what it costs if wrong. P1–P7 were mad
 - R-14 — accept the live.svelte.ts loadGames fix inside Task 11 (outside its file list) — without it the lobby shows raw game ids and /invite can't pick a game for new guests; it's a 3-line fix of Task 10 code — costs nothing.
 - R-15 — Task 12's carryover gap is folded into the final review's single fix wave (which rewrites docs/m2b-carryover.md from the full ledger, including every later ruling and minor) instead of a separate fix round — the file must be regenerated after the final review anyway — costs nothing if the fix wave does it; the final re-review checks it.
 - R-16 — the scripted live check (HTTP + a real Playwright browser on a :3200 copy) stands in for "by hand": it drove the real UI and found two genuine UI rough edges — costs: no human eyes on it before the Foreman's own look.
+- R-17 — a house bot seated at a table that never starts stays booked until the table's idle timer closes it (10 minutes after the last seat or invite change): `isBusy()` keeps it out of vs-house picks and the quick-match fallback meanwhile, and no separate bot-release timer was added — the idle close is the one clock for forgotten tables — costs: a host who seats OLD IRON and walks away ties him up for up to 10 minutes.
 
 ## Deferred findings (minor, from the per-task and final reviews)
 
