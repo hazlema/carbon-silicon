@@ -71,6 +71,11 @@ Each ruling gives what was decided, why, and what it costs if wrong.
   - Why: a few lines each, in files the wave touched.
   - Cost if wrong: a slightly larger wave.
 
+- **R-16. After the final review, one more fix: a send clears the composer only if it still holds what was sent** (904d8de).
+  - Why: the full e2e suite failed intermittently (2 runs in 3) on the first DM test. The trace showed the composer race. The next line was typed while the previous send was still in flight, then the finishing send's `draft = ''` wiped it and Send stayed disabled. A fast typist could hit the same thing.
+  - The DM tests now also wait for a line to appear before typing the next. Afterwards the DM e2e file passed 18 of 18, and the full suite 41 of 41 twice.
+  - Cost if wrong: nothing.
+
 ## Deferred findings
 
 ### Worth doing soon
