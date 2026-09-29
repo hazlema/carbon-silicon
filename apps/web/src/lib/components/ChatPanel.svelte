@@ -119,7 +119,7 @@
       sending = true;
       try {
         await live.sendDm(dm.handle, dm.text);
-        draft = '';
+        if (draft.trim() === text) draft = '';
       } catch (err) {
         error = (err as Error).message;
       } finally {
@@ -133,7 +133,7 @@
       notice = '';
       try {
         notice = await runInviteCommand(words, channel);
-        draft = '';
+        if (draft.trim() === text) draft = '';
       } catch (err) {
         error = (err as Error).message;
       }
@@ -143,7 +143,7 @@
     error = '';
     try {
       await api('POST', `/api/chat/${encodeURIComponent(channel)}`, { text });
-      draft = '';
+      if (draft.trim() === text) draft = '';
       pinned = true;
     } catch (err) {
       error = (err as Error).message;

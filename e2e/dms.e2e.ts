@@ -25,6 +25,7 @@ test('two people DM from the name menu: a dot, a Lobby count away from the lobby
   await messageFromHereNow(ann, beaHandle);
   await expect(ann.getByLabel(`Message @${beaHandle}`)).toBeFocused();
   await say(ann, `Message @${beaHandle}`, 'psst, over here');
+  await expect(ann.getByRole('log').getByText('psst, over here')).toBeVisible();
 
   await expect(dmTab(bea, annHandle)).toBeVisible();
   await expect(dmTab(bea, annHandle).getByLabel('1 unread')).toBeVisible();
@@ -51,6 +52,7 @@ test('closing a tab hides it until the next message; /msg opens a conversation f
   await expect(ann.getByLabel(`Message @${beaHandle}`)).toBeVisible();
   await expect(dmTab(bea, annHandle)).toBeVisible();
 
+  await expect(ann.getByRole('log').getByText('hello from the lobby box')).toBeVisible();
   await bea.getByRole('button', { name: `Close the conversation with @${annHandle}` }).click();
   await expect(dmTab(bea, annHandle)).toHaveCount(0);
   await say(ann, `Message @${beaHandle}`, 'one more thing');
