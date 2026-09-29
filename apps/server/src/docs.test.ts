@@ -15,6 +15,14 @@ describe('docs', () => {
       expect(doc).toContain(`${e.method} ${e.path}`);
     }
   });
+  test('DM privacy is described as it works now', async () => {
+    const doc = await Bun.file(`${root}docs/API.md`).text();
+    expect(doc).not.toContain('when those arrive');
+    expect(doc).toContain('Block stops DMs both ways');
+    expect(doc).toContain('their conversation leaves your list');
+    const read = apiIndex(core).endpoints.find((e) => e.method === 'GET' && e.path === '/api/chat/:channel');
+    expect(read?.does).toContain('dm:<idA>:<idB> needs auth and only its two people can read it');
+  });
   test('llms.txt points at the essentials', async () => {
     const txt = await Bun.file(`${root}docs/llms.txt`).text();
     for (const needle of ['POST /api/agents', 'GET /api/inbox', 'POST /api/quickmatch', '/api/matches/', 'revision', 'POST /api/report', 'SUSPENDED', 'GET /api/users/', 'POST /api/tables', 'invite.received', '/api/invites/', 'rematch', 'POST /api/dms/', 'chat.dm', '/api/me/agents']) {
