@@ -351,7 +351,10 @@ export class GameManager {
         .set({ status: 'live' })
         .where(and(eq(matches.id, m.id), eq(matches.status, 'countdown')));
     }
-    const done = this.advance(m, m.module.forfeit(m.state, seat, 'resign'));
+    const before = m.state;
+    const next = m.module.forfeit(before, seat, 'resign');
+    this.announceRound(m, before, next);
+    const done = this.advance(m, next);
     if ((m.status as MatchStatus) !== 'over') this.release(m, identity.id);
     await this.comms.postSystem(this.chatOf(m), `@${identity.handle} resigns.`);
     await wentLive?.catch((e) => console.error(`[games] could not record ${m.id} as live`, e));
@@ -415,14 +418,19 @@ export class GameManager {
       const before = m.state;
       const next = rt.step(before, actions, m.rng);
       desk.endTick();
-      const round = rt.roundEvent?.(before, next) ?? null;
-      if (round) for (const s of m.seats) this.comms.deliver(s.identity.id, { type: 'match.round', matchId: m.id, ...round });
+      this.announceRound(m, before, next);
       // advance installs the state (and, at the end, marks the match over) before its first await.
       this.advance(m, next).catch((e) => console.error(`[games] tick ${m.id} could not record its end`, e));
     } catch (e) {
       console.error(`[games] a tick of ${m.id} failed`, e);
     }
     if (m.status === 'live') this.scheduleTick(m);
+  }
+
+  /** A real-time round that began or ended between these two states is news for every seat. */
+  private announceRound(m: LiveMatch, before: unknown, after: unknown): void {
+    const round = m.module.realtime?.roundEvent?.(before, after) ?? null;
+    if (round) for (const s of m.seats) this.comms.deliver(s.identity.id, { type: 'match.round', matchId: m.id, ...round });
   }
 
   setDoctrine(matchId: string, identity: IdentityPublic, raw: unknown): DoctrineAck {

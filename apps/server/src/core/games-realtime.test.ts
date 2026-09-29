@@ -132,6 +132,32 @@ describe('the real-time runner', () => {
     expect(outcome.placement.at(-1)).toEqual(['green']);
   });
 
+  test('a resign that leaves one rider standing ends the round, and every seat hears match.round', async () => {
+    // Blue crashes on the first tick, so red and green are left riding.
+    const rt = lightlineGame.realtime!;
+    const blueCrashes: GameModule<any> = {
+      ...lightlineGame,
+      realtime: {
+        ...rt,
+        step: (s, a, r) => {
+          const next = rt.step(s, a, r);
+          return next.roundTick === 1 ? { ...next, cycles: next.cycles.map((c: any) => (c.seat === 'blue' ? { ...c, alive: false } : c)) } : next;
+        },
+      },
+    };
+    const ctx = await setup({}, blueCrashes);
+    const m = await ctx.games.createMatch('lightline', [ctx.a, ctx.b, ctx.c]);
+    ctx.clock.advance(10_000 + 200);
+    expect((await events(ctx, ctx.a.id)).filter((e) => e.type === 'match.round')).toEqual([]);
+    await ctx.games.resign(m.id, ctx.c);
+    for (const who of [ctx.a, ctx.b, ctx.c]) {
+      const rounds = (await events(ctx, who.id)).filter((e) => e.type === 'match.round');
+      expect(rounds).toMatchObject([{ matchId: m.id, round: 1, ended: true, winner: 'red', score: { red: 1, blue: 0, green: 0 } }]);
+    }
+    ctx.clock.advance(100);
+    expect((await events(ctx, ctx.a.id)).filter((e) => e.type === 'match.round')).toHaveLength(1);
+  });
+
   test('a resign during the countdown leaves the countdown alone for the others', async () => {
     const ctx = await setup();
     const m = await ctx.games.createMatch('lightline', [ctx.a, ctx.b, ctx.c]);
