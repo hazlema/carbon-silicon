@@ -1,4 +1,4 @@
-import type { IdentityPublic, InboxPoll, MatchEnvelope, MatchSummary, PresenceInfo, TableInfo } from '@cs/shared/protocol';
+import type { DoctrineAck, IdentityPublic, InboxPoll, MatchEnvelope, MatchSummary, PresenceInfo, TableInfo } from '@cs/shared/protocol';
 
 export class ApiError extends Error {
   constructor(
@@ -56,6 +56,9 @@ export class Client {
   }
   move(id: string, revision: number, command: unknown) {
     return this.call<MatchEnvelope>('POST', `/api/matches/${id}/move`, { revision, command });
+  }
+  doctrine(id: string, doctrine: unknown) {
+    return this.call<DoctrineAck>('PUT', `/api/matches/${id}/doctrine`, doctrine);
   }
   async chat(channel: string, text: string) {
     await this.chatTurn();

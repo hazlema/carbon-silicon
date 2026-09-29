@@ -5,6 +5,7 @@
   "dependencies": {
     "@cs/critical-mass": "workspace:*",
     "@cs/game-api": "workspace:*",
+    "@cs/lightline": "workspace:*",
     "@cs/shared": "workspace:*"
   },
   "devDependencies": { "@cs/server": "workspace:*" }

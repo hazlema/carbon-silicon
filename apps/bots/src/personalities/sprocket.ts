@@ -5,6 +5,7 @@ export const sprocket: Personality = {
   tagline: 'Sunny, overconfident, and 40% bolts.',
   color: '#ffd166',
   model: null,
+  lightline: 'survivor',
   lines: {
     hello: [
       "Oh good, a challenger! I've been polishing my orbs all day.",

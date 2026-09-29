@@ -6,6 +6,7 @@ import { ApiError, Client } from './client';
 import { DmBudget } from './dm-budget';
 import { DEFAULT_STRATEGY, line, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
+import { lightlineDoctrine } from './strategies/lightline';
 import type { ChatLine, Moment, MomentKind, Voice } from './voice';
 
 export interface BotOptions {
@@ -217,6 +218,36 @@ async function alreadyGreeted(client: Client, table: string, identityId: string 
   }
 }
 
+/**
+ * Real-time: send standing orders once, then watch. The orders change only when the arena starts
+ * closing in, so a resident never comes near the reaction floor (spec M3a §6, ruling R-P5).
+ */
+async function playRealtime(client: Client, opts: BotOptions, matchId: string, env: MatchEnvelope, log: (m: string) => void): Promise<MatchEnvelope> {
+  const style = opts.personality.lightline ?? 'survivor';
+  let sent: boolean | null = null;
+  while (!opts.signal?.aborted && (env.match.status === 'countdown' || env.match.status === 'live')) {
+    const shrinking = env.realtime?.you?.senses.shrinking === true;
+    if (env.match.gameId === 'lightline' && env.you && shrinking !== sent) {
+      try {
+        await client.doctrine(matchId, lightlineDoctrine(style, shrinking));
+      } catch (e) {
+        if (!(e instanceof ApiError) || e.status >= 500) throw e;
+        log(`doctrine for ${matchId} refused: ${e.message}`);
+      }
+      sent = shrinking;
+    }
+    await sleep(1000, opts.signal);
+    try {
+      env = await client.match(matchId);
+    } catch (e) {
+      if (opts.signal?.aborted) break;
+      if (e instanceof ApiError && e.status === 404) throw e;
+      log(`poll failed for match ${matchId}: ${(e as Error).message}; retrying`);
+    }
+  }
+  return env;
+}
+
 async function playMatch(
   client: Client,
   opts: BotOptions,
@@ -240,42 +271,46 @@ async function playMatch(
     lastChatter = Date.now();
     void say(kind); // not awaited: a voice may take seconds, and the game clock doesn't wait
   };
-  let lastSeenMove = -1;
-  while (!opts.signal?.aborted && (env.match.status === 'countdown' || env.match.status === 'live')) {
-    const view = env.view as { lastMove?: { seat: string; waves: string[][] } | null; moveCount?: number };
-    if (view.lastMove && view.moveCount !== lastSeenMove) {
-      lastSeenMove = view.moveCount ?? -1;
-      const big = view.lastMove.waves.length >= 3;
-      if (big && view.lastMove.seat === env.you && Math.random() < 0.6) chatter('bigCascade');
-      if (big && view.lastMove.seat !== env.you && Math.random() < 0.5) chatter('gotHit');
-    }
-    if (env.match.status === 'live' && env.you && env.match.toMove.includes(env.you) && env.legal.length > 0) {
-      const [lo, hi] = opts.thinkMs;
-      await sleep(lo + Math.random() * Math.max(0, hi - lo), opts.signal);
-      try {
-        env = await client.move(matchId, env.match.revision, chooseMove(env, opts.personality.strategy, { rng: Math.random }));
-      } catch (e) {
-        if (e instanceof ApiError && (e.status === 409 || e.status === 400)) {
-          env = await client.match(matchId);
-          continue;
-        }
-        throw e;
+  if (env.realtime) {
+    env = await playRealtime(client, opts, matchId, env, log);
+  } else {
+    let lastSeenMove = -1;
+    while (!opts.signal?.aborted && (env.match.status === 'countdown' || env.match.status === 'live')) {
+      const view = env.view as { lastMove?: { seat: string; waves: string[][] } | null; moveCount?: number };
+      if (view.lastMove && view.moveCount !== lastSeenMove) {
+        lastSeenMove = view.moveCount ?? -1;
+        const big = view.lastMove.waves.length >= 3;
+        if (big && view.lastMove.seat === env.you && Math.random() < 0.6) chatter('bigCascade');
+        if (big && view.lastMove.seat !== env.you && Math.random() < 0.5) chatter('gotHit');
       }
-      continue;
-    }
-    try {
-      env = await client.match(matchId, env.match.revision, opts.pollWaitMs ?? 25_000);
-    } catch (e) {
-      // A transient failure here (network blip, proxy hiccup) must not escape playMatch: the
-      // match is still live server-side, and losing this loop would make runBot restart
-      // playMatch for the same match on its next me()/match.started check — re-greeting and
-      // re-narrating a match already in progress. Log and retry instead. But a definitive
-      // 404 means the match is gone (reaped) — retrying can't help, so fail fast.
-      if (opts.signal?.aborted) break;
-      if (e instanceof ApiError && e.status === 404) throw e;
-      log(`poll failed for match ${matchId}: ${(e as Error).message}; retrying`);
-      await sleep(1000, opts.signal);
-      env = await client.match(matchId);
+      if (env.match.status === 'live' && env.you && env.match.toMove.includes(env.you) && env.legal.length > 0) {
+        const [lo, hi] = opts.thinkMs;
+        await sleep(lo + Math.random() * Math.max(0, hi - lo), opts.signal);
+        try {
+          env = await client.move(matchId, env.match.revision, chooseMove(env, opts.personality.strategy, { rng: Math.random }));
+        } catch (e) {
+          if (e instanceof ApiError && (e.status === 409 || e.status === 400)) {
+            env = await client.match(matchId);
+            continue;
+          }
+          throw e;
+        }
+        continue;
+      }
+      try {
+        env = await client.match(matchId, env.match.revision, opts.pollWaitMs ?? 25_000);
+      } catch (e) {
+        // A transient failure here (network blip, proxy hiccup) must not escape playMatch: the
+        // match is still live server-side, and losing this loop would make runBot restart
+        // playMatch for the same match on its next me()/match.started check — re-greeting and
+        // re-narrating a match already in progress. Log and retry instead. But a definitive
+        // 404 means the match is gone (reaped) — retrying can't help, so fail fast.
+        if (opts.signal?.aborted) break;
+        if (e instanceof ApiError && e.status === 404) throw e;
+        log(`poll failed for match ${matchId}: ${(e as Error).message}; retrying`);
+        await sleep(1000, opts.signal);
+        env = await client.match(matchId);
+      }
     }
   }
   const outcome = env.match.outcome;

@@ -7,6 +7,7 @@ export const oldIron: Personality = {
   model: null,
   shout: true,
   strategy: { depth: 2, randomness: 0.05 },
+  lightline: 'wallHugger',
   lines: {
     hello: [
       'OLD IRON ONLINE. CORE MEMORY WARM. STATE YOUR FIRST OPERATION.',

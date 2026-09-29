@@ -1,3 +1,5 @@
+import type { LightlineStyle } from './strategies/lightline';
+
 export interface Personality {
   name: string;
   tagline: string;
@@ -7,6 +9,8 @@ export interface Personality {
   shout?: boolean;
   /** How hard it plays Critical Mass (default: depth 2, randomness 0.15). */
   strategy?: { depth: 1 | 2; randomness: number };
+  /** How it rides in Lightline (default: survivor). */
+  lightline?: LightlineStyle;
   lines: {
     hello: string[];
     win: string[];
