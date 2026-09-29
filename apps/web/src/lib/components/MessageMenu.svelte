@@ -20,6 +20,14 @@
   const handle = $derived(message.author?.handle ?? '');
   const status = $derived(live.presence.find((p) => p.identity.id === message.author?.id)?.status ?? null);
   const choice = $derived(message.author ? inviteChoice(message.author, { me: live.me, status, myTable: live.myTable, catalog: live.games }) : null);
+  const blocking = $derived(!!message.author && live.relations.blocks.some((b) => b.id === message.author!.id));
+  /** Offered everywhere except inside the conversation itself. */
+  const canMessage = $derived(!!message.author && !message.author.released && !message.channel.startsWith('dm:'));
+  function messageThem() {
+    open = false;
+    mode = 'menu';
+    live.openDm(message.author!);
+  }
   /** The invite shows up on your gathering card, so the menu just closes (as PersonMenu's does). */
   async function inviteThem(fn: () => Promise<unknown>) {
     error = '';
@@ -127,7 +135,16 @@
               {/if}
             {/each}
           {/if}
-          {#if choice}
+          {#if canMessage}
+            {#if choice}
+              <button role="menuitem" type="button" disabled={blocking} onclick={messageThem}>Message @{handle}{#if blocking} — you block them{/if}</button>
+            {:else}
+              <button bind:this={firstItem} role="menuitem" type="button" disabled={blocking} onclick={messageThem}
+                >Message @{handle}{#if blocking} — you block them{/if}</button
+              >
+            {/if}
+          {/if}
+          {#if choice || canMessage}
             <button role="menuitem" type="button" onclick={() => show('report')}>Report</button>
           {:else}
             <button bind:this={firstItem} role="menuitem" type="button" onclick={() => show('report')}>Report</button>

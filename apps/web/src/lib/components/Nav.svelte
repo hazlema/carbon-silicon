@@ -26,7 +26,11 @@
   </a>
   <nav aria-label="Main">
     {#each links as link}
-      <a href={link.href} aria-current={current(link.href) ? 'page' : undefined}>{link.label}</a>
+      <a href={link.href} aria-current={current(link.href) ? 'page' : undefined}
+        >{link.label}{#if link.href === '/' && live.dmUnread > 0 && page.url.pathname !== '/'}<span class="count" aria-label="{live.dmUnread} unread messages"
+            >{live.dmUnread}</span
+          >{/if}</a
+      >
     {/each}
   </nav>
   <div class="me">
@@ -87,6 +91,17 @@
     text-decoration: underline;
     text-decoration-color: var(--dust);
     text-underline-offset: 0.45em;
+  }
+  .count {
+    display: inline-block;
+    margin-left: 0.35em;
+    padding: 0 0.45em;
+    border-radius: 999px;
+    background: var(--carbon);
+    color: var(--ink);
+    font-size: var(--step--1);
+    font-weight: 700;
+    line-height: 1.5;
   }
   .me {
     margin-left: auto;

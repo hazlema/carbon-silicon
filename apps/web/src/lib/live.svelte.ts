@@ -170,12 +170,34 @@ class Live {
     this.queued = null;
   }
 
-  async loadDms(): Promise<void> {
-    try {
-      this.dms = (await api<{ conversations: DmSummary[] }>('GET', '/api/dms')).conversations;
-    } catch (e) {
-      console.error(e);
+  #dmsLoading: Promise<void> | null = null;
+  #dmsDirty = false;
+
+  /** Replaces the list with the server's. A message that lands while the fetch is in flight may be
+   *  missing from its answer (and would then be lost), so it asks for one more round; callers
+   *  arriving meanwhile wait for the same run. */
+  loadDms(): Promise<void> {
+    if (this.#dmsLoading) {
+      this.#dmsDirty = true;
+      return this.#dmsLoading;
     }
+    const run = (async () => {
+      try {
+        do {
+          this.#dmsDirty = false;
+          const server = (await api<{ conversations: DmSummary[] }>('GET', '/api/dms')).conversations;
+          // A conversation you opened but haven't written in yet isn't on the server: keep it, first (as openDm puts it).
+          const local = this.dms.filter((d) => d.last === null && !server.some((s) => s.channel === d.channel));
+          this.dms = [...local, ...server];
+        } while (this.#dmsDirty);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        this.#dmsLoading = null;
+      }
+    })();
+    this.#dmsLoading = run;
+    return run;
   }
 
   /** Opens (or reopens) the conversation with someone and asks the page to show it. */
@@ -228,6 +250,7 @@ class Live {
       void this.loadDms(); // your own first line from another device: fetch who it's with
       return;
     }
+    if (this.#dmsLoading) this.#dmsDirty = true;
     this.dms = withMessage(this.dms, m, other, meId);
   }
 

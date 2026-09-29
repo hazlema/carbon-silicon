@@ -1,9 +1,12 @@
 <script lang="ts">
+  import { dmParticipants } from '@cs/shared/protocol';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
+  import DmTabs from '$lib/components/DmTabs.svelte';
   import QuickMatch from '$lib/components/QuickMatch.svelte';
   import Scoreboard from '$lib/components/Scoreboard.svelte';
   import TablesList from '$lib/components/TablesList.svelte';
   import WhoList from '$lib/components/WhoList.svelte';
+  import { live } from '$lib/live.svelte';
 
   const channels = [
     { id: 'lobby', about: 'Everyone, everything' },
@@ -12,7 +15,29 @@
   ];
   let channel = $state('lobby');
   let tab = $state<'chat' | 'who'>('chat');
-  const about = $derived(channels.find((c) => c.id === channel)?.about ?? '');
+  let focusKey = $state(0);
+  /** The conversation on screen, when the chat shows a DM. */
+  const dm = $derived(dmParticipants(channel) ? (live.dms.find((d) => d.channel === channel) ?? null) : null);
+  const about = $derived(dm ? 'Just the two of you' : (channels.find((c) => c.id === channel)?.about ?? ''));
+  const title = $derived(dm ? `@${dm.with.handle}` : `#${channel}`);
+
+  // Message @x or /msg: show that conversation and put the cursor in its composer.
+  $effect(() => {
+    const r = live.dmRequest;
+    if (!r) return;
+    channel = r.channel;
+    tab = 'chat';
+    focusKey += 1;
+    live.dmRequest = null;
+  });
+  // Looking at a conversation reads it, including a line that arrives while it's open.
+  $effect(() => {
+    if (dm && dm.unread > 0 && tab === 'chat') void live.readDm(dm.channel);
+  });
+  // A DM tab whose conversation left the list (closed elsewhere, the name released): back to the lobby.
+  $effect(() => {
+    if (dmParticipants(channel) && !dm) channel = 'lobby';
+  });
 </script>
 
 <div class="lobby">
@@ -24,9 +49,11 @@
   <div class="center" class:hide={tab !== 'chat'}>
     <ChatPanel
       {channel}
-      title={`#${channel}`}
-      placeholder={`Say something in #${channel}`}
-      readOnly={channel === 'diary'}
+      {title}
+      {focusKey}
+      placeholder={dm ? `Message @${dm.with.handle}` : `Say something in #${channel}`}
+      readOnly={channel === 'diary' || !!dm?.with.released}
+      readOnlyNote={dm ? 'This name was given back; nobody will read this.' : undefined}
     >
       {#snippet header()}
         <div>
@@ -37,6 +64,7 @@
                   <span class="hash" aria-hidden="true">#</span>{c.id}
                 </button>
               {/each}
+              <DmTabs active={dm ? channel : null} onpick={(c) => (channel = c ?? 'lobby')} />
             </nav>
             <p class="about">{about}</p>
           </div>
@@ -90,6 +118,7 @@
   .channels {
     display: flex;
     gap: 0.25rem;
+    min-width: 0;
     overflow-x: auto;
   }
   .channels button {
@@ -119,6 +148,7 @@
   .about {
     margin: 0;
     color: var(--fog);
+    flex: none;
     font-size: var(--step--1);
     white-space: nowrap;
   }

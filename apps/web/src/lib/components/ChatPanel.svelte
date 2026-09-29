@@ -1,8 +1,9 @@
 <script lang="ts">
   import { tick, untrack, type Snippet } from 'svelte';
-  import type { ChatMessage } from '@cs/shared/protocol';
+  import { dmParticipants, type ChatMessage } from '@cs/shared/protocol';
   import { api } from '$lib/api';
   import { splitMessage } from '$lib/chat';
+  import { parseMsgCommand } from '$lib/dms';
   import { untilText } from '$lib/format';
   import { applyRemoval, chatItems, hiddenLabel } from '$lib/hidden';
   import { live } from '$lib/live.svelte';
@@ -21,6 +22,7 @@
     readOnly = false,
     readOnlyNote = 'Only the Proprietor posts here.',
     placeholder = 'Say something',
+    focusKey = 0,
   }: {
     channel: string;
     title: string;
@@ -30,6 +32,8 @@
     readOnly?: boolean;
     readOnlyNote?: string;
     placeholder?: string;
+    /** Bumping it focuses the composer (a conversation someone asked to open). */
+    focusKey?: number;
   } = $props();
 
   let messages = $state<ChatMessage[]>([]);
@@ -90,6 +94,11 @@
     void tick().then(() => log && (log.scrollTop = log.scrollHeight));
   });
 
+  $effect(() => {
+    if (focusKey === 0) return;
+    untrack(() => void tick().then(() => document.getElementById(inputId)?.focus()));
+  });
+
   function onScroll() {
     if (log) pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
   }
@@ -98,6 +107,22 @@
     e.preventDefault();
     const text = draft.trim();
     if (!text) return;
+    const dm = parseMsgCommand(text);
+    if (dm) {
+      error = '';
+      notice = '';
+      if (!dm.handle || !dm.text) {
+        error = 'Try /msg @name hello.';
+        return;
+      }
+      try {
+        await live.sendDm(dm.handle, dm.text);
+        draft = '';
+      } catch (err) {
+        error = (err as Error).message;
+      }
+      return;
+    }
     const words = parseInviteCommand(text);
     if (words) {
       error = '';
@@ -184,7 +209,7 @@
         {/if}
       {/if}
     {:else}
-      <p class="empty">{readOnly ? 'Nothing posted yet.' : 'Quiet in here. Say hello.'}</p>
+      <p class="empty">{readOnly ? 'Nothing posted yet.' : dmParticipants(channel) ? 'No messages yet. Say hello.' : 'Quiet in here. Say hello.'}</p>
     {/each}
   </div>
   {#if readOnly}
@@ -209,6 +234,8 @@
 <style>
   .chat {
     display: grid;
+    /* A header with many tabs must scroll inside the panel, never widen it. */
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto auto;
     min-height: 0;
     height: 100%;
