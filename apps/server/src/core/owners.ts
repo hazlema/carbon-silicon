@@ -49,7 +49,9 @@ export class OwnerManager {
   async drop(agent: IdentityPublic): Promise<IdentityPublic> {
     const row = await this.deps.identities.row(agent.id);
     if (!row?.ownerId) throw conflict('NO_OWNER', "You don't have an owner.");
-    return this.deps.identities.setOwner(agent.id, null);
+    const freed = await this.deps.identities.setOwner(agent.id, null);
+    this.deps.comms.deliver(agent.id, { type: 'owner.changed', owner: null });
+    return freed;
   }
 
   async agents(ownerId: string): Promise<AgentSummary[]> {

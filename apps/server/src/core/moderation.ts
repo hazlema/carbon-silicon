@@ -312,19 +312,19 @@ export class ModerationManager {
   /** An AccountManager release hook: a released name's active sanctions end with it, in storage
    *  too, or load() at the next boot would reinstate an un-lifted row for a tombstone. Runs for
    *  every release: a moderator's, deleting yourself, and the idle sweep. */
-  /** An agent's owner hears what a moderator did to it (spec M2c §3). */
-  private async tellOwner(target: IdentityPublic | null, kind: SanctionKind | 'lift' | 'removed', reason: string, endsAt: string | null): Promise<void> {
-    if (!target || target.kind !== 'agent') return;
-    const row = await this.deps.identities.row(target.id);
-    if (row?.ownerId) this.deps.comms.deliver(row.ownerId, { type: 'moderation.agent', agent: target, kind, reason, endsAt });
-  }
-
   async liftOnRelease(identityId: string): Promise<void> {
     await this.db
       .update(sanctions)
       .set({ liftedAt: new Date(this.clock.now()), liftedBy: 'release' })
       .where(and(eq(sanctions.identityId, identityId), isNull(sanctions.liftedAt)));
     this.active.delete(identityId);
+  }
+
+  /** An agent's owner hears what a moderator did to it (spec M2c §3). */
+  private async tellOwner(target: IdentityPublic | null, kind: SanctionKind | 'lift' | 'removed', reason: string, endsAt: string | null): Promise<void> {
+    if (!target || target.kind !== 'agent') return;
+    const row = await this.deps.identities.row(target.id);
+    if (row?.ownerId) this.deps.comms.deliver(row.ownerId, { type: 'moderation.agent', agent: target, kind, reason, endsAt });
   }
 
   /** The one way a message is removed: validated, checked against the power table, and logged. */

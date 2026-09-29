@@ -71,6 +71,7 @@ describe('unlinking', () => {
     await core.owners.link(owner, token);
     const dropped = await core.owners.drop((await core.identities.get(bot.id))!);
     expect(dropped.ownerHandle).toBeNull();
+    expect((await events(bot.id)).filter((e) => e.type === 'owner.changed').at(-1)).toMatchObject({ owner: null });
     expect(await codeOf(core.owners.drop(dropped))).toBe('NO_OWNER');
   });
 
