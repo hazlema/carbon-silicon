@@ -57,6 +57,16 @@ describe('buildJudgePrompt', () => {
     const table = buildJudgePrompt(report({ snapshot: line(3, 'bob', 'noob', 'match:m_1'), context: [] }));
     expect(table).toContain('match table');
   });
+  test('a DM line is described as a private conversation, never a public channel', () => {
+    const p = buildJudgePrompt(report({ snapshot: line(3, 'bob', 'you absolute walnut', 'dm:id_ann:id_bob'), context: [] }));
+    expect(p).toContain(
+      'a private direct message between the two people, who chose to talk: profanity is fine there; harassment, threats and sharing personal information are not',
+    );
+    expect(p).not.toContain('public channel');
+  });
+  test('the Bouncer\'s rules ask it not to quote the reported message in its reason', () => {
+    expect(RULES).toContain('Never quote the reported message in your reason');
+  });
 });
 
 describe('LlmJudge', () => {
