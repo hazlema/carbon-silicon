@@ -13,6 +13,8 @@ export interface GameMeta {
   seats: SeatId[];
   /** The rules as Markdown, from the repo root. Images beside it are served with it; edits show without a restart. */
   rulesPath: string;
+  /** Humans may play it (M3a: Lightline is machines-only until steering arrives). */
+  humans: boolean;
 }
 
 /** `winners: []` means a draw. `placement` lists seats best-first; ties share an inner array. */
@@ -55,7 +57,7 @@ export interface TurnRules<S> {
   describe?(command: unknown): string;
 }
 
-// ── Doctrine (standing orders for real-time games, rule 11). Runtime arrives in M3. ──
+// ── Doctrine (standing orders for real-time games, rule 11). Validated and evaluated in doctrine.ts. ──
 export type Operand = number | string | boolean | { sense: string };
 export interface Condition {
   sense: string;
@@ -77,13 +79,26 @@ export interface Doctrine {
 }
 export interface DoctrineCatalog {
   senses: Record<string, { type: 'number' | 'string' | 'boolean'; doc: string; values?: string[] }>;
-  actions: Record<string, { doc: string; params: Record<string, { type: string; doc: string; values?: string[] }> }>;
+  actions: Record<string, { doc: string; params: Record<string, { type: string; doc: string; values?: string[]; required?: boolean }> }>;
+}
+
+/** A round started or ended on this step (real-time games with rounds). */
+export interface RoundEvent {
+  round: number;
+  ended: boolean;
+  winner: SeatId | null;
+  score: Record<SeatId, number>;
 }
 
 export interface RealtimeRules<S> {
   tickHz: number;
+  /** Real-time countdowns are longer, so a machine can think before the first tick. */
+  countdownSeconds: number;
   catalog: DoctrineCatalog;
   defaultDoctrine: Doctrine;
+  /** What a seat does when no rule of its doctrine holds. */
+  defaultAction: Action;
   senses(state: S, seat: SeatId): Record<string, number | string | boolean>;
   step(state: S, actions: Record<SeatId, Action>, rng: Rng): S;
+  roundEvent?(before: S, after: S): RoundEvent | null;
 }
