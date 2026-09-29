@@ -12,6 +12,7 @@ import { IdentityManager } from './identity';
 import { InviteManager } from './invites';
 import { LeaderboardManager } from './leaderboard';
 import { ModerationManager } from './moderation';
+import { OwnerManager } from './owners';
 import { PresenceManager } from './presence';
 import { ProfileService } from './profiles';
 import { DmManager } from './dms';
@@ -46,6 +47,7 @@ export interface Core {
   tables: TableManager;
   invites: InviteManager;
   moderation: ModerationManager;
+  owners: OwnerManager;
   relations: RelationManager;
   reports: ReportManager;
   leaderboard: LeaderboardManager;
@@ -80,11 +82,13 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const moderation = new ModerationManager(database.db, bus, clock, { identities, accounts, profiles, comms, games, invites, tables });
   guard.install((identity, action) => moderation.check(identity, action));
   await moderation.load();
+  const owners = new OwnerManager(database.db, { identities, comms, presence, profiles, moderation });
 
   comms.setMentionFilter((ownerId, authorId) => relations.mutes(ownerId, authorId));
   accounts.onRelease((identityId) => relations.forget(identityId));
   accounts.onRelease((identityId) => moderation.liftOnRelease(identityId));
   accounts.onRelease((identityId) => dms.forget(identityId));
+  accounts.onRelease((identityId) => owners.forget(identityId));
   accounts.onRelease(async (identityId) => presence.drop(identityId));
   accounts.onSessionsEnded((sessionIds) => bus.emit('sessions.ended', { sessionIds }));
   const reports = new ReportManager(database.db, clock, { identities, comms, moderation, guard });
@@ -127,6 +131,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     tables,
     invites,
     moderation,
+    owners,
     relations,
     reports,
     leaderboard,

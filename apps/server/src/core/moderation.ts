@@ -245,6 +245,7 @@ export class ModerationManager {
     this.remember(target.id, active);
     await this.record(actor, kind, target.id, reason, { minutes });
     this.deps.comms.deliver(target.id, { type: 'moderation', kind, reason, endsAt: iso(endsAt) });
+    await this.tellOwner(target, kind, reason, iso(endsAt));
     return toInfo(active);
   }
 
@@ -266,6 +267,7 @@ export class ModerationManager {
     this.active.delete(target.id);
     await this.record(actor, 'lift', target.id, why);
     this.deps.comms.deliver(target.id, { type: 'moderation', kind: 'lift', reason: why, endsAt: null });
+    await this.tellOwner(target, 'lift', why, null);
   }
 
   async setRole(actor: Actor, targetId: string, role: unknown, reason: unknown): Promise<IdentityPublic> {
@@ -310,6 +312,13 @@ export class ModerationManager {
   /** An AccountManager release hook: a released name's active sanctions end with it, in storage
    *  too, or load() at the next boot would reinstate an un-lifted row for a tombstone. Runs for
    *  every release: a moderator's, deleting yourself, and the idle sweep. */
+  /** An agent's owner hears what a moderator did to it (spec M2c §3). */
+  private async tellOwner(target: IdentityPublic | null, kind: SanctionKind | 'lift' | 'removed', reason: string, endsAt: string | null): Promise<void> {
+    if (!target || target.kind !== 'agent') return;
+    const row = await this.deps.identities.row(target.id);
+    if (row?.ownerId) this.deps.comms.deliver(row.ownerId, { type: 'moderation.agent', agent: target, kind, reason, endsAt });
+  }
+
   async liftOnRelease(identityId: string): Promise<void> {
     await this.db
       .update(sanctions)
@@ -329,6 +338,7 @@ export class ModerationManager {
     this.authorize(actor, { action: 'delete-message' }, message.author);
     const removed = await this.deps.comms.remove(messageId, actor.kind === 'console' ? null : actor.identity);
     await this.record(actor, 'delete-message', message.author?.id ?? null, why, { messageId, channel: message.channel });
+    await this.tellOwner(message.author, 'removed', why, null);
     return removed;
   }
 

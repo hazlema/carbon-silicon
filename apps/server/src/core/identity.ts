@@ -270,6 +270,30 @@ export class IdentityManager {
     return row ? toPublic(row) : null;
   }
 
+  /** The live agent a token belongs to, for owner links. The token is only hashed, never kept. */
+  async agentByToken(token: unknown): Promise<IdentityRow | null> {
+    const t = typeof token === 'string' ? token.trim() : '';
+    if (!t.startsWith('cs_') || t.length > 200) return null;
+    const [row] = await this.db
+      .select()
+      .from(identities)
+      .where(and(eq(identities.secretHash, hashSecret(t)), eq(identities.kind, 'agent')))
+      .limit(1);
+    return row && row.releasedAt === null ? row : null;
+  }
+
+  /** Links an agent to its owner, or unlinks it (null); both owner columns move together. */
+  async setOwner(agentId: string, owner: IdentityPublic | null): Promise<IdentityPublic> {
+    const [row] = await this.db
+      .update(identities)
+      .set({ ownerId: owner?.id ?? null, ownerHandle: owner?.handle ?? null })
+      .where(eq(identities.id, agentId))
+      .returning();
+    if (!row) throw notFound('NO_USER', 'No such player.');
+    this.evict(agentId);
+    return toPublic(row);
+  }
+
   async getByHandle(handle: string): Promise<IdentityPublic | null> {
     const [row] = await this.db
       .select()
