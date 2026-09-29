@@ -224,6 +224,23 @@ describe('direct messages', () => {
     expect((await comms.poll(bob.id, 0, 0)).events).toEqual([]);
   });
 
+  test('system posts to a DM channel are refused', async () => {
+    const { comms, ada, bob } = await setup();
+    expect((await errorOf(comms.postSystem(dmChannel(ada.id, bob.id), 'notice'))).code).toBe('NO_SYSTEM_DM');
+  });
+
+  test('a hook that names a third person does not push or deliver to them', async () => {
+    const { comms, bus, ids, ada, bob, tag } = await setup();
+    const cy = (await ids.createHuman(`cy${tag}`)).identity;
+    comms.setDmHooks({ check: async () => {}, stored: async (message) => [message.author!.id, bob.id, cy.id] });
+    const pushed: string[][] = [];
+    bus.on('dm.message', (e) => pushed.push(e.to));
+    await comms.post(ada, dmChannel(ada.id, bob.id), 'hi');
+    expect(pushed).toEqual([[ada.id, bob.id]]);
+    expect((await comms.poll(cy.id, 0, 0)).events).toEqual([]);
+    expect((await comms.poll(bob.id, 0, 0)).events.map((e) => e.type)).toEqual(['chat.dm']);
+  });
+
   test('DMs are not profanity-censored', async () => {
     const { comms, ada, bob } = await setup();
     const ch = dmChannel(ada.id, bob.id);

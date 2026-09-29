@@ -153,7 +153,9 @@ export class CommunicationManager {
     return this.insert(channel, author, kind === 'public' || kind === 'rail' ? censorText(text) : text, false);
   }
 
-  postSystem(channel: string, text: string): Promise<ChatMessage> {
+  async postSystem(channel: string, text: string): Promise<ChatMessage> {
+    // Author-less lines would fall through to chat.message and the mention fan-out.
+    if (dmParticipants(channel)) throw badRequest('NO_SYSTEM_DM', 'System lines cannot be posted to a direct message.');
     return this.insert(channel, null, text, true);
   }
 
@@ -167,7 +169,7 @@ export class CommunicationManager {
     if (pair && author) {
       // A DM never reaches channel listeners or mention inboxes: only the two, and only those the hooks allow.
       const other = pair[0] === author.id ? pair[1] : pair[0];
-      const to = await this.dmHooks.stored(message, other);
+      const to = (await this.dmHooks.stored(message, other)).filter((id) => pair.includes(id));
       this.bus.emit('dm.message', { message, to });
       if (to.includes(other)) this.deliver(other, { type: 'chat.dm', message });
       return message;

@@ -14,6 +14,7 @@ import { LeaderboardManager } from './leaderboard';
 import { ModerationManager } from './moderation';
 import { PresenceManager } from './presence';
 import { ProfileService } from './profiles';
+import { DmManager } from './dms';
 import { RelationManager } from './relations';
 import { ReportManager } from './reports';
 import { TableManager } from './tables';
@@ -40,6 +41,7 @@ export interface Core {
   profiles: ProfileService;
   presence: PresenceManager;
   comms: CommunicationManager;
+  dms: DmManager;
   games: GameManager;
   tables: TableManager;
   invites: InviteManager;
@@ -67,6 +69,8 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], guard, gameOpts);
   comms.setMatchTable((matchId) => games.tableIdOf(matchId));
   const relations = new RelationManager(database.db, identities);
+  const dms = new DmManager(database.db, { comms, identities, relations });
+  comms.setDmHooks({ check: (author, otherId) => dms.check(author, otherId), stored: (message, otherId) => dms.stored(message, otherId) });
   const tables = new TableManager({ games, presence, comms, identities, relations, guard, bus, clock });
   const invites = new InviteManager(games, presence, bus, clock, guard, tables, { houseFallbackMs: opts.houseFallbackMs ?? 8000 });
   tables.setQueueLeaver((identityId) => invites.leave(identityId));
@@ -80,6 +84,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   comms.setMentionFilter((ownerId, authorId) => relations.mutes(ownerId, authorId));
   accounts.onRelease((identityId) => relations.forget(identityId));
   accounts.onRelease((identityId) => moderation.liftOnRelease(identityId));
+  accounts.onRelease((identityId) => dms.forget(identityId));
   accounts.onRelease(async (identityId) => presence.drop(identityId));
   accounts.onSessionsEnded((sessionIds) => bus.emit('sessions.ended', { sessionIds }));
   const reports = new ReportManager(database.db, clock, { identities, comms, moderation, guard });
@@ -117,6 +122,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     profiles,
     presence,
     comms,
+    dms,
     games,
     tables,
     invites,

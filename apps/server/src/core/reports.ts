@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
+import { dmParticipants } from '@cs/shared/protocol';
 import type {
   ChatMessage,
   IdentityPublic,
@@ -62,6 +63,9 @@ export class ReportManager {
     const why = optionalReason(reason);
     const message = await this.deps.comms.message(messageId);
     if (!message) throw notFound('NO_MESSAGE', 'There is no such message.');
+    // A DM line exists only for its two people; a guessed id must not pull it into the mod queue.
+    const pair = dmParticipants(message.channel);
+    if (pair && !pair.includes(reporter.id)) throw notFound('NO_MESSAGE', 'There is no such message.');
     if (message.system || !message.author) throw badRequest('CANT_REPORT', 'System messages cannot be reported.');
     if (message.author.id === reporter.id) throw badRequest('CANT_REPORT', "You can't report your own message.");
     if (message.removed) throw badRequest('CANT_REPORT', 'That message has already been removed.');
