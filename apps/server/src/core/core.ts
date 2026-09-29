@@ -148,6 +148,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     close: async () => {
       closed = true;
       clock.clearTimeout(sweepTimer);
+      games.close();
       await database.close();
     },
   };

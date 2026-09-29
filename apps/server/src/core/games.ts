@@ -68,6 +68,7 @@ const resultFor = (o: Outcome, seat: SeatId): 'win' | 'loss' | 'draw' =>
 export class GameManager {
   private matches = new Map<string, LiveMatch>();
   private active = new Map<string, string>();
+  private closed = false;
   private modules: Map<string, GameModule<any>>;
   private opts: GameManagerOptions;
 
@@ -237,7 +238,18 @@ export class GameManager {
     return summary;
   }
 
+  /** Shuts the runner down with the core: every countdown, tick and retain timer is cleared and none can re-arm. */
+  close(): void {
+    this.closed = true;
+    for (const m of this.matches.values()) {
+      this.clock.clearTimeout(m.timer);
+      m.timer = null;
+      m.waiters.clear();
+    }
+  }
+
   private async goLive(id: string): Promise<void> {
+    if (this.closed) return;
     const m = this.matches.get(id);
     if (!m || m.status !== 'countdown') return;
     m.status = 'live';
@@ -369,6 +381,7 @@ export class GameManager {
   }
 
   private scheduleTick(m: LiveMatch): void {
+    if (this.closed) return;
     const ms = this.opts.realtimeTickMs ?? 1000 / m.module.realtime!.tickHz;
     m.timer = this.clock.setTimeout(() => this.tick(m.id), ms);
   }
@@ -379,6 +392,7 @@ export class GameManager {
    * and skipped; the next one still comes.
    */
   private tick(id: string): void {
+    if (this.closed) return;
     const m = this.matches.get(id);
     if (!m || !m.desk || m.status !== 'live') return;
     const rt = m.module.realtime!;

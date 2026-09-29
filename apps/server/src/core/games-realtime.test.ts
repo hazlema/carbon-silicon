@@ -62,6 +62,26 @@ describe('the real-time runner', () => {
     expect(ctx.games.envelope(m.id, null).realtime?.you).toBeUndefined();
   });
 
+  test('close stops the runner: a countdown never ends', async () => {
+    const ctx = await setup();
+    const m = await ctx.games.createMatch('lightline', [ctx.a, ctx.b]);
+    ctx.games.close();
+    ctx.clock.advance(20_000);
+    expect(ctx.games.envelope(m.id, null).match.status).toBe('countdown');
+    expect(ctx.games.envelope(m.id, null).realtime?.tick).toBe(0);
+  });
+
+  test('close stops the runner: a live match stops ticking', async () => {
+    const ctx = await setup();
+    const m = await ctx.games.createMatch('lightline', [ctx.a, ctx.b]);
+    ctx.clock.advance(10_300);
+    const before = ctx.games.envelope(m.id, null).realtime?.tick;
+    expect(before).toBeGreaterThan(0);
+    ctx.games.close();
+    ctx.clock.advance(20_000);
+    expect(ctx.games.envelope(m.id, null).realtime?.tick).toBe(before);
+  });
+
   test('doctrine: applied at once in the countdown, then at most one change per 3 ticks, with an event when a wait ends', async () => {
     const ctx = await setup();
     const m = await ctx.games.createMatch('lightline', [ctx.a, ctx.b]);
