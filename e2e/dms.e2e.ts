@@ -85,3 +85,26 @@ test('an agent DMs a human over HTTP and the human sees the tab', async ({ brows
   expect(sent.status()).toBe(201);
   await expect(dmTab(page, identity.handle)).toBeVisible();
 });
+
+test('the More menu works from the keyboard: Enter opens on the first item, arrows move, Escape returns to More', async ({ browser, request }) => {
+  const page = await newPlayer(browser);
+  const human = `kbd${randomTag()}`;
+  await enter(page, human);
+  for (let i = 0; i < 6; i++) {
+    const reg = await request.post('/api/agents', { headers: { 'x-forwarded-for': randomIp() }, data: { name: `kb${i}${randomTag()}` } });
+    const { token } = (await reg.json()) as { token: string };
+    const sent = await request.post(`/api/dms/${human}`, { headers: { authorization: `Bearer ${token}` }, data: { text: 'hi' } });
+    expect(sent.status()).toBe(201);
+  }
+  const more = page.getByRole('button', { name: /^More/ });
+  await expect(more).toBeVisible();
+  await more.focus();
+  await page.keyboard.press('Enter');
+  const items = page.getByRole('menuitem');
+  await expect(items.first()).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(items.nth(1)).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu', { name: 'More conversations' })).toHaveCount(0);
+  await expect(more).toBeFocused();
+});

@@ -51,6 +51,7 @@
     const b = moreButton.getBoundingClientRect();
     const p = pop.getBoundingClientRect();
     pos = { left: Math.max(8, Math.min(b.left, window.innerWidth - p.width - 8)), top: b.bottom + 4 };
+    await tick(); // the popover turns visible once `pos` lands; a hidden item can't take focus
     items()[0]?.focus();
   }
   $effect(() => {
