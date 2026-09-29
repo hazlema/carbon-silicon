@@ -432,6 +432,7 @@ export class TableManager {
   async vsHouse(identity: IdentityPublic, gameId: unknown, bot?: unknown): Promise<TableInfo> {
     if (typeof gameId !== 'string') throw badRequest('BAD_GAME', 'Send {"gameId": "critical-mass"}.');
     this.deps.games.module(gameId);
+    this.deps.games.assertPlayable(identity, gameId);
     const want = typeof bot === 'string' && bare(bot) ? bare(bot).toLowerCase() : null;
     const pick = this.deps.presence
       .list()

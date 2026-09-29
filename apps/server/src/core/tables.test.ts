@@ -560,4 +560,11 @@ describe('machines only (Lightline)', () => {
     expect(after.seated.map((p) => p.id)).toEqual([ctx.agent.id]);
     expect(after.invites).toHaveLength(0);
   });
+
+  test('vs house is refused before any bot is picked, even when no house bot is free', async () => {
+    const ctx = await setup();
+    const e = await errorOf(() => ctx.tables.vsHouse(ctx.ann, 'lightline', 'nobody'));
+    expect([e.status, e.code]).toEqual([403, 'MACHINES_ONLY']);
+    expect(ctx.tables.list()).toHaveLength(0);
+  });
 });
