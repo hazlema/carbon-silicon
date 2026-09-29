@@ -13,6 +13,7 @@ import { clientIp as resolveIp } from '../lib/ip';
 import { RateLimiter } from '../lib/ratelimit';
 import { sessionLabel } from '../lib/ua';
 import { consoleRoutes } from './console';
+import { dmRoutes } from './dms';
 import { apiIndex } from './index-doc';
 import { body, me, optionalBody } from './request';
 import { tableRoutes } from './tables';
@@ -448,6 +449,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   });
 
   app.route('/api', tableRoutes(core));
+  app.route('/api', dmRoutes(core));
 
   app.route('/api/console', consoleRoutes(core, opts.adminKey ?? null));
 
