@@ -1,0 +1,21 @@
+layout {
+    pane split_direction="vertical" {
+        pane split_direction="horizontal" {
+            pane name="server" {
+                cwd "/home/frosty/Dev/ai/robot-games/"
+                command "bun"
+                args "run" "dev:server"
+            }
+            pane name="bots" {
+                cwd "/home/frosty/Dev/ai/robot-games/"
+                command "bun"
+                args "run" "dev:bots"
+            }
+        }
+        pane name="browser" {
+            cwd "/usr/bin/"
+            command "brave-origin"
+            args "http://localhost:3000"
+        }
+    }
+}
