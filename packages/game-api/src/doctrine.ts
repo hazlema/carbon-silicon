@@ -50,7 +50,7 @@ export function validateDoctrine(input: unknown, catalog: DoctrineCatalog): Doct
 
 function rule(r: unknown, path: string, cat: DoctrineCatalog): Rule {
   if (!isObj(r)) throw bad(path, 'a rule is an object with "do", and optionally "when" and "label"');
-  for (const k of Object.keys(r)) if (k !== 'when' && k !== 'do' && k !== 'label') throw bad(`${path}.${k}`, `unknown field "${k}"`);
+  only(r, ['when', 'do', 'label'], path);
   const out: Rule = { do: action(r.do, `${path}.do`, cat) };
   if (r.when !== undefined) out.when = when(r.when, `${path}.when`, cat, 1);
   if (r.label !== undefined) {
@@ -65,15 +65,21 @@ function rule(r: unknown, path: string, cat: DoctrineCatalog): Rule {
 function when(w: unknown, path: string, cat: DoctrineCatalog, depth: number): When {
   if (depth > MAX_DEPTH) throw bad(path, `conditions nest at most ${MAX_DEPTH} deep`);
   if (!isObj(w)) throw bad(path, 'a condition is an object');
-  if ('all' in w || 'any' in w) {
-    const key = 'all' in w ? 'all' : 'any';
+  // Exactly one shape: {all}, {any}, {not} or a leaf {sense, op, value}; any other key is refused.
+  const key = (['all', 'any', 'not'] as const).find((k) => k in w);
+  only(w, key ? [key] : ['sense', 'op', 'value'], path);
+  if (key === 'all' || key === 'any') {
     const list = w[key];
     if (!Array.isArray(list) || list.length === 0) throw bad(`${path}.${key}`, 'a non-empty list of conditions');
     const inner = list.map((x, i) => when(x, `${path}.${key}[${i}]`, cat, depth + 1));
     return key === 'all' ? { all: inner } : { any: inner };
   }
-  if ('not' in w) return { not: when(w.not, `${path}.not`, cat, depth + 1) };
+  if (key === 'not') return { not: when(w.not, `${path}.not`, cat, depth + 1) };
   return condition(w, path, cat);
+}
+
+function only(o: Obj, keys: string[], path: string) {
+  for (const k of Object.keys(o)) if (!keys.includes(k)) throw bad(`${path}.${k}`, `unknown field "${k}"`);
 }
 
 function senseOf(name: unknown, path: string, cat: DoctrineCatalog) {
@@ -90,6 +96,7 @@ function condition(w: Obj, path: string, cat: DoctrineCatalog): Condition {
   if (NUMERIC.includes(op) && sense.type !== 'number') throw bad(`${path}.op`, `"${op}" compares numbers; "${name}" is a ${sense.type}`);
   const v = w.value;
   if (isObj(v)) {
+    only(v, ['sense'], `${path}.value`);
     const other = senseOf(v.sense, `${path}.value.sense`, cat);
     if (other.type !== sense.type) throw bad(`${path}.value`, `"${v.sense as string}" is a ${other.type}, "${name}" is a ${sense.type}`);
     return { sense: name, op, value: { sense: v.sense as string } };

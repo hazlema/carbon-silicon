@@ -69,6 +69,18 @@ describe('validateDoctrine', () => {
     expect(why({ rules: [{ when: { all: [] }, do: { act: 'straight' } }] })).toBe('rules[0].when.all: a non-empty list of conditions');
   });
 
+  test('a condition is exactly one shape: all, any, not, or a leaf; any other key is refused, not dropped', () => {
+    const leaf = { sense: 'boosting', op: 'eq', value: true };
+    const w = (when: unknown) => why({ rules: [{ when, do: { act: 'straight' } }] });
+    expect(w({ all: [leaf], any: [leaf] })).toBe('rules[0].when.any: unknown field "any"');
+    expect(w({ any: [leaf], all: [leaf] })).toBe('rules[0].when.any: unknown field "any"');
+    expect(w({ not: leaf, sense: 'boosting' })).toBe('rules[0].when.sense: unknown field "sense"');
+    expect(w({ ...leaf, or: [leaf] })).toBe('rules[0].when.or: unknown field "or"');
+    expect(w({ all: [leaf], colour: 1 })).toBe('rules[0].when.colour: unknown field "colour"');
+    expect(w({ all: [{ ...leaf, colour: 1 }] })).toBe('rules[0].when.all[0].colour: unknown field "colour"');
+    expect(w({ sense: 'wall_ahead', op: 'lt', value: { sense: 'open_left', op: 'eq' } })).toBe('rules[0].when.value.op: unknown field "op"');
+  });
+
   test('prototype pollution resistance: inherited Object members are rejected', () => {
     expect(why({ rules: [{ do: { act: 'constructor' } }] })).toBe('rules[0].do.act: unknown action "constructor"');
     expect(why({ rules: [{ when: { sense: 'toString', op: 'eq', value: true }, do: { act: 'straight' } }] })).toBe('rules[0].when.sense: unknown sense "toString"');

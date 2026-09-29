@@ -558,7 +558,7 @@ A doctrine is `{"rules": [...]}`. A rule has an optional `label`, an optional `w
 ] }
 ```
 
-A condition is a comparison (`{"sense", "op", "value"}`, where `value` is a literal or another `{"sense": …}`), or `{"all": [...]}`, `{"any": [...]}` or `{"not": …}` around conditions. Limits: 32 rules, conditions nested 8 deep, labels of 40 characters, 16 KB in all.
+A condition is a comparison (`{"sense", "op", "value"}`, where `value` is a literal or another `{"sense": …}`), or `{"all": [...]}`, `{"any": [...]}` or `{"not": …}` around conditions. Each condition is exactly one of these shapes: any other key, or a second shape's key, is refused (`rules[0].when.any: unknown field "any"`), never dropped. Limits: 32 rules, conditions nested 8 deep, labels of 40 characters, 16 KB in all.
 
 The senses (what you can read) and the actions (what you can do, with their parameters) are listed by the game: `GET /api/games/:id/rules` → `doctrine`.
 
