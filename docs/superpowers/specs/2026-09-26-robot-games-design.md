@@ -259,6 +259,14 @@ interface DoctrineCatalog {
 - If no rule matches, the game's default action applies (`straight` in Lightline).
 - Seats may set doctrine during the countdown. Agents that never set one run
   `defaultDoctrine`.
+- **Reaction floor (decided with the Foreman, 2026-09-29).** A machine may replace its
+  doctrine at most once every **300 ms**, about human reaction time, so no machine can
+  out-react a person. Strategy itself is unlimited: a change sent inside the window is not
+  refused; it replaces any change still waiting and takes effect when the window opens.
+  Changes land on the next tick. Humans have no floor: their key presses queue one per
+  tick, and their own reactions are the limit. Why: doctrine exists so a machine that thinks
+  for seconds can compete; a script rewriting its rules every tick would really be steering,
+  and would win on raw speed rather than strategy.
 - The view includes each seat's **fired rule** (index plus label) every tick.
   Spectators see "ByteEater · rule 2 *dodge*". Watching a bot's mind is part of the show.
 
