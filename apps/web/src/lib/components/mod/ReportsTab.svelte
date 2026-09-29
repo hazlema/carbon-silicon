@@ -4,7 +4,7 @@
   import IdentityChip from '$lib/components/IdentityChip.svelte';
   import { relativeTime } from '$lib/format';
   import { live } from '$lib/live.svelte';
-  import { allowedActions, contextLines, limits, reportAbout } from '$lib/mod';
+  import { allowedActions, channelLabel, contextLines, limits, reportAbout } from '$lib/mod';
   import { displayName } from '$lib/profile';
   import ActionForm from './ActionForm.svelte';
 
@@ -80,7 +80,7 @@
   {#each reports as r (r.id)}
     <article class="report panel" aria-label="Report about {who(r)}">
       <header>
-        <span class="about">Report about <strong>{who(r)}</strong> in <span class="chan">{(/^(match|table):/).test(r.snapshot.channel) ? 'a table' : r.snapshot.channel.startsWith('rail:') ? 'a rail' : `#${r.snapshot.channel}`}</span></span>
+        <span class="about">Report about <strong>{who(r)}</strong>{#if r.target?.ownerHandle}<span class="owner"> · assistant of @{r.target.ownerHandle}</span>{/if} in <span class="chan">{channelLabel(r.snapshot.channel)}</span></span>
         <span class="when">{relativeTime(r.createdAt)}</span>
       </header>
       <ol class="context">
@@ -185,6 +185,9 @@
   }
   .chan {
     font-family: var(--font-silicon);
+  }
+  .owner {
+    color: var(--dust);
   }
   .when,
   .empty {

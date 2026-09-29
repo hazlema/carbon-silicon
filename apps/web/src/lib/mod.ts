@@ -92,3 +92,11 @@ export function contextLines(r: ReportView): (ReportSnapshot & { reported: boole
     .sort((a, b) => a.messageId - b.messageId)
     .map((line) => ({ ...line, author: authorNow(r, line.author), reported: line.messageId === r.snapshot.messageId }));
 }
+
+/** Where a reported line was said, for the report card. */
+export function channelLabel(channel: string): string {
+  if (/^(match|table):/.test(channel)) return 'a table';
+  if (channel.startsWith('rail:')) return 'a rail';
+  if (channel.startsWith('dm:')) return 'a direct message';
+  return `#${channel}`;
+}

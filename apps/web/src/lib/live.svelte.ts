@@ -19,6 +19,7 @@ import { dmChannel, dmParticipants } from '@cs/shared/protocol';
 import { updated } from '$app/state';
 import { api, ApiError } from './api';
 import { unreadTotal, withMessage } from './dms';
+import type { AgentNoticeEvent } from './owners';
 
 type Listener<T> = (value: T) => void;
 export type Removal = { id: number; by: string };
@@ -53,6 +54,12 @@ class Live {
   /** A conversation someone asked to open (Message @x, /msg). The page with a chat switches to it
    *  and clears this; `n` makes asking twice for the same one count. */
   dmRequest = $state<{ channel: string; n: number } | null>(null);
+  /** What moderators did to your agents, until you dismiss it (at most the last 5). */
+  agentNotices = $state<AgentNoticeEvent[]>([]);
+
+  dismissAgentNotice(cursor: number): void {
+    this.agentNotices = this.agentNotices.filter((e) => e.cursor !== cursor);
+  }
   /** Everyone you ignore or block; their chat is hidden for you. */
   hiddenAuthors: Set<string> = $derived(new Set([...this.relations.ignores, ...this.relations.blocks].map((i) => i.id)));
   myStatus: Status = $derived(this.presence.find((p) => p.identity.id === this.me?.id)?.status ?? 'offline');
@@ -345,6 +352,7 @@ class Live {
           const read = msg.event.channel;
           this.dms = this.dms.map((d) => (d.channel === read ? { ...d, unread: 0 } : d));
         }
+        if (msg.event.type === 'moderation.agent') this.agentNotices = [...this.agentNotices, msg.event].slice(-5);
         this.#tableEvent(msg.event);
         for (const fn of this.#inbox) fn(msg.event);
         break;

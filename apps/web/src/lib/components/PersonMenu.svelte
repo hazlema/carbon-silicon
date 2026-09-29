@@ -120,6 +120,7 @@
   </button>
   {#if open}
     <div class="pop panel" use:portal bind:this={pop} style={pos ? `left: ${pos.left}px; top: ${pos.top}px` : 'visibility: hidden'}>
+      {#if identity.ownerHandle}<p class="owner">assistant of <a href="/u/{identity.ownerHandle}">@{identity.ownerHandle}</a></p>{/if}
       {#if note}
         <p role="status">{note}</p>
       {:else}
@@ -164,6 +165,10 @@
 </span>
 
 <style>
+  .owner {
+    color: var(--fog);
+    border-bottom: 1px solid var(--lattice);
+  }
   .pm {
     position: relative;
     display: inline-block;

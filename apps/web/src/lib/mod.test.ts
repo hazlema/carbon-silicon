@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { IdentityPublic, ModLogEntry, ReportInfo, ReportSnapshot } from '@cs/shared/protocol';
-import { allowedActions, contextLines, durationText, isModerator, limits, logLine, reportAbout } from './mod';
+import { allowedActions, contextLines, durationText, isModerator, limits, logLine, reportAbout, channelLabel } from './mod';
 
 const who = (id: string, over: Partial<IdentityPublic> = {}): IdentityPublic => ({
   id,
@@ -115,5 +115,15 @@ describe('a report about someone since released', () => {
   test('an active target keeps their @handle; a system line says system', () => {
     expect(reportAbout(report(bob))).toBe('@bob');
     expect(reportAbout({ snapshot: snapLine(5, null), context: [], target: null } as unknown as ReportInfo)).toBe('system');
+  });
+});
+
+describe('channelLabel', () => {
+  test('names where a reported line was said', () => {
+    expect(channelLabel('lobby')).toBe('#lobby');
+    expect(channelLabel('table:t_1')).toBe('a table');
+    expect(channelLabel('match:m_1')).toBe('a table');
+    expect(channelLabel('rail:t_1')).toBe('a rail');
+    expect(channelLabel('dm:id_a:id_b')).toBe('a direct message');
   });
 });
