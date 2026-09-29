@@ -78,9 +78,8 @@ function when(w: unknown, path: string, cat: DoctrineCatalog, depth: number): Wh
 
 function senseOf(name: unknown, path: string, cat: DoctrineCatalog) {
   if (typeof name !== 'string') throw bad(path, 'name a sense');
-  const s = cat.senses[name];
-  if (!s) throw bad(path, `unknown sense "${name}"${suggest(name, Object.keys(cat.senses))}`);
-  return s;
+  if (!Object.hasOwn(cat.senses, name)) throw bad(path, `unknown sense "${name}"${suggest(name, Object.keys(cat.senses))}`);
+  return cat.senses[name];
 }
 
 function condition(w: Obj, path: string, cat: DoctrineCatalog): Condition {
@@ -103,12 +102,12 @@ function condition(w: Obj, path: string, cat: DoctrineCatalog): Condition {
 function action(a: unknown, path: string, cat: DoctrineCatalog): Action {
   if (!isObj(a)) throw bad(path, 'an action is an object like {"act": "straight"}');
   if (typeof a.act !== 'string') throw bad(`${path}.act`, 'name an action');
+  if (!Object.hasOwn(cat.actions, a.act)) throw bad(`${path}.act`, `unknown action "${a.act}"${suggest(a.act, Object.keys(cat.actions))}`);
   const spec = cat.actions[a.act];
-  if (!spec) throw bad(`${path}.act`, `unknown action "${a.act}"${suggest(a.act, Object.keys(cat.actions))}`);
   for (const [k, v] of Object.entries(a)) {
     if (k === 'act') continue;
+    if (!Object.hasOwn(spec.params, k)) throw bad(`${path}.${k}`, `"${a.act}" has no parameter "${k}"${suggest(k, Object.keys(spec.params))}`);
     const p = spec.params[k];
-    if (!p) throw bad(`${path}.${k}`, `"${a.act}" has no parameter "${k}"${suggest(k, Object.keys(spec.params))}`);
     if (typeof v !== p.type) throw bad(`${path}.${k}`, `"${k}" is a ${p.type}`);
     if (p.values && !p.values.includes(v as string)) throw bad(`${path}.${k}`, `"${k}" is one of ${p.values.join(', ')}`);
   }

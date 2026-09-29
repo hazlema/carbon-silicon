@@ -68,6 +68,12 @@ describe('validateDoctrine', () => {
     expect(why('go left')).toBe('doctrine: send {"rules": [...]}');
     expect(why({ rules: [{ when: { all: [] }, do: { act: 'straight' } }] })).toBe('rules[0].when.all: a non-empty list of conditions');
   });
+
+  test('prototype pollution resistance: inherited Object members are rejected', () => {
+    expect(why({ rules: [{ do: { act: 'constructor' } }] })).toBe('rules[0].do.act: unknown action "constructor"');
+    expect(why({ rules: [{ when: { sense: 'toString', op: 'eq', value: true }, do: { act: 'straight' } }] })).toBe('rules[0].when.sense: unknown sense "toString"');
+    expect(why({ rules: [{ do: { act: 'straight', hasOwnProperty: true } }] })).toBe('rules[0].do.hasOwnProperty: "straight" has no parameter "hasOwnProperty"');
+  });
 });
 
 describe('evaluate', () => {
