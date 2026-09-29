@@ -118,6 +118,10 @@
     focusKey += 1;
     live.dmRequest = null;
   });
+  // A conversation that left the list (closed elsewhere, the name released): back to where you were.
+  $effect(() => {
+    if (dmParticipants(tab) && !dmTab) tab = isPlayer ? 'table' : 'rail';
+  });
   $effect(() => {
     if (dmTab && dmTab.unread > 0) void live.readDm(dmTab.channel);
   });
@@ -323,12 +327,14 @@
         {focusKey}
       >
         {#snippet header()}
-          <div class="tabs" role="tablist" aria-label="Chat">
-            <button role="tab" type="button" aria-selected={tab === 'table'} onclick={() => (tab = 'table')}>Table</button>
-            <button role="tab" type="button" aria-selected={tab === 'rail'} onclick={() => (tab = 'rail')}
-              >{railUnread > 0 ? `Rail (${railUnread})` : 'Rail'}</button
-            >
-            <DmTabs tabs active={dmTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} />
+          <div>
+            <div class="tabs" role="tablist" aria-label="Chat">
+              <button role="tab" type="button" aria-selected={tab === 'table'} onclick={() => (tab = 'table')}>Table</button>
+              <button role="tab" type="button" aria-selected={tab === 'rail'} onclick={() => (tab = 'rail')}
+                >{railUnread > 0 ? `Rail (${railUnread})` : 'Rail'}</button
+              >
+            </div>
+            <DmTabs active={dmTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} />
           </div>
         {/snippet}
       </ChatPanel>
@@ -701,7 +707,6 @@
     gap: 0.25rem;
     padding: 0.6rem 0.75rem 0;
     border-bottom: 1px solid var(--lattice);
-    overflow-x: auto;
   }
   .tabs button {
     padding: 0.5rem 0.75rem 0.55rem;

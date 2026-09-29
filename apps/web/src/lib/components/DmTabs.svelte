@@ -4,10 +4,10 @@
   import { live } from '$lib/live.svelte';
   import { portal } from '$lib/portal';
 
-  /** Conversation tabs after a chat header's own tabs (spec M2c §5). `tabs` renders them as ARIA
-   *  tabs for the table page's tablist; otherwise they're buttons marked aria-current, like the
-   *  lobby's channel buttons. `onpick(null)` means "back to where you were": the open tab closed. */
-  let { active, onpick, tabs = false }: { active: string | null; onpick: (channel: string | null) => void; tabs?: boolean } = $props();
+  /** The conversations row under a chat header's own tabs (spec M2c §5): buttons marked aria-current.
+   *  Renders nothing until a conversation is visible. `onpick(null)` means "back to where you were":
+   *  the open tab closed. */
+  let { active, onpick }: { active: string | null; onpick: (channel: string | null) => void } = $props();
 
   const row = $derived(dmTabs(live.dms, active));
   let moreOpen = $state(false);
@@ -19,6 +19,28 @@
     void live.closeDm(channel);
     if (active === channel) onpick(null);
   }
+  function closeMore(refocus = false) {
+    moreOpen = false;
+    if (refocus) moreButton?.focus();
+  }
+  const items = () => [...(pop?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+  function onMenuKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMore(true);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const list = items();
+      if (list.length === 0) return;
+      const i = list.indexOf(document.activeElement as HTMLElement);
+      const next = e.key === 'ArrowDown' ? (i + 1) % list.length : (i - 1 + list.length) % list.length;
+      list[next].focus();
+    }
+  }
+  // Nothing left to fold: nothing to show.
+  $effect(() => {
+    if (moreOpen && row.more.length === 0) moreOpen = false;
+  });
   async function toggleMore() {
     moreOpen = !moreOpen;
     pos = null;
@@ -29,6 +51,7 @@
     const b = moreButton.getBoundingClientRect();
     const p = pop.getBoundingClientRect();
     pos = { left: Math.max(8, Math.min(b.left, window.innerWidth - p.width - 8)), top: b.bottom + 4 };
+    items()[0]?.focus();
   }
   $effect(() => {
     if (!moreOpen) return;
@@ -42,51 +65,79 @@
 </script>
 
 {#snippet label(handle: string, color: string, unread: number, showDot: boolean)}
-  <span class="at" style:color>@{handle}</span>{#if showDot && unread > 0}<span class="dot" aria-label="{unread} unread"></span>{/if}
+  <span class="at" style:color>@{handle}</span>{#if showDot && unread > 0}<span class="dot" role="img" aria-label="{unread} unread"></span>{/if}
 {/snippet}
 
-{#each row.shown as d (d.channel)}
-  <span class="dm" class:big={!tabs}>
-    {#if tabs}
-      <button type="button" class="pick" role="tab" aria-selected={active === d.channel} onclick={() => onpick(d.channel)}
-        >{@render label(d.with.handle, d.with.color, d.unread, active !== d.channel)}</button
-      >
-    {:else}
-      <button type="button" class="pick" aria-current={active === d.channel ? 'true' : undefined} onclick={() => onpick(d.channel)}
-        >{@render label(d.with.handle, d.with.color, d.unread, active !== d.channel)}</button
-      >
-    {/if}
-    <button type="button" class="x" aria-label="Close the conversation with @{d.with.handle}" onclick={() => close(d.channel)}>×</button>
-  </span>
-{/each}
-{#if row.more.length > 0}
-  <button bind:this={moreButton} type="button" class="pick more" class:big={!tabs} aria-haspopup="menu" aria-expanded={moreOpen} onclick={toggleMore}
-    >More ▾{#if row.more.some((d) => d.unread > 0)}<span class="dot" aria-label="unread in More"></span>{/if}</button
-  >
-  {#if moreOpen}
-    <div class="pop panel" role="menu" aria-label="More conversations" use:portal bind:this={pop} style={pos ? `left: ${pos.left}px; top: ${pos.top}px` : 'visibility: hidden'}>
-      {#each row.more as d (d.channel)}
+{#if row.shown.length > 0}
+  <div class="dmrow" aria-label="Conversations" role="group">
+    {#each row.shown as d (d.channel)}
+      <span class="dm">
         <button
-          role="menuitem"
           type="button"
-          onclick={() => {
-            moreOpen = false;
-            onpick(d.channel);
-          }}>{@render label(d.with.handle, d.with.color, d.unread, true)}</button
+          class="pick"
+          title="@{d.with.handle}"
+          aria-current={active === d.channel ? 'true' : undefined}
+          onclick={() => onpick(d.channel)}>{@render label(d.with.handle, d.with.color, d.unread, active !== d.channel)}</button
         >
-      {/each}
-    </div>
-  {/if}
+        <button type="button" class="x" aria-label="Close the conversation with @{d.with.handle}" onclick={() => close(d.channel)}>×</button>
+      </span>
+    {/each}
+    {#if row.more.length > 0}
+      <button bind:this={moreButton} type="button" class="pick more" aria-haspopup="menu" aria-expanded={moreOpen} onclick={toggleMore}
+        >More<span aria-hidden="true"> ▾</span>{#if row.more.some((d) => d.unread > 0)}<span class="dot" role="img" aria-label="unread in More"></span>{/if}</button
+      >
+      {#if moreOpen}
+        <div
+          class="pop panel"
+          role="menu"
+          tabindex="-1"
+          aria-label="More conversations"
+          use:portal
+          bind:this={pop}
+          onkeydown={onMenuKey}
+          style={pos ? `left: ${pos.left}px; top: ${pos.top}px` : 'visibility: hidden'}
+        >
+          {#each row.more as d (d.channel)}
+            <button
+              role="menuitem"
+              type="button"
+              title="@{d.with.handle}"
+              onclick={() => {
+                closeMore();
+                onpick(d.channel);
+              }}>{@render label(d.with.handle, d.with.color, d.unread, true)}</button
+            >
+          {/each}
+        </div>
+      {/if}
+    {/if}
+  </div>
 {/if}
 
 <style>
+  .dmrow {
+    display: flex;
+    align-items: stretch;
+    min-width: 0;
+    padding: 0 0.75rem;
+    border-bottom: 1px solid var(--lattice);
+    overflow-x: auto;
+  }
   .dm {
     display: inline-flex;
     align-items: stretch;
     flex: none;
   }
+  .at {
+    display: inline-block;
+    max-width: 14ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+  }
   .pick {
-    padding: 0.5rem 0.2rem 0.55rem 0.75rem;
+    padding: 0.45rem 0.2rem 0.5rem 0.25rem;
+    font-size: var(--step--1);
     background: none;
     border: 0;
     border-bottom: 2px solid transparent;
@@ -94,20 +145,15 @@
     font-weight: 500;
     white-space: nowrap;
   }
-  .big .pick,
-  .pick.big {
-    padding-top: 1rem;
-    padding-bottom: 0.85rem;
-    font-size: var(--step-1);
-  }
   .pick.more {
-    padding-right: 0.75rem;
+    flex: none;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
   }
   .pick:hover {
     color: var(--chalk);
   }
-  .pick[aria-current='true'],
-  .pick[aria-selected='true'] {
+  .pick[aria-current='true'] {
     color: var(--chalk);
     border-bottom-color: var(--carbon);
   }

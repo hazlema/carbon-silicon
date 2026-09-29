@@ -115,11 +115,15 @@
         error = 'Try /msg @name hello.';
         return;
       }
+      if (sending) return;
+      sending = true;
       try {
         await live.sendDm(dm.handle, dm.text);
         draft = '';
       } catch (err) {
         error = (err as Error).message;
+      } finally {
+        sending = false;
       }
       return;
     }

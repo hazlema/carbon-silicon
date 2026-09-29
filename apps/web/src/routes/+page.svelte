@@ -64,10 +64,10 @@
                   <span class="hash" aria-hidden="true">#</span>{c.id}
                 </button>
               {/each}
-              <DmTabs active={dm ? channel : null} onpick={(c) => (channel = c ?? 'lobby')} />
             </nav>
             <p class="about">{about}</p>
           </div>
+          <DmTabs active={dm ? channel : null} onpick={(c) => (channel = c ?? 'lobby')} />
           <Scoreboard />
         </div>
       {/snippet}
@@ -118,7 +118,6 @@
   .channels {
     display: flex;
     gap: 0.25rem;
-    min-width: 0;
     overflow-x: auto;
   }
   .channels button {
@@ -148,7 +147,6 @@
   .about {
     margin: 0;
     color: var(--fog);
-    flex: none;
     font-size: var(--step--1);
     white-space: nowrap;
   }
