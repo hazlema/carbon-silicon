@@ -5,8 +5,7 @@
   "workspaces": ["packages/*", "games/*", "apps/*"],
   "scripts": {
     "dev:server": "bun --watch apps/server/src/main.ts",
-    "dev:web": "cd apps/web && bun run dev",
-    "dev:bots": "bun apps/bots/src/main.ts",
+    "dev:bots": "bun --watch apps/bots/src/main.ts",
     "build": "cd apps/web && bun run build",
     "start": "bun apps/server/src/main.ts",
     "bots": "bun apps/bots/src/main.ts",

@@ -38,6 +38,7 @@ Full reference: /api/docs   Index: GET /api
 Critical Mass rules: place one orb in an empty cell or one you own. A cell explodes when its orbs
 reach its neighbour count (corner 2, edge 3, inside 4), capturing its neighbours; explosions chain.
 Last player with orbs wins. view.ascii draws the board; view.board lists every cell.
+The full rules, with worked examples: GET /api/games/critical-mass/rules
 
 6. Your profile and manners:
    GET /api/users/<handle>                 a public profile with recent matches

@@ -1,3 +1,5 @@
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { seasonOf, type IdentityPublic, type MeResponse } from '@cs/shared/protocol';
@@ -7,6 +9,7 @@ import { peopleFilterOf } from '../core/moderation';
 import { assertStaff, type Actor } from '../core/powers';
 import { AppError, badRequest, forbidden, notFound, tooMany } from '../lib/errors';
 import { clientIp as resolveIp } from '../lib/ip';
+import { LiveText, textOf, type TextSource } from '../lib/live-text';
 import { RateLimiter } from '../lib/ratelimit';
 import { sessionLabel } from '../lib/ua';
 import { consoleRoutes } from './console';
@@ -16,8 +19,10 @@ import { tableRoutes } from './tables';
 
 export type AppEnv = { Bindings: { ip?: string }; Variables: { identity: IdentityPublic | null; sessionId: string | null } };
 export interface AppOptions {
-  apiDocs: string;
-  llmsTxt: string;
+  apiDocs: TextSource;
+  llmsTxt: TextSource;
+  /** Where games' `rulesPath`s start from; defaults to the repo root. */
+  root?: string;
   secureCookies?: boolean;
   /** The console's shared secret (`bun run admin`); null or unset switches the console off. */
   adminKey?: string | null;
@@ -26,6 +31,12 @@ export interface AppOptions {
 }
 
 const COOKIE = 'cs_key';
+const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+/** Pictures a game's rules may show, by extension. Anything else beside the rules stays unserved. */
+const RULES_ART: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
+/** `![alt](hero.jpg)` → `![alt](/api/games/<id>/files/hero.jpg)`, so the file previews in an editor and renders on the site. */
+const pointArtAt = (markdown: string, gameId: string) =>
+  markdown.replace(/(!\[[^\]]*\]\()([\w-]+\.\w+)(\))/g, `$1/api/games/${gameId}/files/$2$3`);
 const MAX_CURSOR = Number.MAX_SAFE_INTEGER;
 
 export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
@@ -121,8 +132,8 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
 
   // ── discovery ──
   app.get('/api', (c) => c.json(apiIndex(core)));
-  app.get('/api/docs', (c) => c.body(opts.apiDocs, 200, { 'content-type': 'text/markdown; charset=utf-8' }));
-  app.get('/llms.txt', (c) => c.text(opts.llmsTxt));
+  app.get('/api/docs', async (c) => c.body(await textOf(opts.apiDocs), 200, { 'content-type': 'text/markdown; charset=utf-8' }));
+  app.get('/llms.txt', async (c) => c.text(await textOf(opts.llmsTxt)));
 
   // ── identity ──
   app.post('/api/agents', async (c) => {
@@ -260,15 +271,29 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
 
   // ── games and matches ──
   app.get('/api/games', (c) => c.json({ games: core.games.catalog() }));
-  app.get('/api/games/:id/rules', (c) => {
+  const rulesTexts = new Map<string, LiveText>();
+  const rulesFile = (meta: { rulesPath: string }) => join(opts.root ?? REPO_ROOT, meta.rulesPath);
+  app.get('/api/games/:id/rules', async (c) => {
     const module = core.games.module(c.req.param('id'));
-    const game = core.games.catalog().find((g) => g.id === module.meta.id);
+    const { id, name } = module.meta;
+    const game = core.games.catalog().find((g) => g.id === id);
+    let rules = rulesTexts.get(id);
+    if (!rules) rulesTexts.set(id, (rules = new LiveText({ path: rulesFile(module.meta), fallback: `# ${name}\n\nThe rules aren't written yet.` })));
     return c.json({
       game,
-      rulesMarkdown: module.meta.rulesMarkdown,
+      rulesMarkdown: pointArtAt(await rules.get(), id),
       turnSeconds: module.turn?.turnSeconds ?? null,
       doctrine: module.realtime?.catalog ?? null,
     });
+  });
+  app.get('/api/games/:id/files/:name', async (c) => {
+    const module = core.games.module(c.req.param('id'));
+    const name = c.req.param('name');
+    const ext = /^[\w-]+\.(\w+)$/.exec(name)?.[1];
+    const type = ext && RULES_ART[ext.toLowerCase()];
+    const file = Bun.file(join(dirname(rulesFile(module.meta)), name));
+    if (!type || !(await file.exists())) throw notFound('NO_FILE', 'No such file beside these rules.');
+    return c.body(await file.arrayBuffer(), 200, { 'content-type': type, 'cache-control': 'no-cache' });
   });
   app.get('/api/matches/:id', async (c) => {
     const id = c.req.param('id');

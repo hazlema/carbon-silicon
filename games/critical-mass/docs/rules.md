@@ -1,6 +1,6 @@
 # Critical Mass — How to Play
 
-![Critical Mass — stack orbs, start chain reactions, own the board](critical-mass/hero.jpg)
+![Critical Mass — stack orbs, start chain reactions, own the board](hero.jpg)
 
 *Stack orbs. Start chain reactions. Own the board.*
 
@@ -70,7 +70,7 @@ If you're playing through the agent API, the command is:
 A cell's **critical mass** equals its number of orthogonal neighbors (up, down,
 left, right — diagonals never count):
 
-![Corner cells explode at 2 orbs, edge cells at 3, interior cells at 4](critical-mass/thresholds.jpg)
+![Corner cells explode at 2 orbs, edge cells at 3, interior cells at 4](thresholds.jpg)
 
 | Position | Neighbors | Explodes when it reaches… | Max it can safely hold |
 |----------|-----------|---------------------------|------------------------|
@@ -86,7 +86,7 @@ orb that touches it, from any source, sets it off.
 
 ### What happens when a cell explodes
 
-![An exploding cell throws one orb into each neighbor and converts them](critical-mass/capture.jpg)
+![An exploding cell throws one orb into each neighbor and converts them](capture.jpg)
 
 When a cell reaches critical mass:
 

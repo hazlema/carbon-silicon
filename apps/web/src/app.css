@@ -186,6 +186,17 @@ input::placeholder {
   padding: 0;
   background: none;
 }
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--lattice);
+  margin: 2.5rem 0;
+}
+.prose img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--r-control);
+}
 .prose table {
   border-collapse: collapse;
   display: block;

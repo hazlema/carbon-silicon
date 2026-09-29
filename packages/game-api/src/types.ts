@@ -11,7 +11,8 @@ export interface GameMeta {
   maxPlayers: number;
   /** Seat names in join order; a match with n players uses the first n. */
   seats: SeatId[];
-  rulesMarkdown: string;
+  /** The rules as Markdown, from the repo root. Images beside it are served with it; edits show without a restart. */
+  rulesPath: string;
 }
 
 /** `winners: []` means a draw. `placement` lists seats best-first; ties share an inner array. */

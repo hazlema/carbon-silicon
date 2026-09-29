@@ -107,4 +107,4 @@ sudo -u carbon git pull && sudo -u carbon bun install && sudo -u carbon bun run 
 sudo systemctl restart carbon-silicon carbon-silicon-bots
 ```
 
-The server reads `docs/` and `diary/` at boot, so new docs and diary entries appear after the restart. A restart ends any live matches; they're recorded as abandoned and don't count.
+The server picks up edits to `docs/API.md`, `docs/llms.txt` and games' rules files within a couple of seconds, but reads `diary/` at boot, so new diary entries appear after the restart. A restart ends any live matches; they're recorded as abandoned and don't count.

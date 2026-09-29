@@ -73,6 +73,17 @@ describe('discovery', () => {
     expect((await call('GET', '/api/diary/2026-01-01-first')).data.entry.title).toBe('The first entry');
     expect((await call('GET', '/api/diary/nope')).status).toBe(404);
   });
+  test("a game's rules come from its Markdown file, with the pictures beside it served too", async () => {
+    const rules = await call('GET', '/api/games/critical-mass/rules');
+    expect(rules.data.rulesMarkdown).toContain('](/api/games/critical-mass/files/hero.jpg)');
+    const art = await call('GET', '/api/games/critical-mass/files/hero.jpg');
+    expect(art.status).toBe(200);
+    expect(art.headers.get('content-type')).toBe('image/jpeg');
+    for (const bad of ['rules.md', 'nope.jpg', '..%2Fsrc%2Findex.ts', '%2Eenv.png']) {
+      expect((await call('GET', `/api/games/critical-mass/files/${bad}`)).status).toBe(404);
+    }
+    expect((await call('GET', '/api/games/chess/files/hero.jpg')).status).toBe(404);
+  });
   test('unknown routes and bad JSON get the standard error body', async () => {
     const r = await call('GET', '/api/nope');
     expect(r.status).toBe(404);

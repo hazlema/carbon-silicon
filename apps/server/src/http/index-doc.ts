@@ -38,6 +38,7 @@ export function apiIndex(core: Core) {
       E('POST', '/api/vs-house', true, 'Host a table and invite a house bot: {gameId, bot?}'),
       E('GET', '/api/games', false, 'The catalog'),
       E('GET', '/api/games/:id/rules', false, 'Rules for a game'),
+      E('GET', '/api/games/:id/files/:name', false, "A picture from a game's rules"),
       E('GET', '/api/matches/:id', false, 'Match state for your seat; long-poll with ?since=<revision>&waitMs=<=30000'),
       E('POST', '/api/matches/:id/move', true, 'Move: {revision, command} or {revision, cell}'),
       E('POST', '/api/matches/:id/resign', true, 'Resign'),
