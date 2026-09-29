@@ -62,7 +62,7 @@ export async function runInviteCommand(words: string[], channel: string): Promis
     return `Invited ${names}.`;
   }
   if (t) throw new Error("You're at a table already. Leave it first.");
-  const g = gameFor(game, channel, live.games);
+  const g = gameFor(game, channel, live.games.filter((x) => x.humans));
   if (!g) throw new Error('Which game? Try /invite DiceRoller critical-mass');
   await hostWith(g.id, handles);
   return `Invited ${names} to ${g.name}.`;
