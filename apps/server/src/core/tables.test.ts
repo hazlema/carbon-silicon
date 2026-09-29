@@ -44,7 +44,7 @@ async function setup(guard = new Guard()) {
   presence.agentSeen(house);
   const agent = (await identities.registerAgent({ name: `bot${tag}` }, null)).identity;
   presence.agentSeen(agent);
-  return { clock, bus, comms, presence, games, relations, tables, ann, ben, cat, dan, eve, house, agent };
+  return { clock, bus, comms, presence, games, relations, identities, tables, ann, ben, cat, dan, eve, house, agent };
 }
 type Ctx = Awaited<ReturnType<typeof setup>>;
 type Offer = Extract<InboxEvent, { type: 'invite.received' }>;
@@ -411,6 +411,20 @@ describe('vs house and quick match', () => {
     expect(ctx.tables.atTable(ctx.ann.id)).toBe(t.id);
     expect(ctx.tables.get(t.id, null).status).toBe('playing');
     expect((await ctx.tables.host(ctx.ben, 'critical-mass')).host.id).toBe(ctx.ben.id);
+  });
+});
+
+describe('exhibitions', () => {
+  test('two free house bots start a match at once; with fewer, HOUSE_FULL', async () => {
+    const ctx = await setup();
+    const second = (await ctx.identities.registerAgent({ name: `house2${randomTag()}` }, 'hk')).identity;
+    ctx.presence.agentSeen(second);
+    const m = await ctx.tables.exhibition('lightline');
+    expect(m.gameId).toBe('lightline');
+    expect(m.seats.every((s) => s.identity.isHouse)).toBe(true);
+    const again = await errorOf(() => ctx.tables.exhibition('lightline'));
+    expect([again.status, again.code, again.message]).toEqual([409, 'HOUSE_FULL', 'An exhibition needs two free house bots.']);
+    expect((await errorOf(() => ctx.tables.exhibition(42))).code).toBe('BAD_GAME');
   });
 });
 

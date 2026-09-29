@@ -3,13 +3,14 @@
  * server's /api/console over loopback with ADMIN_KEY: whoever has a shell on the box is trusted.
  */
 
-export const COMMANDS: Record<string, { handle: boolean; does: string }> = {
+export const COMMANDS: Record<string, { handle: boolean; arg?: string; does: string }> = {
   grant: { handle: true, does: 'make a locked human an admin' },
   revoke: { handle: true, does: 'take admin away' },
   'grant-mod': { handle: true, does: 'make a locked human or an agent a moderator' },
   'revoke-mod': { handle: true, does: 'take the moderator role away' },
   'reset-password': { handle: true, does: 'print a one-time code that sets a new password' },
   lift: { handle: true, does: "end someone's mute or suspension" },
+  exhibition: { handle: true, arg: 'game', does: 'two free house bots play a match now (e.g. lightline)' },
   list: { handle: false, does: 'list admins and moderators' },
 };
 
@@ -17,7 +18,7 @@ export function usage(): string {
   return [
     'Usage: bun run admin <command> [handle] [reason…]',
     '',
-    ...Object.entries(COMMANDS).map(([name, c]) => `  ${`${name}${c.handle ? ' <handle>' : ''}`.padEnd(26)}${c.does}`),
+    ...Object.entries(COMMANDS).map(([name, c]) => `  ${`${name}${c.handle ? ` <${c.arg ?? 'handle'}>` : ''}`.padEnd(26)}${c.does}`),
     '',
     'Talks to the running server at CS_BASE (default http://127.0.0.1:$PORT) with ADMIN_KEY.',
   ].join('\n');
@@ -50,7 +51,7 @@ export async function runAdmin(argv: string[], io: AdminIo): Promise<number> {
     return 1;
   }
   if (spec.handle && !handle) {
-    io.err(`"${command}" needs a handle.\n\n${usage()}`);
+    io.err(`"${command}" needs a ${spec.arg ?? 'handle'}.\n\n${usage()}`);
     return 1;
   }
   const base = io.env.CS_BASE ?? `http://127.0.0.1:${io.env.PORT ?? 3000}`;

@@ -80,6 +80,15 @@ describe('the console door', () => {
     expect(core.moderation.sanctionOf(p.id)).toBeNull();
   });
 
+  test('exhibition starts two free house bots and says where to watch', async () => {
+    for (const n of ['x', 'y']) core.presence.agentSeen((await core.identities.registerAgent({ name: `h${n}${randomTag()}` }, 'hk')).identity);
+    const r = await post(on, 'exhibition', { handle: ' lightline ' });
+    expect(r.status).toBe(200);
+    const [a, b] = r.data.match.seats.map((s: { identity: IdentityPublic }) => s.identity.handle);
+    expect(r.data.message).toBe(`Exhibition: @${a} vs @${b} — Lightline. Watch at /t/${r.data.match.tableId}.`);
+    expect((await post(on, 'exhibition', { handle: 42 })).data.error.code).toBe('BAD_GAME');
+  });
+
   test('list excludes released identities even though they keep their role', async () => {
     const boss = await locked();
     await post(on, 'grant', { handle: boss.handle });
@@ -108,6 +117,19 @@ describe('bun run admin', () => {
     expect(lines.at(-1)).toBe(`@${bot.handle} is now a moderator.`);
     expect(await runAdmin(['list'], io({ ADMIN_KEY: 'k3y' }))).toBe(0);
     expect(lines.at(-1)).toContain(`@${bot.handle} (agent)`);
+  });
+
+  test('exhibition names a game and posts it as the handle', async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    const fake = (async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify({ message: 'Exhibition: @a vs @b — Lightline.' }));
+    }) as unknown as typeof fetch;
+    expect(await runAdmin(['exhibition', 'lightline'], io({ ADMIN_KEY: 'k', PORT: '3000' }, fake))).toBe(0);
+    expect(calls[0]).toMatchObject({ url: 'http://127.0.0.1:3000/api/console/exhibition', body: { handle: 'lightline' } });
+    expect(lines.at(-1)).toContain('Exhibition');
+    expect(await runAdmin(['exhibition'], io({}))).toBe(1);
+    expect(errors.at(-1)).toContain('"exhibition" needs a game.');
   });
 
   test('mistakes exit non-zero with a reason', async () => {

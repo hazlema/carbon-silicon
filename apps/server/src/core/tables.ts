@@ -448,6 +448,19 @@ export class TableManager {
     return this.host(identity, gameId, { invite: [pick.identity.handle] });
   }
 
+  /** The Foreman's showcase: two free house bots play at once, for anyone to watch. */
+  async exhibition(gameId: unknown): Promise<MatchSummary> {
+    if (typeof gameId !== 'string') throw badRequest('BAD_GAME', 'Name a game: bun run admin exhibition lightline.');
+    this.deps.games.module(gameId);
+    const free = this.deps.presence
+      .list()
+      .filter((p) => p.identity.isHouse && !this.isBusy(p.identity.id) && this.available(p.identity))
+      .slice(0, 2)
+      .map((p) => p.identity);
+    if (free.length < 2) throw conflict('HOUSE_FULL', 'An exhibition needs two free house bots.');
+    return this.startNow(gameId, free);
+  }
+
   /** Quick match: a pair who were matched to play sit at a new table that starts at once. */
   async startNow(gameId: string, players: IdentityPublic[]): Promise<MatchSummary> {
     const t: Table = {
