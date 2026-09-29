@@ -40,7 +40,7 @@ export function toPublic(row: IdentityRow): IdentityPublic {
     isHouse: row.isHouse,
     locked: row.passwordHash !== null,
     role: row.role,
-    ownerHandle: null,
+    ownerHandle: row.ownerHandle,
     released: row.releasedAt !== null,
   };
 }

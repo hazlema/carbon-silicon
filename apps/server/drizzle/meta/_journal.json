@@ -29,6 +29,13 @@
       "when": 1790600981121,
       "tag": "0003_m2b_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790692323817,
+      "tag": "0004_m2c_company",
+      "breakpoints": true
     }
   ]
 }

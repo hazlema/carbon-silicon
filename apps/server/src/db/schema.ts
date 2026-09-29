@@ -31,13 +31,19 @@ export const identities = pgTable(
     isHouse: boolean('is_house').notNull().default(false),
     role: text('role', { enum: ['user', 'mod', 'admin'] }).notNull().default('user'),
     ownerId: text('owner_id'),
+    /** The owner's handle, kept beside owner_id so toPublic can fill ownerHandle from the row (M2c). */
+    ownerHandle: text('owner_handle'),
     createdAt: ts('created_at').notNull().defaultNow(),
     lastSeenAt: ts('last_seen_at').notNull().defaultNow(),
     recoveryHash: text('recovery_hash'),
     lastIp: text('last_ip'),
     releasedAt: ts('released_at'),
   },
-  (t) => [uniqueIndex('identities_handle_lower').on(t.handleLower), uniqueIndex('identities_secret_hash').on(t.secretHash)],
+  (t) => [
+    uniqueIndex('identities_handle_lower').on(t.handleLower),
+    uniqueIndex('identities_secret_hash').on(t.secretHash),
+    index('identities_owner').on(t.ownerId),
+  ],
 );
 
 export const messages = pgTable(
@@ -183,4 +189,17 @@ export const modActions = pgTable(
     createdAt: ts('created_at').notNull().defaultNow(),
   },
   (t) => [index('mod_actions_target').on(t.targetId, t.id)],
+);
+
+/** Each person's side of a direct-message conversation: how far they've read, and whether they closed its tab (M2c). */
+export const dmState = pgTable(
+  'dm_state',
+  {
+    identityId: text('identity_id').notNull(),
+    channel: text('channel').notNull(),
+    otherId: text('other_id').notNull(),
+    lastReadId: bigint('last_read_id', { mode: 'number' }).notNull().default(0),
+    hidden: boolean('hidden').notNull().default(false),
+  },
+  (t) => [primaryKey({ columns: [t.identityId, t.channel] })],
 );
