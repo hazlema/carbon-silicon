@@ -2,7 +2,7 @@ import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import type { ServerWebSocket } from 'bun';
-import type { IdentityPublic, WsServerMsg } from '@cs/shared/protocol';
+import { dmChannel, type IdentityPublic, type WsServerMsg } from '@cs/shared/protocol';
 import { createCore } from '../core/core';
 import { FakeClock } from '../lib/clock';
 import { randomTag, waitFor } from '../lib/testing';
@@ -125,4 +125,29 @@ test('watching a table pushes it, counts spectators, and every socket hears the 
   expect(core.tables.get(t.id, null).watching).toBe(0);
   core.tables.disband(host, t.id);
   expect(hostWs.sent.some((m) => m.type === 'table.gone' && m.tableId === t.id)).toBe(true);
+});
+
+test('a DM reaches only the two people\'s sockets, removal too; nobody can subscribe to a dm channel', async () => {
+  const meta = { label: 'test', ip: null };
+  const a = (await core.identities.createHuman(`dma${randomTag()}`, meta)).identity;
+  const b = (await core.identities.createHuman(`dmb${randomTag()}`, meta)).identity;
+  const c = (await core.identities.createHuman(`dmc${randomTag()}`, meta)).identity;
+  const [wa, wb, wc] = [socket(a), socket(b), socket(c)];
+  for (const ws of [wa, wb, wc]) hub.handlers.open(ws);
+  const ch = dmChannel(a.id, b.id);
+  hub.handlers.message(wc, JSON.stringify({ type: 'subscribe', channel: ch }));
+  expect(wc.data.channels.has(ch)).toBe(false);
+
+  const m = await core.comms.post(a, ch, 'just us');
+  const chats = (ws: FakeSocket) => ws.sent.filter((x) => x.type === 'chat');
+  expect(chats(wa)).toEqual([{ type: 'chat', message: m }]);
+  expect(chats(wb)).toEqual([{ type: 'chat', message: m }]);
+  expect(chats(wc)).toEqual([]);
+
+  await core.moderation.deleteMessage({ kind: 'console' }, m.id, 'test');
+  const removals = (ws: FakeSocket) => ws.sent.filter((x) => x.type === 'chat.removed');
+  expect(removals(wa)).toHaveLength(1);
+  expect(removals(wb)).toHaveLength(1);
+  expect(removals(wc)).toEqual([]);
+  for (const ws of [wa, wb, wc]) hub.handlers.close(ws);
 });

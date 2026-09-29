@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from 'bun';
-import type { IdentityPublic, WsClientMsg, WsServerMsg } from '@cs/shared/protocol';
+import { dmParticipants, type IdentityPublic, type WsClientMsg, type WsServerMsg } from '@cs/shared/protocol';
 import type { Core } from '../core/core';
 
 export interface WsData {
@@ -35,7 +35,15 @@ export class WsHub {
       core.bus.on('chat.message', (message) => {
         for (const ws of this.all) if (ws.data.channels.has(message.channel)) send(ws, { type: 'chat', message });
       }),
+      core.bus.on('dm.message', ({ message, to }) => {
+        for (const id of to) for (const ws of this.byIdentity.get(id) ?? []) send(ws, { type: 'chat', message });
+      }),
       core.bus.on('chat.removed', (removed) => {
+        const pair = dmParticipants(removed.channel);
+        if (pair) {
+          for (const id of pair) for (const ws of this.byIdentity.get(id) ?? []) send(ws, { type: 'chat.removed', ...removed });
+          return;
+        }
         for (const ws of this.all) if (ws.data.channels.has(removed.channel)) send(ws, { type: 'chat.removed', ...removed });
       }),
       core.bus.on('inbox', ({ identityId, event }) => {
@@ -119,8 +127,10 @@ export class WsHub {
         return;
       }
       switch (msg?.type) {
-        case 'subscribe':
-          if (typeof msg.channel === 'string' && this.core.comms.channelKind(msg.channel)) {
+        case 'subscribe': {
+          const kind = typeof msg.channel === 'string' ? this.core.comms.channelKind(msg.channel) : null;
+          // DMs are pushed to their two people directly; nobody subscribes to one.
+          if (kind && kind !== 'dm') {
             const raw = msg.channel;
             ws.data.channels.add(raw);
             void this.core.comms
@@ -131,6 +141,7 @@ export class WsHub {
               .catch(() => {});
           }
           break;
+        }
         case 'unsubscribe': {
           const raw = msg.channel;
           ws.data.channels.delete(raw);

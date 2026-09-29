@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gt, lt } from 'drizzle-orm';
 import { censorText, containsSlur } from '@cs/shared/filter';
 import {
   DIARY_CHANNEL,
+  dmParticipants,
   tableChannel,
   type ChatMessage,
   type IdentityPublic,
@@ -28,9 +29,17 @@ const MENTION_RE = /@([A-Za-z0-9_-]{3,20})/g;
 /** Who may post at a table (or at a tableless match): null means it doesn't exist (any more). */
 type Access = (id: string) => { posters: string[] } | null;
 type MatchTable = (matchId: string) => Promise<string | null>;
-export type ChannelKind = 'public' | 'diary' | 'table' | 'rail' | 'match';
+export type ChannelKind = 'public' | 'diary' | 'table' | 'rail' | 'match' | 'dm';
 /** True means "don't deliver": the mentioned person ignores or blocks the author. */
 type MentionFilter = (ownerId: string, authorId: string) => Promise<boolean>;
+
+/** DmManager's side of a direct message (spec M2c §2). */
+export interface DmHooks {
+  /** Throws when `author` may not write to `otherId` (NO_USER, BLOCKED). */
+  check(author: IdentityPublic, otherId: string): Promise<void>;
+  /** After a DM is stored: records it for both people and returns who should see it now. */
+  stored(message: ChatMessage, otherId: string): Promise<string[]>;
+}
 type Row = { m: typeof messages.$inferSelect; i: typeof identities.$inferSelect | null };
 
 /**
@@ -60,6 +69,7 @@ export class CommunicationManager {
   private matchAccess: Access = () => null;
   private matchTable: MatchTable = async () => null;
   private mentionFilter: MentionFilter = async () => false;
+  private dmHooks: DmHooks = { check: async () => {}, stored: async (m, other) => [m.author!.id, other] };
 
   constructor(
     private db: DB,
@@ -90,12 +100,17 @@ export class CommunicationManager {
     this.mentionFilter = fn;
   }
 
+  setDmHooks(hooks: DmHooks): void {
+    this.dmHooks = hooks;
+  }
+
   channelKind(channel: string): ChannelKind | null {
     if (channel === DIARY_CHANNEL) return 'diary';
     if (this.opts.publicChannels.includes(channel)) return 'public';
     if (TABLE_RE.test(channel)) return 'table';
     if (RAIL_RE.test(channel)) return 'rail';
     if (MATCH_RE.test(channel)) return 'match';
+    if (dmParticipants(channel)) return 'dm';
     return null;
   }
 
@@ -112,6 +127,11 @@ export class CommunicationManager {
     const kind = this.channelKind(channel);
     if (!kind) throw notFound('NO_CHANNEL', `There is no channel "${rawChannel}".`);
     this.opts.guard.assert(author, 'chat');
+    if (kind === 'dm') {
+      const pair = dmParticipants(channel)!;
+      if (!pair.includes(author.id)) throw forbidden('NOT_YOURS', 'That conversation is between two other people.');
+      await this.dmHooks.check(author, pair[0] === author.id ? pair[1] : pair[0]);
+    }
     if (kind === 'diary' && author.role !== 'admin') throw forbidden('READ_ONLY', "#diary is the Proprietor's channel.");
     if (kind === 'table' || kind === 'match') {
       const id = channel.slice(channel.indexOf(':') + 1);
@@ -143,6 +163,15 @@ export class CommunicationManager {
       .values({ channel, authorId: author?.id ?? null, text, system, createdAt: new Date(this.clock.now()) })
       .returning();
     const message: ChatMessage = { id: row.id, channel, author, text, createdAt: row.createdAt.toISOString(), system, removed: null };
+    const pair = dmParticipants(channel);
+    if (pair && author) {
+      // A DM never reaches channel listeners or mention inboxes: only the two, and only those the hooks allow.
+      const other = pair[0] === author.id ? pair[1] : pair[0];
+      const to = await this.dmHooks.stored(message, other);
+      this.bus.emit('dm.message', { message, to });
+      if (to.includes(other)) this.deliver(other, { type: 'chat.dm', message });
+      return message;
+    }
     this.bus.emit('chat.message', message);
     await this.fanOut(message);
     return message;
@@ -174,13 +203,21 @@ export class CommunicationManager {
 
   async history(
     rawChannel: string,
-    opts: { since?: number; limit?: number; viewer?: IdentityPublic | null } = {},
+    opts: { since?: number; before?: number; limit?: number; viewer?: IdentityPublic | null } = {},
   ): Promise<ChatMessage[]> {
     const channel = await this.resolve(rawChannel);
     if (!this.channelKind(channel)) throw notFound('NO_CHANNEL', `There is no channel "${rawChannel}".`);
+    const pair = dmParticipants(channel);
+    if (pair && !(opts.viewer && pair.includes(opts.viewer.id))) {
+      throw forbidden('NOT_YOURS', 'Only the two people in a conversation can read it.');
+    }
     const limit = Math.min(200, Math.max(1, opts.limit ?? 50));
     const where =
-      opts.since !== undefined ? and(eq(messages.channel, channel), gt(messages.id, opts.since)) : eq(messages.channel, channel);
+      opts.since !== undefined
+        ? and(eq(messages.channel, channel), gt(messages.id, opts.since))
+        : opts.before !== undefined
+          ? and(eq(messages.channel, channel), lt(messages.id, opts.before))
+          : eq(messages.channel, channel);
     const rows = await this.select()
       .where(where)
       .orderBy(opts.since !== undefined ? asc(messages.id) : desc(messages.id))
