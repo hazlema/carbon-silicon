@@ -2,7 +2,7 @@
 
 This file records what M3a (the real-time runner, doctrine and Lightline) deferred, the rulings made while building it, and the open questions. Read it before planning M3b. M2c's list is in `docs/m2c-carryover.md`.
 
-**This list was written before the whole-branch review.** That review may fix some of these items; check the branch history before treating any of them as still open.
+**The whole-branch review ran, and its findings were fixed in one wave before merge:** conditions refuse unknown and conflicting keys; shutdown wakes parked long-polls before stopping the server (and a second signal exits); a resign that ends a real-time round sends `match.round`; the table page names its game and explains `rounds` and `forfeit` verdicts; a human's Sit is off at a machines-only table; and API.md's real-time errors were corrected. The items below are what remains.
 
 The build ran subagent-driven: 8 tasks, each implemented and reviewed. The Foreman was away, so the calls below are rulings.
 
@@ -14,7 +14,7 @@ The build ran subagent-driven: 8 tasks, each implemented and reviewed. The Forem
 ## Rulings made while building
 
 - The Task 3 `/invite` command broke when the catalog grew to two games (`tables.e2e.ts:28`). It was fixed in Task 3, not Task 7, by filtering the catalog to `humans: true` in `runInviteCommand`, which keeps verify green per commit.
-- The Task 5 timer leak was fixed in the core: `GameManager.close()` clears every match timer, and `core.close()` calls it before `database.close()`. It also fixes real shutdown and every later real-time test.
+- The Task 5 timer leak was fixed in the core: `GameManager.close()` clears every match timer, and `core.close()` calls it before `database.close()`. It also fixes every later real-time test. Real shutdown needed more: the final review's fix splits the core's close into `drain()` (timers off, parked long-polls woken) and `close()`, and `main.ts` drains before stopping the server.
 - `FiredRule` is declared in protocol.ts only; `realtime.ts` imports it rather than keeping a copy.
 - T6 tests build random tags with `String(Math.floor(Math.random()*1e9))` where the bots have no helper.
 - Task 1's first two commits (2f35c46, 4f1f81b) lack a blank line before Co-Authored-By, so it isn't a real trailer. Later tasks were fixed by the contract.
@@ -28,12 +28,11 @@ The build ran subagent-driven: 8 tasks, each implemented and reviewed. The Forem
 - **A failing tick retries at 10 Hz forever** (Task 3); there is no abandon after N failures.
 - **`envelope()` calls `rt.senses` unguarded** (Task 3): a senses bug would make seated GETs return 500.
 - **Bot doctrine sends** (Task 6): a 5xx or network error in `playRealtime` escapes `playMatch`, a re-greet risk the turn loop guards against. A refused 4xx marks `sent` anyway, so the bot rides the default for that phase.
-- **After `close()`, timer-setting entry points aren't guarded** (Task 5: `createMatch`, `startTurn` via move, `finish`, `wait`). Only reachable if requests race shutdown.
+- **After `close()`, timer-setting entry points aren't guarded** (Task 5: `createMatch`, `startTurn` via move, `finish`; `wait` now returns at once). Only reachable if requests race shutdown.
 
 ### Minor
 
 - Task 1 (doctrine validation):
-  - Unknown keys inside conditions (all/any/not/leaf) are dropped, not refused, and `{all, any}` together ignores `any`.
   - The label regex catches only C0 controls (DEL, U+2028/9 and bidi overrides pass).
   - Untested paths: a control-char label, a non-string label, `value: null`, an array value.
   - `{...a} as Action` is an unchecked cast (validated above it).
@@ -52,7 +51,7 @@ The build ran subagent-driven: 8 tasks, each implemented and reviewed. The Forem
 - Task 5 (exhibitions):
   - The console exhibition test takes the first two free house bots from presence order, not necessarily the two it registered.
   - `console.ts` reads the game from `b.handle`, a wart from the shared input shape; it needs a comment.
-  - Pre-existing: `invites.test` "going afk leaves the queue" can flake when a random handle trips the profanity filter (`HANDLE_FILTERED`).
+  - Pre-existing: `invites.test` "going afk leaves the queue" can flake when a random handle trips the profanity filter (`HANDLE_FILTERED`). The same happens, rarely, in `games.test`'s `setup`.
 - Task 6: no test drives the shrinking flip and re-send.
 - Task 7 (board):
   - The Resign button shows for a Lightline seat holder (`iAmOut` is always false for Lightline); harmless while machines only.
@@ -65,7 +64,5 @@ Against a throwaway server (port 3200, in-memory database) with the real bots:
 
 - `bun run admin exhibition lightline` printed `Exhibition: @OLD_IRON vs @Sprocket — Lightline. Watch at /t/…`. The board ran at 10 ticks a second. Round 1 ended at about 40 s (Sprocket crashed, "crashed" shown on its row), round 2 started at once, and "OLD_IRON wins." appeared at 2-0. At 400 px the board and the rider rows fit without horizontal scroll.
 - A typo'd doctrine (`"sense":"ahed"`) from a fresh agent seated in a vs-house match returned 400 `BAD_DOCTRINE`: `rules[0].when.sense: unknown sense "ahed"; did you mean "ahead"?`
-- The table page's browser title reads "Critical Mass" for a Lightline table.
 - The intermission between rounds is short enough that a poll every few seconds never caught it; not confirmed visually.
 - While the exhibition held both house bots, `POST /api/vs-house` answered `HOUSE_FULL`, as expected.
-- After SIGTERM the throwaway server process stayed alive for several seconds and needed SIGKILL. It is unknown whether this is the PGlite memory database closing slowly or a hang in shutdown; worth a look, since `close()` was meant to make shutdown clean.
