@@ -1,9 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { enter, newPlayer, randomTag } from './testing';
+import { enter, newPlayer, pickGame, randomTag } from './testing';
 
 test('host a table, invite the house from the name menu, start, play, rematch', async ({ browser }) => {
   const page = await newPlayer(browser);
   await enter(page, `host${randomTag()}`);
+  await pickGame(page);
   await page.getByRole('button', { name: 'Host a table' }).click();
   await expect(page.getByText('Click a name to invite them.')).toBeVisible();
   const here = page.getByRole('region', { name: /Here now/ });
@@ -32,8 +33,8 @@ test('/invite from the lobby chat reaches someone on their profile page, and acc
   await enter(host, `host${randomTag()}`);
   await enter(guest, guestHandle);
   await guest.goto(`/u/${guestHandle}`);
-  // /invite needs the game catalog; the Play panel's game heading shows it has arrived.
-  await expect(host.getByRole('region', { name: 'Play' }).getByRole('heading', { name: 'Critical Mass' })).toBeVisible();
+  // /invite needs the game catalog; Random match turns on once it has arrived.
+  await expect(host.getByRole('region', { name: 'Play' }).getByRole('button', { name: 'Random match' })).toBeEnabled();
   await host.getByLabel('Message #lobby').fill(`/invite @${guestHandle}`);
   await host.getByRole('button', { name: 'Send' }).click();
   const card = guest.getByRole('group', { name: /Invite from/ });
@@ -51,6 +52,7 @@ test('an open table shows in the lobby list, and a stranger can sit', async ({ b
   const other = await newPlayer(browser);
   await enter(host, `open${randomTag()}`);
   await enter(other, `sit${randomTag()}`);
+  await pickGame(host);
   await host.getByRole('button', { name: 'Host a table' }).click();
   await host.getByLabel('Open to anyone').check();
   const list = other.getByRole('region', { name: 'Tables' });
@@ -83,6 +85,8 @@ test('an old /play/<match> link lands on the match\'s table', async ({ browser }
   const b = await newPlayer(browser);
   await enter(a, `qa${randomTag()}`);
   await enter(b, `qb${randomTag()}`);
+  await pickGame(a);
+  await pickGame(b);
   await a.getByRole('button', { name: 'Find a match' }).click();
   await b.getByRole('button', { name: 'Find a match' }).click();
   await a.waitForURL(/\/t\/t_/, { timeout: 20_000 });
@@ -121,7 +125,7 @@ test('resigning a 3-player match that plays on frees you at once, and your Resig
   await expect(guest.getByRole('button', { name: 'Resign' })).toHaveCount(0);
   // Out while the others play on: back in the lobby (no reload), the Play panel offers a new match.
   await guest.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Lobby' }).click();
-  await expect(guest.getByRole('button', { name: 'Find a match' })).toBeVisible();
+  await expect(guest.getByRole('button', { name: 'Select game' })).toBeVisible();
   await expect(guest.getByRole('link', { name: 'Back to your table' })).toHaveCount(0);
 
   await host.request.post(`/api/matches/${matchId}/resign`); // ends it: the last one standing wins

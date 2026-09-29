@@ -44,3 +44,10 @@ export async function grantAdmin(request: APIRequestContext, handle: string): Pr
   const r = await request.post('/api/console/grant', { headers: { 'x-admin-key': 'e2e-admin' }, data: { handle } });
   if (!r.ok()) throw new Error(`grant ${handle} failed: ${r.status()} ${await r.text()}`);
 }
+
+/** Choose a game in the lobby's Play panel; the browser remembers it, like a player's pick. */
+export async function pickGame(page: Page, name = 'Critical Mass'): Promise<void> {
+  await page.getByRole('button', { name: 'Select game' }).click();
+  await page.getByRole('dialog', { name: 'Choose a game' }).getByRole('button', { name: `Select ${name}` }).click();
+  await expect(page.getByRole('region', { name: 'Play' }).getByRole('heading', { name })).toBeVisible();
+}

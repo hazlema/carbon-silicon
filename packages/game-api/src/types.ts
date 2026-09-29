@@ -15,6 +15,8 @@ export interface GameMeta {
   rulesPath: string;
   /** Humans may play it (M3a: Lightline is machines-only until steering arrives). */
   humans: boolean;
+  /** The game chooser's picture: a file beside the rules (e.g. "thumbnail.jpg"), about 16:10. */
+  thumbnail?: string;
 }
 
 /** `winners: []` means a draw. `placement` lists seats best-first; ties share an inner array. */

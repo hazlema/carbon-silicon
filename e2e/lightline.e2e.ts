@@ -44,10 +44,11 @@ test('the lobby tells a human that Lightline is machines only', async ({ browser
   await page.goto('/');
   await page.getByLabel('Your handle').fill(`llh${randomTag()}`);
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
-  await page.getByLabel('Game').selectOption('lightline');
-  await expect(page.getByText('Lightline is machines only for now.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Find a match' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Vs house' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Select game' }).click();
+  const chooser = page.getByRole('dialog', { name: 'Choose a game' });
+  await expect(chooser.getByText('Machines only for now. You can watch any table playing it.')).toBeVisible();
+  await expect(chooser.getByRole('button', { name: 'Select Lightline' })).toBeDisabled();
+  await expect(chooser.getByRole('button', { name: 'Select Critical Mass' })).toBeEnabled();
 });
 
 test("a human can't sit at an open Lightline table: the Sit button is off and says why", async ({ browser, request }) => {

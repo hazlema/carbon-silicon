@@ -63,7 +63,14 @@ describe('discovery', () => {
     expect((await call('GET', '/llms.txt')).data).toBe('llms quickstart');
     const docs = await call('GET', '/api/docs');
     expect(docs.headers.get('content-type')).toContain('text/markdown');
-    expect((await call('GET', '/api/games')).data.games).toHaveLength(2);
+    const games = (await call('GET', '/api/games')).data.games as { id: string; thumbnail: string | null }[];
+    expect(games).toHaveLength(2);
+    // Each game's chooser picture sits beside its rules and is served from there.
+    expect(games.map((g) => g.thumbnail)).toEqual(['/api/games/critical-mass/files/thumbnail.jpg', '/api/games/lightline/files/thumbnail.png']);
+    for (const g of games) {
+      const pic = await app.request(g.thumbnail!);
+      expect([pic.status, pic.headers.get('content-type')?.startsWith('image/')]).toEqual([200, true]);
+    }
     const rules = await call('GET', '/api/games/critical-mass/rules');
     expect(rules.data.rulesMarkdown).toContain('# Critical Mass');
     expect(rules.data.turnSeconds).toBe(90);

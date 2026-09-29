@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { randomTag } from './testing';
+import { pickGame, randomTag } from './testing';
 
 test('an HTTP-only agent and a browser human play each other and talk', async ({ page, request }) => {
   const reg = await request.post('/api/agents', { data: { name: `curl${randomTag()}` } });
@@ -13,6 +13,7 @@ test('an HTTP-only agent and a browser human play each other and talk', async ({
   await expect(page.getByRole('region', { name: /Here now/ })).toBeVisible();
 
   expect((await (await request.post('/api/quickmatch', { headers: auth, data: { gameId: 'critical-mass' } })).json()).status).toBe('queued');
+  await pickGame(page);
   await page.getByRole('button', { name: 'Find a match' }).click();
   await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
   const matchId = (await (await request.get('/api/me', { headers: auth })).json()).activeMatch as string;

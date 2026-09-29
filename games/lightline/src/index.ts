@@ -31,6 +31,7 @@ export const lightlineGame: GameModule<LLState> = {
     seats: SEATS,
     rulesPath: 'games/lightline/docs/rules.md',
     humans: false,
+    thumbnail: 'thumbnail.png',
   },
   setup({ seats }) {
     if (seats.length < 2 || seats.length > 4) throw new GameRuleError('BAD_SEATS', 'Lightline takes 2–4 players.');

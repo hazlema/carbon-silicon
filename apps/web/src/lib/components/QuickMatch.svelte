@@ -1,29 +1,49 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import type { GameInfo } from '@cs/shared/protocol';
   import { live } from '$lib/live.svelte';
+  import { loadPick, playable, randomGame, remembered, savePick } from '$lib/play';
   import { tableApi } from '$lib/table-actions';
+  import GameChooser from './GameChooser.svelte';
   import GatheringCard from './GatheringCard.svelte';
 
   const games = $derived(live.games);
-  let gameId = $state('critical-mass');
-  $effect(() => {
-    if (games.length > 0 && !games.some((g) => g.id === gameId)) gameId = games[0].id;
-  });
+  let pickId = $state<string | null>(null);
+  onMount(() => (pickId = loadPick()));
+  const game = $derived(remembered(games, pickId));
+  let choosing = $state(false);
   let error = $state('');
   let busy = $state(false);
 
-  const game = $derived(games.find((g) => g.id === gameId));
-  const machinesOnly = $derived(!!game && !game.humans && live.me?.kind === 'human');
+  function choose(g: GameInfo | null) {
+    pickId = g?.id ?? null;
+    savePick(pickId);
+    error = '';
+  }
 
-  async function find() {
+  async function act(fn: () => Promise<unknown>) {
     error = '';
     busy = true;
     try {
-      await live.quickMatch(gameId);
+      await fn();
     } catch (e) {
       error = (e as Error).message;
     } finally {
       busy = false;
     }
+  }
+
+  const find = (g: GameInfo) => act(() => live.quickMatch(g.id));
+  const hostTable = (g: GameInfo) => act(() => tableApi.host(g.id));
+
+  function randomMatch() {
+    const g = randomGame(games);
+    if (!g) {
+      error = 'No game is open to people right now.';
+      return;
+    }
+    choose(g);
+    void find(g);
   }
 
   async function stop() {
@@ -35,49 +55,22 @@
     }
   }
 
-  async function hostTable() {
-    error = '';
-    busy = true;
-    try {
-      await tableApi.host(gameId);
-    } catch (e) {
-      error = (e as Error).message;
-    } finally {
-      busy = false;
-    }
-  }
-  async function vsHouse() {
-    error = '';
-    busy = true;
-    try {
-      await tableApi.vsHouse(gameId);
-    } catch (e) {
-      error = (e as Error).message;
-    } finally {
-      busy = false;
-    }
-  }
+  const players = (g: GameInfo) => (g.minPlayers === g.maxPlayers ? `${g.minPlayers} players` : `${g.minPlayers}–${g.maxPlayers} players`);
 </script>
 
 {#if live.myTable?.status === 'forming'}
   <GatheringCard table={live.myTable} />
 {:else}
   <section class="play panel" aria-labelledby="play-title">
-    <div class="eyebrow">
-      <h2 id="play-title">Play</h2>
-      {#if game}<span class="players">{game.minPlayers}–{game.maxPlayers} players</span>{/if}
-    </div>
-    {#if games.length > 1}
-      <label class="pick">Game
-        <select bind:value={gameId}>
-          {#each games as g}<option value={g.id}>{g.name}</option>{/each}
-        </select>
-      </label>
-    {/if}
+    <h2 id="play-title">Play</h2>
     {#if game}
-      <h3>{game.name}</h3>
-      <p class="tagline">{game.tagline} {game.mode === 'turn' ? 'Turn-based' : 'Real-time'}. <a href="/games">Rules</a></p>
-      {#if machinesOnly}<p class="note">{game.name} is machines only for now. Watch any table playing it.</p>{/if}
+      <div class="picked">
+        <div class="thumb">{#if game.thumbnail}<img src={game.thumbnail} alt="" />{/if}</div>
+        <div>
+          <h3>{game.name}</h3>
+          <p class="meta">{players(game)}, {game.mode === 'turn' ? 'turn-based' : 'real-time'}. <a href="/games#{game.id}">Rules</a></p>
+        </div>
+      </div>
     {/if}
     {#if live.activeMatch}
       <a class="btn primary" href={live.myTable ? `/t/${live.myTable.id}` : `/play/${live.activeMatch}`}>Back to your table</a>
@@ -85,54 +78,78 @@
       <p class="waiting" role="status">Looking for an opponent. If nobody turns up in a few seconds, a house machine sits down.</p>
       <button class="btn" type="button" onclick={stop}>Stop looking</button>
     {:else}
-      {@const off = busy || !live.me || live.myStatus !== 'ready' || machinesOnly}
-      <div class="actions">
-        <button class="btn primary" type="button" onclick={find} disabled={off}>Find a match</button>
-        <button class="btn" type="button" onclick={hostTable} disabled={off}>Host a table</button>
-        <button class="btn" type="button" onclick={vsHouse} disabled={off}>Vs house</button>
-      </div>
+      {@const off = busy || !live.me || live.myStatus !== 'ready'}
+      {#if game}
+        <div class="actions">
+          <button class="btn" type="button" onclick={() => hostTable(game)} disabled={off}>Host a table</button>
+          <button class="btn primary" type="button" onclick={() => find(game)} disabled={off}>Find a match</button>
+          <button class="btn quiet cancel" type="button" onclick={() => choose(null)} disabled={busy}>Cancel game</button>
+        </div>
+      {:else}
+        <div class="actions">
+          <button class="btn primary" type="button" onclick={() => (choosing = true)} disabled={games.length === 0}>Select game</button>
+          <button class="btn" type="button" onclick={randomMatch} disabled={off || playable(games).length === 0}>Random match</button>
+        </div>
+      {/if}
       {#if live.myStatus === 'afk'}<p class="hint">You're set to AFK. Switch to Ready to play.</p>{/if}
     {/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
   </section>
 {/if}
 
+<GameChooser
+  bind:open={choosing}
+  {games}
+  current={game?.id ?? null}
+  onpick={(g) => {
+    choose(g);
+    choosing = false;
+  }}
+/>
+
 <style>
   .play {
     padding: 1.1rem 1.25rem 1.25rem;
   }
-  .eyebrow {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 0.5rem;
-  }
   h2 {
-    margin: 0;
+    margin: 0 0 0.75rem;
     font-size: var(--step--1);
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--fog);
   }
-  .players {
-    color: var(--fog);
-    font-family: var(--font-silicon);
-    font-size: var(--step--1);
+  .picked {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0.9rem;
+    margin-bottom: 1rem;
+  }
+  .thumb {
+    aspect-ratio: 16 / 10;
+    border-radius: var(--r-tile);
+    overflow: hidden;
+    background: var(--ink-deep);
+  }
+  .thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
   h3 {
     margin: 0;
     font-family: var(--font-carbon);
     font-weight: 600;
-    font-size: var(--step-3);
+    font-size: var(--step-2);
     line-height: 1.1;
   }
-  .tagline {
-    margin: 0.5rem 0 1.1rem;
-    color: color-mix(in oklab, var(--chalk) 85%, var(--fog));
-    line-height: 1.6;
+  .meta {
+    margin: 0.25rem 0 0;
+    color: var(--fog);
+    font-size: var(--step--1);
   }
-  .note,
   .hint,
   .waiting {
     color: var(--fog);
@@ -142,23 +159,18 @@
   .actions + .hint {
     margin: 0.7rem 0 0;
   }
-  .pick {
-    display: grid;
-    gap: 0.3rem;
-    margin-bottom: 0.75rem;
-    font-size: var(--step--1);
-  }
   .btn {
     width: 100%;
     padding: 0.8rem 1rem;
   }
-  /* Find a match leads across the panel; the other two share the row under it. */
   .actions {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
     gap: 0.5rem;
   }
-  .actions .primary {
+  /* Cancel sits under the two ways to play, across the panel. */
+  .actions .cancel {
     grid-column: 1 / -1;
+    padding: 0.55rem 1rem;
   }
 </style>

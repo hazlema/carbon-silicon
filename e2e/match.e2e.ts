@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test';
-import { enter, newPlayer, randomTag } from './testing';
+import { enter, newPlayer, pickGame, randomTag } from './testing';
 
 test('quick match seats a human against Sprocket and the game plays to a verdict', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
+  await pickGame(page);
   await page.getByRole('button', { name: 'Find a match' }).click();
   await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
   await expect(page.getByText('Sprocket').first()).toBeVisible();
@@ -29,6 +30,7 @@ test('changing your mind after "Play again" does not start another match behind 
   await page.goto('/');
   await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
+  await pickGame(page);
   await page.getByRole('button', { name: 'Find a match' }).click();
   await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
   // Scoped to the table: the page's own live-region wrapper (UpdateBanner, always in the DOM) is a
@@ -56,6 +58,7 @@ test('keyboard players can reach every cell, and only legal cells act', async ({
   await page.goto('/');
   await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
+  await pickGame(page);
   await page.getByRole('button', { name: 'Find a match' }).click();
   await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
   const cells = page.locator('button[data-cell]');
@@ -78,6 +81,7 @@ test('a spectator lands on the rail, and the player sees it only by switching ta
   await page.goto('/');
   await page.getByLabel('Your handle').fill(`e2e${randomTag()}`);
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
+  await pickGame(page);
   await page.getByRole('button', { name: 'Find a match' }).click();
   await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
   const tableUrl = page.url();

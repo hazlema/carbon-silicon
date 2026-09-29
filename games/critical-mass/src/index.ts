@@ -228,6 +228,7 @@ export const criticalMassGame: GameModule<CMState> = {
     seats: SEATS,
     rulesPath: 'games/critical-mass/docs/rules.md',
     humans: true,
+    thumbnail: 'thumbnail.jpg',
   },
   setup({ seats }) {
     if (seats.length < 2 || seats.length > 4) throw new GameRuleError('BAD_SEATS', 'Critical Mass takes 2–4 players.');

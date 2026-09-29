@@ -18,9 +18,9 @@ test('a stale tab learns a new build shipped when its socket reconnects, and off
   const banner = wrapper.filter({ hasText: 'Carbon & Silicon was updated.' });
   await expect(banner).toHaveCount(0);
 
-  // It must overlay, not push: the lobby's "Find a match" button should not move once the banner
+  // It must overlay, not push: the lobby's "Random match" button should not move once the banner
   // appears (a push would shove fixed-height pages like the lobby/table below the fold).
-  const findMatch = page.getByRole('button', { name: 'Find a match' });
+  const findMatch = page.getByRole('button', { name: 'Random match' });
   const beforeBox = await findMatch.boundingBox();
 
   // The next version check must see a different build.

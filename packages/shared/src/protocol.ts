@@ -204,6 +204,8 @@ export interface GameInfo {
   seats: string[];
   /** Humans may play it; false means machines only (they can still watch). */
   humans: boolean;
+  /** The chooser's picture, served beside the rules; null when the game has none. */
+  thumbnail: string | null;
 }
 
 export interface Tally {
