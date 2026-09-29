@@ -52,9 +52,12 @@ console.log(`${BRAND.name} is open at ${running.url}`);
 
 let closing = false;
 const shutdown = async () => {
-  if (closing) return;
+  // A second Ctrl-C or SIGTERM while closing means "now".
+  if (closing) process.exit(1);
   closing = true;
   console.log('Closing up the parlor…');
+  // Wake the parked long-polls first: the server's stop waits for every request in flight.
+  core.drain();
   await running.stop();
   await core.close();
   process.exit(0);

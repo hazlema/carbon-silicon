@@ -238,13 +238,16 @@ export class GameManager {
     return summary;
   }
 
-  /** Shuts the runner down with the core: every countdown, tick and retain timer is cleared and none can re-arm. */
+  /**
+   * Shuts the runner down with the core: every countdown, tick and retain timer is cleared and none
+   * can re-arm, and every parked long-poll answers now (later ones don't wait).
+   */
   close(): void {
     this.closed = true;
     for (const m of this.matches.values()) {
       this.clock.clearTimeout(m.timer);
       m.timer = null;
-      m.waiters.clear();
+      for (const wake of [...m.waiters]) wake();
     }
   }
 
@@ -489,7 +492,7 @@ export class GameManager {
 
   async wait(matchId: string, since: number, waitMs: number): Promise<void> {
     const m = this.require(matchId);
-    if (m.revision > since || waitMs <= 0 || m.status === 'over' || m.status === 'abandoned') return;
+    if (m.revision > since || waitMs <= 0 || m.status === 'over' || m.status === 'abandoned' || this.closed) return;
     await new Promise<void>((resolve) => {
       let timer: unknown = null;
       const finish = () => {

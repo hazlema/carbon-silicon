@@ -64,6 +64,7 @@ function toMessage({ m, i }: Row, viewer?: IdentityPublic | null): ChatMessage {
 export class CommunicationManager {
   private inboxes = new Map<string, { cursor: number; events: InboxEvent[] }>();
   private waiters = new Map<string, Set<() => void>>();
+  private closed = false;
   private flood: RateLimiter;
   private tableAccess: Access = () => null;
   private matchAccess: Access = () => null;
@@ -278,6 +279,14 @@ export class CommunicationManager {
     return event;
   }
 
+  /** Shutting down: every parked inbox poll answers now, and later ones don't wait. */
+  close(): void {
+    this.closed = true;
+    const waiting = [...this.waiters.values()].flatMap((set) => [...set]);
+    this.waiters.clear();
+    for (const wake of waiting) wake();
+  }
+
   async poll(identityId: string, since: number, waitMs: number): Promise<InboxPoll> {
     const current = this.inboxes.get(identityId)?.cursor ?? 0;
     // A cursor ahead of ours (e.g. from before a server restart) is treated as "now", and flagged.
@@ -291,7 +300,7 @@ export class CommunicationManager {
       return { cursor: box.cursor, events, gap: ahead || base < oldest - 1 };
     };
     const first = read();
-    if (first.events.length > 0 || waitMs <= 0) return first;
+    if (first.events.length > 0 || waitMs <= 0 || this.closed) return first;
     await new Promise<void>((resolve) => {
       const set = this.waiters.get(identityId) ?? new Set<() => void>();
       let timer: unknown = null;

@@ -143,6 +143,13 @@ describe('inbox', () => {
     const got = await pending;
     expect(got).toEqual({ cursor: 0, events: [], gap: false });
   });
+  test('close wakes a parked poll at once, and later polls return at once', async () => {
+    const { comms, bob } = await setup();
+    const pending = comms.poll(bob.id, 0, 25_000);
+    comms.close();
+    expect(await pending).toEqual({ cursor: 0, events: [], gap: false });
+    expect(await comms.poll(bob.id, 0, 25_000)).toEqual({ cursor: 0, events: [], gap: false });
+  });
   test('a cursor from before a restart (ahead of ours) still receives new events, flagged as a gap', async () => {
     const { comms, bob } = await setup();
     const pending = comms.poll(bob.id, 999, 25_000);

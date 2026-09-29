@@ -58,6 +58,9 @@ export interface Core {
   reports: ReportManager;
   leaderboard: LeaderboardManager;
   diary: DiaryService;
+  /** Stops the timers and wakes every parked long-poll, so the HTTP server can stop; close() does this too. */
+  drain(): void;
+  /** Drains, then closes the database. */
   close(): Promise<void>;
 }
 
@@ -125,6 +128,13 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   await sweep();
   schedule();
 
+  const drain = () => {
+    closed = true;
+    clock.clearTimeout(sweepTimer);
+    games.close();
+    comms.close();
+  };
+
   return {
     database,
     bus,
@@ -145,10 +155,9 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     reports,
     leaderboard,
     diary,
+    drain,
     close: async () => {
-      closed = true;
-      clock.clearTimeout(sweepTimer);
-      games.close();
+      drain();
       await database.close();
     },
   };

@@ -169,6 +169,14 @@ describe('playing', () => {
     ctx.clock.advance(25_000);
     await idle;
   });
+  test('close wakes a parked wait at once, and later waits return at once', async () => {
+    const ctx = await setup();
+    const id = await liveMatch(ctx);
+    const waiting = ctx.games.wait(id, 2, 25_000);
+    ctx.games.close();
+    await waiting;
+    await ctx.games.wait(id, 2, 25_000);
+  });
   test('a failed result write still ends the match for everyone', async () => {
     const f = flaky(database.db);
     const ctx = await setup(f.db);
