@@ -2,6 +2,7 @@
   import { page } from '$app/state';
   import { tick, untrack } from 'svelte';
   import type { CMView } from '@cs/critical-mass';
+  import type { LLView } from '@cs/lightline';
   import { dmParticipants, railChannel, tableChannel, type MatchEnvelope, type SeatInfo, type TableInfo } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
   import Avatar from '$lib/components/Avatar.svelte';
@@ -10,6 +11,7 @@
   import GatheringCard from '$lib/components/GatheringCard.svelte';
   import IdentityChip from '$lib/components/IdentityChip.svelte';
   import Board from '$lib/games/critical-mass/Board.svelte';
+  import LightlineBoard from '$lib/games/lightline/Board.svelte';
   import { live } from '$lib/live.svelte';
   import { clock, colorOf, tableColors } from '$lib/seats';
 
@@ -127,7 +129,8 @@
   });
 
   const match = $derived(env?.match);
-  const view = $derived(env?.view as CMView | undefined);
+  const view = $derived(env?.match.gameId === 'critical-mass' ? (env.view as CMView) : undefined);
+  const ll = $derived(env?.match.gameId === 'lightline' ? (env.view as LLView) : undefined);
   const mySeat = $derived(env?.you ?? null);
   /** Knocked out (or resigned) while the others play on. */
   const iAmOut = $derived(!!mySeat && !!view && view.eliminated.includes(mySeat));
@@ -149,6 +152,7 @@
     if (!match) return { lead: '' };
     if (match.status === 'countdown') return { lead: 'Starting…' };
     if (match.status === 'over' || match.status === 'abandoned') return { lead: verdict || 'This match was abandoned.' };
+    if (ll) return { lead: `Round ${ll.round}`, detail: ll.shrinking ? 'The arena is closing in.' : 'Machines at work: each rides its own doctrine.' };
     if (myTurn) return { lead: 'Your move.', detail: 'Place an orb on an empty cell or one of yours.' };
     return { lead: `Waiting for ${handleOf(match.toMove[0] ?? '')}…` };
   });
@@ -247,16 +251,29 @@
     <p>@{table.host.handle} is inviting players from the lobby.</p>
     <a class="btn primary" href="/">Back to the lobby</a>
   </div>
-{:else if table && env && match && view}
+{:else if table && env && match && (view || ll)}
   <div class="table">
     <section class="game panel" aria-labelledby="game-title">
       <header class="bar top">
-        <h1 id="game-title">Critical Mass</h1>
-        <span class="meta">turn {view.moveCount + 1} · {view.cols}×{view.rows}</span>
+        <h1 id="game-title">{ll ? 'Lightline' : 'Critical Mass'}</h1>
+        {#if ll}
+          <span class="meta" data-testid="ll-clock">round {ll.round}, {(ll.roundTick / 10).toFixed(1)} s</span>
+        {:else if view}
+          <span class="meta">turn {view.moveCount + 1} · {view.cols}×{view.rows}</span>
+        {/if}
         <span class="meta watching">Watching: {table.watching}</span>
         <a class="rules" href="/games">Rules</a>
       </header>
 
+      {#if ll}
+        <div class="stage ll">
+          <div class="boardwrap">
+            <LightlineBoard view={ll} {colors} seats={match.seats} fired={env.realtime?.fired ?? {}} />
+            {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
+          </div>
+        </div>
+      {/if}
+      {#if view}
       <div class="stage" style:--board-w="calc(68dvh * {view.cols} / {view.rows})">
         {#snippet card(s: SeatInfo, side: 'left' | 'right')}
           {@const out = view.eliminated.includes(s.seat)}
@@ -296,6 +313,7 @@
           {#each sides.right as s (s.seat)}{@render card(s, 'right')}{/each}
         </div>
       </div>
+      {/if}
 
       <footer class="bar bottom">
         <p class="status" role="status">
@@ -414,6 +432,14 @@
     margin-left: auto;
     color: var(--fog);
     font-size: var(--step--1);
+  }
+  .stage.ll {
+    display: block;
+  }
+  .stage.ll .boardwrap {
+    width: 100%;
+    max-width: calc(68dvh * 64 / 40);
+    margin-inline: auto;
   }
   .stage {
     display: grid;

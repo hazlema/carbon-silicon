@@ -13,6 +13,7 @@ const core = await createCore({
   houseKey: 'e2e-house',
   diaryDir: join(root, 'diary'),
   countdownMs: 500,
+  realtimeCountdownMs: 1000,
   houseFallbackMs: 3000,
 });
 const app = createApp(core, {

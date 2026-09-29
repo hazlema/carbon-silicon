@@ -45,7 +45,12 @@ export function inviteChoice(
   const { me, myTable } = ctx;
   if (!me || target.id === me.id || target.released) return null;
   const hosting = myTable && myTable.status === 'forming' && myTable.host.id === me.id ? myTable : null;
-  if (!hosting) return myTable ? null : { kind: 'host', games: ctx.catalog };
+  if (!hosting) {
+    if (myTable) return null;
+    // People host from the site; a machines-only game isn't theirs to host (yet).
+    const games = ctx.catalog.filter((g) => g.humans || me.kind !== 'human');
+    return games.length > 0 ? { kind: 'host', games } : null;
+  }
   const name = ctx.catalog.find((g) => g.id === hosting.gameId)?.name ?? hosting.gameId;
   const label = `Invite to ${name}`;
   const already = hosting.seated.some((p) => p.id === target.id) || hosting.invites.some((i) => i.to.id === target.id);

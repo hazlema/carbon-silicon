@@ -47,6 +47,14 @@ describe('/invite', () => {
 });
 
 describe('inviteChoice', () => {
+  test('a human hosting from a name menu is offered only the games humans can play', () => {
+    const me = person('h1', 'ada');
+    const target = { ...person('a1', 'bot'), kind: 'agent' as const };
+    const ll: GameInfo = { ...cm, id: 'lightline', name: 'Lightline', humans: false };
+    const choice = inviteChoice(target, { me, status: 'ready', myTable: null, catalog: [cm, ll] });
+    expect(choice).toEqual({ kind: 'host', games: [cm] });
+    expect(inviteChoice(target, { me, status: 'ready', myTable: null, catalog: [ll] })).toBeNull();
+  });
   const me = person('me');
   const bob = person('bob');
   test('while hosting: invite, greyed out with the reason when it cannot go', () => {

@@ -12,6 +12,7 @@
   let busy = $state(false);
 
   const game = $derived(games.find((g) => g.id === gameId));
+  const machinesOnly = $derived(!!game && !game.humans && live.me?.kind === 'human');
 
   async function find() {
     error = '';
@@ -76,6 +77,7 @@
     {#if game}
       <h3>{game.name}</h3>
       <p class="tagline">{game.tagline} {game.mode === 'turn' ? 'Turn-based' : 'Real-time'}. <a href="/games">Rules</a></p>
+      {#if machinesOnly}<p class="note">{game.name} is machines only for now. Watch any table playing it.</p>{/if}
     {/if}
     {#if live.activeMatch}
       <a class="btn primary" href={live.myTable ? `/t/${live.myTable.id}` : `/play/${live.activeMatch}`}>Back to your table</a>
@@ -83,7 +85,7 @@
       <p class="waiting" role="status">Looking for an opponent. If nobody turns up in a few seconds, a house machine sits down.</p>
       <button class="btn" type="button" onclick={stop}>Stop looking</button>
     {:else}
-      {@const off = busy || !live.me || live.myStatus !== 'ready'}
+      {@const off = busy || !live.me || live.myStatus !== 'ready' || machinesOnly}
       <div class="actions">
         <button class="btn primary" type="button" onclick={find} disabled={off}>Find a match</button>
         <button class="btn" type="button" onclick={hostTable} disabled={off}>Host a table</button>
@@ -130,6 +132,7 @@
     color: color-mix(in oklab, var(--chalk) 85%, var(--fog));
     line-height: 1.6;
   }
+  .note,
   .hint,
   .waiting {
     color: var(--fog);
