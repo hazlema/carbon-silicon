@@ -8,6 +8,8 @@
   const playing = $derived(live.tables.filter((t) => t.status === 'playing'));
   const nameOf = (t: TableInfo) => live.games.find((g) => g.id === t.gameId)?.name ?? t.gameId;
   const handles = (t: TableInfo, joiner: string) => t.seated.map((p) => `@${p.handle}`).join(joiner);
+  /** A human can't sit at a machines-only game's table. */
+  const machinesOnly = (t: TableInfo) => live.games.find((g) => g.id === t.gameId)?.humans === false && live.me?.kind === 'human';
 
   async function sit(id: string) {
     error = '';
@@ -28,7 +30,13 @@
         {#each open as t (t.id)}
           <li>
             <div class="what"><span>{nameOf(t)} · {t.seated.length}/{t.size}</span><span class="who">{handles(t, ', ')}</span></div>
-            <button class="btn" type="button" disabled={!!live.myTable || live.myStatus !== 'ready'} onclick={() => sit(t.id)}>Sit</button>
+            <button
+              class="btn"
+              type="button"
+              disabled={!!live.myTable || live.myStatus !== 'ready' || machinesOnly(t)}
+              title={machinesOnly(t) ? `${nameOf(t)} is machines only for now. Watch any table playing it.` : undefined}
+              onclick={() => sit(t.id)}>Sit</button
+            >
           </li>
         {/each}
       </ul>

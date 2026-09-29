@@ -20,6 +20,8 @@
     resign: 'By resignation.',
     timeout: 'On time: three missed turns in a row.',
     overload: 'The board went critical.',
+    rounds: 'On rounds: two round wins, or the best after three.',
+    forfeit: 'By forfeit: everyone else resigned.',
   };
 
   let table = $state<TableInfo | null>(null);
@@ -129,6 +131,12 @@
   });
 
   const match = $derived(env?.match);
+  const gameId = $derived(match?.gameId ?? table?.gameId ?? null);
+  /** The catalog's name for the game; the catalog loads only once signed in, so fall back to the id, title-cased. */
+  const gameName = $derived(
+    live.games.find((g) => g.id === gameId)?.name ??
+      (gameId ? gameId.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : 'Table'),
+  );
   const view = $derived(env?.match.gameId === 'critical-mass' ? (env.view as CMView) : undefined);
   const ll = $derived(env?.match.gameId === 'lightline' ? (env.view as LLView) : undefined);
   const mySeat = $derived(env?.you ?? null);
@@ -237,7 +245,7 @@
   }
 </script>
 
-<svelte:head><title>Critical Mass</title></svelte:head>
+<svelte:head><title>{gameName}</title></svelte:head>
 
 {#if gone}
   <div class="gone panel">
@@ -255,7 +263,7 @@
   <div class="table">
     <section class="game panel" aria-labelledby="game-title">
       <header class="bar top">
-        <h1 id="game-title">{ll ? 'Lightline' : 'Critical Mass'}</h1>
+        <h1 id="game-title">{gameName}</h1>
         {#if ll}
           <span class="meta" data-testid="ll-clock">round {ll.round}, {(ll.roundTick / 10).toFixed(1)} s</span>
         {:else if view}
