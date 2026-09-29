@@ -1,5 +1,6 @@
 import type {
   ChatMessage,
+  DmSummary,
   GameInfo,
   IdentityPublic,
   InboxEvent,
@@ -14,8 +15,10 @@ import type {
   WsClientMsg,
   WsServerMsg,
 } from '@cs/shared/protocol';
+import { dmChannel, dmParticipants } from '@cs/shared/protocol';
 import { updated } from '$app/state';
 import { api, ApiError } from './api';
+import { unreadTotal, withMessage } from './dms';
 
 type Listener<T> = (value: T) => void;
 export type Removal = { id: number; by: string };
@@ -43,6 +46,13 @@ class Live {
   /** Invites waiting for your answer. */
   offers = $state<InviteOffer[]>([]);
   games = $state<GameInfo[]>([]);
+  /** Your DM conversations (spec M2c §5). */
+  dms = $state<DmSummary[]>([]);
+  /** Unread DMs across your conversations, for the Lobby link. */
+  dmUnread: number = $derived(unreadTotal(this.dms));
+  /** A conversation someone asked to open (Message @x, /msg). The page with a chat switches to it
+   *  and clears this; `n` makes asking twice for the same one count. */
+  dmRequest = $state<{ channel: string; n: number } | null>(null);
   /** Everyone you ignore or block; their chat is hidden for you. */
   hiddenAuthors: Set<string> = $derived(new Set([...this.relations.ignores, ...this.relations.blocks].map((i) => i.id)));
   myStatus: Status = $derived(this.presence.find((p) => p.identity.id === this.me?.id)?.status ?? 'offline');
@@ -160,6 +170,67 @@ class Live {
     this.queued = null;
   }
 
+  async loadDms(): Promise<void> {
+    try {
+      this.dms = (await api<{ conversations: DmSummary[] }>('GET', '/api/dms')).conversations;
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  /** Opens (or reopens) the conversation with someone and asks the page to show it. */
+  openDm(identity: IdentityPublic): string {
+    const channel = dmChannel(this.me!.id, identity.id);
+    this.dms = this.dms.some((d) => d.channel === channel)
+      ? this.dms.map((d) => (d.channel === channel ? { ...d, hidden: false } : d))
+      : [{ with: identity, channel, last: null, unread: 0, hidden: false }, ...this.dms];
+    this.#requestDm(channel);
+    return channel;
+  }
+
+  /** `/msg`: send first, so a wrong name fails in the composer, then show the conversation. */
+  async sendDm(handle: string, text: string): Promise<void> {
+    const r = await api<{ message: ChatMessage }>('POST', `/api/dms/${encodeURIComponent(handle)}`, { text });
+    if (!this.dms.some((d) => d.channel === r.message.channel)) await this.loadDms();
+    this.#requestDm(r.message.channel);
+  }
+
+  /** You're looking at it: the dot goes here, and (through the server's dm.read) on your other devices. */
+  async readDm(channel: string): Promise<void> {
+    const d = this.dms.find((x) => x.channel === channel);
+    if (!d || d.unread === 0) return;
+    this.dms = this.dms.map((x) => (x.channel === channel ? { ...x, unread: 0 } : x));
+    await api('POST', `/api/dms/${encodeURIComponent(d.with.handle)}/read`).catch((e) => console.error(e));
+  }
+
+  /** Closes a tab until the next message. One never written to is simply forgotten. */
+  async closeDm(channel: string): Promise<void> {
+    const d = this.dms.find((x) => x.channel === channel);
+    if (!d) return;
+    if (!d.last) {
+      this.dms = this.dms.filter((x) => x.channel !== channel);
+      return;
+    }
+    this.dms = this.dms.map((x) => (x.channel === channel ? { ...x, hidden: true } : x));
+    await api('POST', `/api/dms/${encodeURIComponent(d.with.handle)}/close`).catch((e) => console.error(e));
+  }
+
+  #requestDm(channel: string): void {
+    this.dmRequest = { channel, n: (this.dmRequest?.n ?? 0) + 1 };
+  }
+
+  #dmMessage(m: ChatMessage): void {
+    const meId = this.me?.id;
+    if (!meId) return;
+    const prev = this.dms.find((d) => d.channel === m.channel);
+    const other = m.author && m.author.id !== meId ? m.author : prev?.with;
+    if (!other) {
+      void this.loadDms(); // your own first line from another device: fetch who it's with
+      return;
+    }
+    this.dms = withMessage(this.dms, m, other, meId);
+  }
+
   connect(): void {
     if (this.#ws || typeof window === 'undefined') return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -180,7 +251,8 @@ class Live {
       // close that window. This also fires on every reconnect, so a push missed while offline is
       // caught up here rather than waiting on the next push.
       void this.refreshMe().catch((e) => console.error(e));
-      for (const channel of this.#chat.keys()) this.#send({ type: 'subscribe', channel });
+      void this.loadDms();
+      for (const channel of this.#chat.keys()) if (!dmParticipants(channel)) this.#send({ type: 'subscribe', channel });
       for (const matchId of this.#matches.keys()) this.#send({ type: 'watch', matchId });
       for (const tableId of this.#tableWatch.keys()) this.#send({ type: 'watchTable', tableId });
     };
@@ -232,6 +304,7 @@ class Live {
         break;
       }
       case 'chat':
+        if (dmParticipants(msg.message.channel)) this.#dmMessage(msg.message);
         for (const fn of this.#chat.get(msg.message.channel) ?? []) fn(msg.message);
         break;
       case 'chat.removed':
@@ -245,6 +318,10 @@ class Live {
         if (msg.event.type === 'match.over' && this.activeMatch === msg.event.matchId) this.activeMatch = null;
         // A sanction started or ended: the server may also have resigned a match or dropped a queue entry.
         if (msg.event.type === 'moderation') void this.refreshMe().catch((e) => console.error(e));
+        if (msg.event.type === 'dm.read') {
+          const read = msg.event.channel;
+          this.dms = this.dms.map((d) => (d.channel === read ? { ...d, unread: 0 } : d));
+        }
         this.#tableEvent(msg.event);
         for (const fn of this.#inbox) fn(msg.event);
         break;
@@ -298,14 +375,14 @@ class Live {
     if (!set) {
       set = new Set();
       this.#chat.set(channel, set);
-      this.#send({ type: 'subscribe', channel });
+      if (!dmParticipants(channel)) this.#send({ type: 'subscribe', channel });
     }
     set.add(fn);
     return () => {
       set.delete(fn);
       if (set.size === 0) {
         this.#chat.delete(channel);
-        this.#send({ type: 'unsubscribe', channel });
+        if (!dmParticipants(channel)) this.#send({ type: 'unsubscribe', channel });
       }
     };
   }
