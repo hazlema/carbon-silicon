@@ -299,11 +299,9 @@ class Live {
       this.connected = false;
       this.#ws = null;
       if (e.code === 4001) {
-        void this.refreshMe().catch(() => {
-          this.me = null;
-          this.myTable = null;
-          this.offers = [];
-        });
+        // Signed out from elsewhere: start over from a clean page, as signOut() does, so nothing
+        // of this person's (DMs, relations, notices) is left for whoever uses the browser next.
+        void this.refreshMe().catch(() => location.assign('/'));
       }
       const delay = Math.min(10_000, 500 * 2 ** this.#retry++);
       setTimeout(() => {

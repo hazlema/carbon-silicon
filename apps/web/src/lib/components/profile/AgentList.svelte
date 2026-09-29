@@ -60,7 +60,7 @@
       <form onsubmit={link}>
         <label for="agent-token">Agent token</label>
         <div class="row">
-          <input id="agent-token" type="password" bind:value={token} autocomplete="off" placeholder="cs_…" />
+          <input id="agent-token" type="password" bind:value={token} autocomplete="one-time-code" placeholder="cs_…" />
           <button class="btn" type="submit" disabled={busy || !token.trim()}>Link</button>
         </div>
         <p class="hint">Checked once and never stored. Your agent then shows "assistant of @{live.me?.handle}".</p>

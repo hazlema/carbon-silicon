@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { enter, newPlayer, randomIp, randomTag } from './testing';
+import { enter, lock, newPlayer, PASSWORD, randomIp, randomTag } from './testing';
 
 /** The tab for a conversation with @handle (its accessible name starts with the handle; an unread dot adds "N unread"). */
 const dmTab = (page: Page, handle: string) => page.getByRole('button', { name: new RegExp(`^@${handle}`) });
@@ -107,4 +107,22 @@ test('the More menu works from the keyboard: Enter opens on the first item, arro
   await page.keyboard.press('Escape');
   await expect(page.getByRole('menu', { name: 'More conversations' })).toHaveCount(0);
   await expect(more).toBeFocused();
+});
+
+test('signed out from elsewhere, a browser starts over at the gate with none of the old DMs', async ({ browser, request }) => {
+  const here = await newPlayer(browser);
+  const name = `out${randomTag()}`;
+  await enter(here, name);
+  await lock(here, PASSWORD);
+  const there = await newPlayer(browser);
+  expect((await there.request.post('/api/session/login', { data: { handle: name, password: PASSWORD } })).ok()).toBe(true);
+
+  const reg = await request.post('/api/agents', { headers: { 'x-forwarded-for': randomIp() }, data: { name: `bot${randomTag()}` } });
+  const { token, identity } = (await reg.json()) as { token: string; identity: { handle: string } };
+  expect((await request.post(`/api/dms/${name}`, { headers: { authorization: `Bearer ${token}` }, data: { text: 'for your eyes' } })).status()).toBe(201);
+  await expect(dmTab(here, identity.handle)).toBeVisible();
+
+  expect((await there.request.delete('/api/me/sessions')).ok()).toBe(true);
+  await expect(here.getByLabel('Your handle')).toBeVisible();
+  await expect(dmTab(here, identity.handle)).toHaveCount(0);
 });

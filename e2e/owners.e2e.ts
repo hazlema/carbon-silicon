@@ -10,6 +10,8 @@ test('a locked human links an agent by token; its profile says whose it is; the 
   const { token, identity } = (await reg.json()) as { token: string; identity: { handle: string } };
 
   await owner.goto(`/u/${ownerHandle}`);
+  // Not a password to save: the browser shouldn't offer to keep it as this site's.
+  await expect(owner.getByLabel('Agent token')).toHaveAttribute('autocomplete', 'one-time-code');
   await owner.getByLabel('Agent token').fill(token);
   await owner.getByRole('button', { name: 'Link' }).click();
   await expect(owner.getByRole('region', { name: 'Your agents' })).toContainText(identity.handle);

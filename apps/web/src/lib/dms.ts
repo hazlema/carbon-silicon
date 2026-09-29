@@ -25,7 +25,8 @@ export function dmTabs(list: DmSummary[], open: string | null, max = DM_TABS): {
   return { shown, more: visible.filter((d) => !shown.includes(d)) };
 }
 
-export const unreadTotal = (list: DmSummary[]): number => list.reduce((n, d) => n + d.unread, 0);
+/** The Lobby count: unread across visible conversations only (closing doesn't mark read). */
+export const unreadTotal = (list: DmSummary[]): number => list.reduce((n, d) => n + (d.hidden ? 0 : d.unread), 0);
 
 /** The list after a DM arrives or is sent: that conversation moves to the front and opens; theirs
  *  counts as unread, yours means you've read it. The same message twice changes nothing. */

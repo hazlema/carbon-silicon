@@ -37,8 +37,9 @@ describe('dmTabs', () => {
 });
 
 describe('unread and arrivals', () => {
-  test('unreadTotal adds up every conversation', () => {
+  test('unreadTotal adds up every open conversation; a closed one cannot hold the count up', () => {
     expect(unreadTotal([convo('a', 1, { unread: 2 }), convo('b', 2, { unread: 3 })])).toBe(5);
+    expect(unreadTotal([convo('a', 1, { unread: 2 }), convo('b', 2, { unread: 3, hidden: true })])).toBe(2);
   });
   test('a message from them moves the conversation to the front, reopens it and counts; mine is read', () => {
     const me = person('me');
