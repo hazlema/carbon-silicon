@@ -7,3 +7,6 @@ build/
 *.log
 .playwright-mcp/
 test-results/
+
+# brainstorming companion mockups (local)
+.superpowers/
