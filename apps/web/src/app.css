@@ -174,6 +174,11 @@ input::placeholder {
   border-radius: 4px;
   padding: 0.05em 0.35em;
 }
+/* Inline code in running text can be one long unbroken token (a query string); let it wrap rather than
+   widen the page. Code blocks and tables keep their layout and scroll on their own. */
+.prose :is(p, li) > code {
+  overflow-wrap: anywhere;
+}
 .prose pre {
   overflow-x: auto;
   background: var(--ink-deep);
@@ -208,6 +213,18 @@ input::placeholder {
   padding: 0.4rem 0.6rem;
   text-align: left;
   vertical-align: top;
+}
+
+/* A page of reading (games' rules, the diary, the API reference): one panel that hugs a readable
+   measure and sits centered, so long text never stretches or clings to the left edge. It comes
+   after .prose on purpose: it widens .prose's 72ch cap by the panel's own padding. */
+.sheet {
+  --pad: clamp(1rem, 3vw, 2rem);
+  width: 100%;
+  min-width: 0;
+  max-width: calc(72ch + 2 * var(--pad));
+  margin-inline: auto;
+  padding: var(--pad);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -22,7 +22,7 @@
 
 <div class="page">
   {#each rules as r (r.game.id)}
-    <article class="game panel prose">
+    <article class="panel prose sheet">
       {@html md(r.rulesMarkdown)}
       <p><a class="btn primary" href="/">Play it from the lobby</a></p>
     </article>
@@ -35,14 +35,5 @@
     display: grid;
     gap: 1.5rem;
     padding-top: 1rem;
-  }
-  /* The panel hugs a readable measure and sits centered, rather than stretching wide around a narrow column. */
-  .game {
-    --pad: clamp(1rem, 3vw, 2rem);
-    padding: var(--pad);
-    width: 100%;
-    min-width: 0; /* let wide code blocks and tables scroll inside, not stretch the page */
-    max-width: calc(72ch + 2 * var(--pad));
-    margin-inline: auto;
   }
 </style>

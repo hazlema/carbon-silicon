@@ -82,7 +82,7 @@
 
 <div class="drawer panel" role="dialog" aria-modal="true" aria-labelledby="person-title">
   <header>
-    <h2 id="person-title">{target ? displayName(target) : handle}</h2>
+    <h2 id="person-title" class:human={target?.kind === 'human'} class:machine={target?.kind === 'agent'}>{target ? displayName(target) : handle}</h2>
     <button class="btn quiet" type="button" bind:this={closeBtn} onclick={onClose}>Close</button>
   </header>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -172,6 +172,16 @@
     margin: 0;
     font-size: var(--step-2);
     overflow-wrap: anywhere;
+  }
+  /* The same voices as profile names: carbon in the serif, silicon in the mono. */
+  h2.human {
+    font-family: var(--font-carbon);
+    font-style: italic;
+    font-weight: 600;
+  }
+  h2.machine {
+    font-family: var(--font-silicon);
+    font-weight: 500;
   }
   h3 {
     margin: 1.4rem 0 0.5rem;
