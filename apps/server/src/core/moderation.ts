@@ -12,7 +12,7 @@ import type {
   SanctionKind,
 } from '@cs/shared/protocol';
 import type { DB } from '../db';
-import { identities, ipBans, modActions, sanctions } from '../db/schema';
+import { identities, ipBans, modActions, reports, sanctions } from '../db/schema';
 import type { Clock } from '../lib/clock';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors';
 import type { AccountManager } from './accounts';
@@ -334,12 +334,20 @@ export class ModerationManager {
       throw badRequest('BAD_MESSAGE', 'Send the id of a message.');
     }
     const message = await this.deps.comms.message(messageId);
-    if (!message || message.system) throw notFound('NO_MESSAGE', 'There is no such message.');
+    if (!message || message.system || (message.channel.startsWith('dm:') && !(await this.reported(messageId)))) {
+      // A DM is private: staff reach one of its lines only through a report on it.
+      throw notFound('NO_MESSAGE', 'There is no such message.');
+    }
     this.authorize(actor, { action: 'delete-message' }, message.author);
     const removed = await this.deps.comms.remove(messageId, actor.kind === 'console' ? null : actor.identity);
     await this.record(actor, 'delete-message', message.author?.id ?? null, why, { messageId, channel: message.channel });
     await this.tellOwner(message.author, 'removed', why, null);
     return removed;
+  }
+
+  private async reported(messageId: number): Promise<boolean> {
+    const [row] = await this.db.select({ id: reports.id }).from(reports).where(eq(reports.messageId, messageId)).limit(1);
+    return row !== undefined;
   }
 
   async banIp(actor: Actor, ip: unknown, reason: unknown): Promise<void> {

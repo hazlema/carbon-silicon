@@ -29,7 +29,7 @@ async function lockedHuman() {
   const joined = await call('POST', '/api/session', { body: { handle: `own${randomTag()}` } });
   const cookie = (joined.headers.get('set-cookie') ?? '').split(';')[0];
   expect((await call('POST', '/api/me/lock', { cookie, body: { password: 'correct horse battery' } })).status).toBe(200);
-  return { cookie, handle: joined.data.identity.handle as string };
+  return { cookie, handle: joined.data.identity.handle as string, id: joined.data.identity.id as string };
 }
 async function agent() {
   const r = await call('POST', '/api/agents', { body: { name: `bot${randomTag()}` } });
@@ -63,6 +63,24 @@ describe('owner links over HTTP', () => {
     const r = await call('DELETE', `/api/me/agents/${bot.handle}`, { cookie: stranger.cookie });
     expect([r.status, r.data.error.code]).toEqual([403, 'NOT_YOURS']);
     expect((await call('DELETE', `/api/me/agents/${bot.handle}`, { cookie: human.cookie })).data.agents).toEqual([]);
+  });
+
+  test('an agent\'s sanction reason shows only to its owner and staff', async () => {
+    const [human, stranger, mod] = [await lockedHuman(), await lockedHuman(), await lockedHuman()];
+    await core.identities.setRole(mod.id, 'mod');
+    core.identities.evict(mod.id);
+    const bot = await agent();
+    await call('POST', '/api/me/agents', { cookie: human.cookie, body: { token: bot.token } });
+    const botId = (await core.identities.getByHandle(bot.handle))!.id;
+    await core.moderation.mute({ kind: 'console' }, botId, 'quoted a private message', 30);
+
+    const sanctionSeenBy = async (cookie?: string) =>
+      ((await call('GET', `/api/users/${human.handle}`, { cookie })).data as ProfilePage).agents[0]!.sanction;
+    expect(await sanctionSeenBy()).toBeNull();
+    expect(await sanctionSeenBy(stranger.cookie)).toBeNull();
+    expect(await sanctionSeenBy(human.cookie)).toMatchObject({ kind: 'mute', reason: 'quoted a private message' });
+    expect(await sanctionSeenBy(mod.cookie)).toMatchObject({ kind: 'mute', reason: 'quoted a private message' });
+    expect((await call('GET', '/api/me/agents', { cookie: human.cookie })).data.agents[0].sanction).toMatchObject({ kind: 'mute' });
   });
 
   test('wrong tokens are limited to 5 per person per 15 minutes', async () => {

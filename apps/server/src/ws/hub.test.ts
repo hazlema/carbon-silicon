@@ -144,6 +144,7 @@ test('a DM reaches only the two people\'s sockets, removal too; nobody can subsc
   expect(chats(wb)).toEqual([{ type: 'chat', message: m }]);
   expect(chats(wc)).toEqual([]);
 
+  await core.reports.create(b, m.id, 'rude'); // staff reach a DM line only through a report
   await core.moderation.deleteMessage({ kind: 'console' }, m.id, 'test');
   const removals = (ws: FakeSocket) => ws.sent.filter((x) => x.type === 'chat.removed');
   expect(removals(wa)).toHaveLength(1);

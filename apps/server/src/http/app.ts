@@ -249,7 +249,11 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   app.delete('/api/me/owner', async (c) => c.json({ identity: await core.owners.drop(me(c)) }));
   app.get('/api/users/:handle', async (c) => {
     const profile = await core.profiles.profile(c.req.param('handle'));
-    const page: ProfilePage = { ...profile, agents: profile.identity.kind === 'human' ? await core.owners.agents(profile.identity.id) : [] };
+    const agents = profile.identity.kind === 'human' ? await core.owners.agents(profile.identity.id) : [];
+    // A sanction's reason can quote a reported DM: only the owner and staff see it.
+    const viewer = c.get('identity');
+    const seesSanctions = viewer?.id === profile.identity.id || viewer?.role === 'mod' || viewer?.role === 'admin';
+    const page: ProfilePage = { ...profile, agents: seesSanctions ? agents : agents.map((a) => ({ ...a, sanction: null })) };
     return c.json(page);
   });
   app.get('/api/who', (c) => c.json({ presence: core.presence.list() }));

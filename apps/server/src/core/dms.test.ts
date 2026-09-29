@@ -8,6 +8,7 @@ import { FakeClock } from '../lib/clock';
 import type { AppError } from '../lib/errors';
 import { randomTag } from '../lib/testing';
 import { createCore } from './core';
+import type { Actor } from './powers';
 
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
 const clock = new FakeClock();
@@ -66,6 +67,14 @@ describe('conversations', () => {
     const page = await core.dms.history(ada, bob.handle, lines[2].id);
     expect(page.with.id).toBe(bob.id);
     expect(page.messages.map((m) => m.text)).toEqual(['from bob', 'n0', 'n1']);
+  });
+
+  test('reading or closing a conversation with no messages yet does not add it to your list', async () => {
+    const [ada, bob, cy] = [await person('ada'), await person('bob'), await person('cy')];
+    expect((await core.dms.read(ada, bob.handle)).unread).toBe(0);
+    expect((await core.dms.close(ada, cy.handle)).with.id).toBe(cy.id);
+    expect(await summaryOf(ada, bob)).toBeUndefined();
+    expect(await summaryOf(ada, cy)).toBeUndefined();
   });
 });
 
@@ -126,6 +135,14 @@ describe('who may write', () => {
     expect(await core.database.db.select().from(dmState).where(eq(dmState.identityId, bob.id))).toEqual([]);
     expect(await codeOf(core.comms.post(ada, dmChannel(ada.id, bob.id), 'hello?'))).toBe('NO_USER');
   });
+
+  test('a conversation with a released name leaves the other person\'s list', async () => {
+    const [ada, bob] = [await person('ada'), await person('bob')];
+    await send(ada, bob, 'see you');
+    expect(await summaryOf(ada, bob)).toBeDefined();
+    await core.accounts.release(bob.id);
+    expect(await summaryOf(ada, bob)).toBeUndefined();
+  });
 });
 
 describe('reports', () => {
@@ -135,5 +152,18 @@ describe('reports', () => {
     expect(await codeOf(core.reports.create(cy, m.id, 'nosy'))).toBe('NO_MESSAGE');
     const report = await core.reports.create(bob, m.id, 'rude');
     expect(report.snapshot.channel).toBe(dmChannel(ada.id, bob.id));
+  });
+
+  test('a mod can delete a DM line only once it is reported', async () => {
+    const [ada, bob] = [await person('ada'), await person('bob')];
+    const mod = { kind: 'identity', identity: await core.identities.setRole((await person('mod')).id, 'mod') } satisfies Actor;
+    const quiet = await send(ada, bob, 'just between us');
+    expect(await codeOf(core.moderation.deleteMessage(mod, quiet.id, 'curious'))).toBe('NO_MESSAGE');
+    expect((await core.comms.message(quiet.id))?.removed).toBeNull();
+
+    const rude = await send(ada, bob, 'rude words');
+    const report = await core.reports.create(bob, rude.id, 'rude');
+    await core.reports.resolve(mod, report.id, 'delete', 'not ok');
+    expect((await core.comms.message(rude.id))?.removed).toEqual({ by: mod.identity.handle });
   });
 });

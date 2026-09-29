@@ -50,14 +50,15 @@ export class DmManager {
     return { with: other, channel, messages: await this.deps.comms.history(channel, { viewer: me, limit: PAGE, before }) };
   }
 
-  /** Your conversations, newest first, minus people you ignore or block. */
+  /** Your conversations, newest first, minus people you ignore or block and released names
+   *  (whose conversations could never be read or closed again). */
   async list(me: IdentityPublic): Promise<DmSummary[]> {
     const rows = await this.db.select().from(dmState).where(eq(dmState.identityId, me.id));
     const out: DmSummary[] = [];
     for (const row of rows) {
       if (await this.deps.relations.mutes(me.id, row.otherId)) continue;
       const other = await this.deps.identities.get(row.otherId);
-      if (other) out.push(await this.summary(me, other, row.channel, row));
+      if (other && !other.released) out.push(await this.summary(me, other, row.channel, row));
     }
     return out.sort((a, b) => (b.last?.id ?? 0) - (a.last?.id ?? 0)).slice(0, MAX_LISTED);
   }
@@ -65,8 +66,10 @@ export class DmManager {
   async read(me: IdentityPublic, handle: string): Promise<DmSummary> {
     const other = await this.otherOf(me, handle);
     const channel = dmChannel(me.id, other.id);
-    const [newest] = await this.db.select({ id: messages.id }).from(messages).where(eq(messages.channel, channel)).orderBy(desc(messages.id)).limit(1);
-    await this.upsert(me.id, channel, other.id, { lastReadId: newest?.id ?? 0 });
+    const newest = await this.newestId(channel);
+    // No messages yet: nothing to read, and no state row to open a conversation nobody started.
+    if (newest === null) return this.summary(me, other, channel);
+    await this.upsert(me.id, channel, other.id, { lastReadId: newest });
     // Every device of yours clears its dot.
     this.deps.comms.deliver(me.id, { type: 'dm.read', channel });
     return this.summary(me, other, channel);
@@ -75,6 +78,7 @@ export class DmManager {
   async close(me: IdentityPublic, handle: string): Promise<DmSummary> {
     const other = await this.otherOf(me, handle);
     const channel = dmChannel(me.id, other.id);
+    if ((await this.newestId(channel)) === null) return this.summary(me, other, channel);
     await this.upsert(me.id, channel, other.id, { hidden: true });
     return this.summary(me, other, channel);
   }
@@ -82,6 +86,11 @@ export class DmManager {
   /** Release hook: a released name's side of every conversation goes with it (the messages stay). */
   async forget(identityId: string): Promise<void> {
     await this.db.delete(dmState).where(eq(dmState.identityId, identityId));
+  }
+
+  private async newestId(channel: string): Promise<number | null> {
+    const [newest] = await this.db.select({ id: messages.id }).from(messages).where(eq(messages.channel, channel)).orderBy(desc(messages.id)).limit(1);
+    return newest?.id ?? null;
   }
 
   private async otherOf(me: IdentityPublic, rawHandle: string): Promise<IdentityPublic> {

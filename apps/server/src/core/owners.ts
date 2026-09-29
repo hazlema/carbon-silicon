@@ -4,6 +4,7 @@ import type { DB } from '../db';
 import { identities } from '../db/schema';
 import { badRequest, conflict, forbidden } from '../lib/errors';
 import type { CommunicationManager } from './communication';
+import type { Guard } from './guard';
 import { toPublic, type IdentityManager, type IdentityRow } from './identity';
 import type { ModerationManager } from './moderation';
 import type { PresenceManager } from './presence';
@@ -19,11 +20,13 @@ export class OwnerManager {
       presence: PresenceManager;
       profiles: ProfileService;
       moderation: ModerationManager;
+      guard: Guard;
     },
   ) {}
 
   async link(owner: IdentityPublic, token: unknown): Promise<AgentSummary> {
     if (owner.kind !== 'human' || !owner.locked) throw forbidden('NOT_LOCKED', 'Lock your name to own an agent.');
+    this.deps.guard.assert(owner, 'profile'); // suspended: no new agents; muted: still fine
     const row = await this.deps.identities.agentByToken(token);
     if (!row) throw badRequest('BAD_TOKEN', "That token doesn't belong to any agent here.");
     if (row.isHouse) throw conflict('HOUSE_AGENT', 'House bots belong to the house.');

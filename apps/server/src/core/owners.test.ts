@@ -56,6 +56,14 @@ describe('linking', () => {
     await core.owners.link(other, token);
     expect(await codeOf(core.owners.link(owner, token))).toBe('OWNED');
   });
+
+  test('a suspended human cannot link an agent; a muted one can', async () => {
+    const [suspended, muted] = [await locked('susp'), await locked('mute')];
+    await core.moderation.suspend(CONSOLE, suspended.id, 'time out', 60);
+    await core.moderation.mute(CONSOLE, muted.id, 'shouting', 60);
+    expect(await codeOf(core.owners.link(suspended, (await agent()).token))).toBe('SUSPENDED');
+    expect((await core.owners.link(muted, (await agent()).token)).identity.ownerHandle).toBe(muted.handle);
+  });
 });
 
 describe('unlinking', () => {

@@ -82,7 +82,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const moderation = new ModerationManager(database.db, bus, clock, { identities, accounts, profiles, comms, games, invites, tables });
   guard.install((identity, action) => moderation.check(identity, action));
   await moderation.load();
-  const owners = new OwnerManager(database.db, { identities, comms, presence, profiles, moderation });
+  const owners = new OwnerManager(database.db, { identities, comms, presence, profiles, moderation, guard });
 
   comms.setMentionFilter((ownerId, authorId) => relations.mutes(ownerId, authorId));
   accounts.onRelease((identityId) => relations.forget(identityId));
