@@ -64,16 +64,16 @@ Each line: what was decided — why — what it costs if wrong. P1–P7 were mad
 - Task 9: minor (deferred): tab flashes to Rail for a player until the table loads (isPlayer false while table is null)
 - Task 9: minor (deferred): tab/railUnread not reset on client-side navigation between two /t/ pages
 - Task 9: minor (deferred): reports.test 'suspended people cannot report' flaked once in a full verify under CPU load (a hung stray bun test process from 09:53 pegs a core; my kill was refused by the permission checker — left for the Foreman)
-- Task 10: minor (deferred): InviteCard has no busy state (double Accept fires two requests)
+- Task 10: minor (deferred): InviteCard has no busy state (double Accept fires two requests) — fixed 2026-09-29 (9300dec)
 - Task 10: minor (deferred): an invite past 0 s stays in live.offers (hidden) until refreshMe
 - Task 10: minor (deferred): 4001 reconnect timer races the refreshMe that may null `me` (one stray reconnect)
-- Task 10: minor (deferred): Play panel buttons stack one per line (.btn width:100% inside the flex row) instead of a three-button row
+- Task 10: minor (deferred): Play panel buttons stack one per line (.btn width:100% inside the flex row) instead of a three-button row — fixed 2026-09-29 (9300dec): Find a match across the top, the other two under it
 - Task 11: minor (deferred): PersonMenu's window keydown listener is unconditional (one per rendered author)
 - Task 11: minor (deferred): host-branch firstItem unbound if the catalog is momentarily empty
 - Task 11: minor (deferred): Open list shows a full forming table (Sit → TABLE_FULL error) — brief code — fixed in the final fix wave (TablesList skips full tables)
-- Task 11: minor (deferred): PersonMenu stays open after an action while MessageMenu switches to 'done' — brief code, UX seam
+- Task 11: minor (deferred): PersonMenu stays open after an action while MessageMenu switches to 'done' — brief code, UX seam — fixed 2026-09-29 (9300dec): inviting closes both menus; ignore/block show their note
 - Task 11: minor (deferred): e2e '/invite from the lobby chat reaches someone on their profile page…' (added in Task 11) flaked once in a full run; clean on 3 isolated reruns + a full rerun — triage at final review — hardened in the final fix wave (waits for the game catalog before typing)
-- Task 12: minor (deferred, live screenshots): name menu stays open after inviting and is clipped at the bottom of the Here now panel; gathering card shows two near-duplicate hints
+- Task 12: minor (deferred, live screenshots): name menu stays open after inviting and is clipped at the bottom of the Here now panel; gathering card shows two near-duplicate hints — fixed 2026-09-29 (9300dec): the menu is portalled and fixed-positioned; the note no longer repeats the hint
 - Final review: minor (deferred, left): client reconnect loop when a session is revoked while the socket is down (401 at upgrade → 1006, never refreshes me)
 - Final review: minor (deferred, left): a rematch forming shortens the table's life (retention swapped for the 10-min idle timer; host leaving clears viewers' verdict page)
 - Final review: minor (deferred, left): rematch() invites last players the presser has blocked (only checks the reverse)
