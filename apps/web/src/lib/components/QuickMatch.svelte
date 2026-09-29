@@ -149,9 +149,13 @@
     width: 100%;
     padding: 0.8rem 1rem;
   }
+  /* Find a match leads across the panel; the other two share the row under it. */
   .actions {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
     gap: 0.5rem;
+  }
+  .actions .primary {
+    grid-column: 1 / -1;
   }
 </style>

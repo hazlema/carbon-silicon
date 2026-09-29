@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import type { IdentityPublic } from '@cs/shared/protocol';
   import { live } from '$lib/live.svelte';
+  import { portal } from '$lib/portal';
   import { hostWith, inviteHandle } from '$lib/table-actions';
   import { inviteChoice } from '$lib/tables';
   import IdentityChip from './IdentityChip.svelte';
@@ -10,8 +11,8 @@
   let { identity, inline = false }: { identity: IdentityPublic; inline?: boolean } = $props();
 
   let open = $state(false);
-  /** True when the popover would overflow the right edge at its default left-anchor, so it's flipped to hang from the right instead. */
-  let flip = $state(false);
+  /** Where the popover sits, in viewport pixels; null while it is measured. */
+  let pos = $state<{ left: number; top: number } | null>(null);
   let note = $state('');
   let error = $state('');
   let root: HTMLSpanElement | undefined = $state();
@@ -28,39 +29,63 @@
   async function show() {
     if (isMe || !live.me) return;
     open = true;
-    flip = false;
+    pos = null;
     note = '';
     error = '';
     await tick();
-    // A mention late in a wrapped chat line can sit near the right edge; keep the popover on-screen
-    // at phone width by hanging it from the right instead when it would overflow.
-    if (pop && pop.getBoundingClientRect().right > window.innerWidth - 8) flip = true;
+    place();
     firstItem?.focus();
+  }
+  /** The popover lives on <body>, fixed to the viewport, so neither a scrolling list (Here now) nor the
+   *  page's stacking layer can cut it off or bury it under the corner dock. It hangs
+   *  under the name, slides left to stay on screen, and opens upward when there's no room below. */
+  function place() {
+    if (!pop || !trigger) return;
+    const t = trigger.getBoundingClientRect();
+    const p = pop.getBoundingClientRect();
+    const gap = 5;
+    const left = Math.max(8, Math.min(t.left, window.innerWidth - p.width - 8));
+    const fitsBelow = t.bottom + gap + p.height <= window.innerHeight - 8;
+    pos = { left, top: fitsBelow ? t.bottom + gap : Math.max(8, t.top - gap - p.height) };
   }
   function close() {
     open = false;
-    flip = false;
     trigger?.focus();
   }
   $effect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (root && !root.contains(e.target as Node)) {
-        open = false;
-        flip = false;
-      }
+      const t = e.target as Node;
+      if (!root?.contains(t) && !pop?.contains(t)) open = false;
+    };
+    // The popover is fixed, so it follows its name when anything scrolls (the Here now list shifts as
+    // people come and go) or the window resizes.
+    let frame = 0;
+    const onMove = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(place);
     };
     document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
+    window.addEventListener('scroll', onMove, true);
+    window.addEventListener('resize', onMove);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('scroll', onMove, true);
+      window.removeEventListener('resize', onMove);
+      cancelAnimationFrame(frame);
+    };
   });
   function onKey(e: KeyboardEvent) {
     if (open && e.key === 'Escape') close();
   }
-  async function run(fn: () => Promise<unknown>, done: string) {
+  /** An invite shows up on your gathering card, so the menu just gets out of the way; ignore and
+   *  block have nothing else to show, so the menu turns into their confirmation (like MessageMenu). */
+  async function run(fn: () => Promise<unknown>, done: string | null) {
     error = '';
     try {
       await fn();
-      note = done;
+      if (done === null) close();
+      else note = done;
     } catch (e) {
       error = (e as Error).message;
     }
@@ -88,20 +113,23 @@
     {#if hint}<span class="plus" aria-hidden="true">+</span>{/if}
   </button>
   {#if open}
-    <div class="pop panel" class:flip bind:this={pop}>
+    <div class="pop panel" use:portal bind:this={pop} style={pos ? `left: ${pos.left}px; top: ${pos.top}px` : 'visibility: hidden'}>
+      {#if note}
+        <p role="status">{note}</p>
+      {:else}
       <div role="menu" aria-label="@{identity.handle}">
         {#if choice?.kind === 'invite'}
-          <button bind:this={firstItem} role="menuitem" type="button" disabled={!!choice.disabled} onclick={() => run(() => inviteHandle(identity.handle), `Invited @${identity.handle}.`)}
+          <button bind:this={firstItem} role="menuitem" type="button" disabled={!!choice.disabled} onclick={() => run(() => inviteHandle(identity.handle), null)}
             >{choice.label}{#if choice.disabled}<span class="why"> — {choice.disabled}</span>{/if}</button
           >
         {:else if choice?.kind === 'host'}
           {#each choice.games as g, i (g.id)}
             {#if i === 0}
-              <button bind:this={firstItem} role="menuitem" type="button" onclick={() => run(() => hostWith(g.id, [identity.handle]), `Invited @${identity.handle} to ${g.name}.`)}
+              <button bind:this={firstItem} role="menuitem" type="button" onclick={() => run(() => hostWith(g.id, [identity.handle]), null)}
                 >Host {g.name} with @{identity.handle}</button
               >
             {:else}
-              <button role="menuitem" type="button" onclick={() => run(() => hostWith(g.id, [identity.handle]), `Invited @${identity.handle} to ${g.name}.`)}
+              <button role="menuitem" type="button" onclick={() => run(() => hostWith(g.id, [identity.handle]), null)}
                 >Host {g.name} with @{identity.handle}</button
               >
             {/if}
@@ -115,7 +143,7 @@
           >Block @{identity.handle}</button
         >
       </div>
-      {#if note}<p role="status">{note}</p>{/if}
+      {/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
     </div>
   {/if}
@@ -155,18 +183,14 @@
     opacity: 1;
   }
   .pop {
-    position: absolute;
+    position: fixed;
     left: 0;
-    top: calc(100% + 0.3rem);
-    z-index: 6;
+    top: 0;
+    z-index: 30; /* over the corner dock (20) and the update banner (21): a menu you just opened comes first */
     width: min(17rem, 80vw);
     padding: 0.4rem;
     background: var(--panel-2);
     box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 0.4);
-  }
-  .pop.flip {
-    left: auto;
-    right: 0;
   }
   [role='menu'] {
     display: grid;

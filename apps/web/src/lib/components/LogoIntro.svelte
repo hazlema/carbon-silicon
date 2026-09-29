@@ -10,6 +10,7 @@
   import { fade } from 'svelte/transition';
   import { BRAND } from '@cs/shared/brand';
   import { IntroSound, loadSoundPref, saveSoundPref } from '$lib/intro-audio';
+  import { portal } from '$lib/portal';
   import {
     CELL,
     CELLS,
@@ -106,12 +107,6 @@
       audio?.close();
     };
   });
-
-  /** Mount the overlay on <body>, above every other layer (banners, the handle gate). */
-  function portal(node: HTMLElement) {
-    document.body.appendChild(node);
-    return { destroy: () => node.remove() };
-  }
 
   const px = (n: number) => `${n.toFixed(2)}px`;
 </script>

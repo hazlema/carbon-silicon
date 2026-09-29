@@ -20,12 +20,12 @@
   const handle = $derived(message.author?.handle ?? '');
   const status = $derived(live.presence.find((p) => p.identity.id === message.author?.id)?.status ?? null);
   const choice = $derived(message.author ? inviteChoice(message.author, { me: live.me, status, myTable: live.myTable, catalog: live.games }) : null);
-  async function inviteThem(fn: () => Promise<unknown>, done: string) {
+  /** The invite shows up on your gathering card, so the menu just closes (as PersonMenu's does). */
+  async function inviteThem(fn: () => Promise<unknown>) {
     error = '';
     try {
       await fn();
-      mode = 'done';
-      note = done;
+      close();
     } catch (err) {
       error = (err as Error).message;
     }
@@ -113,17 +113,17 @@
       {#if mode === 'menu'}
         <div role="menu" aria-label="Message options">
           {#if choice?.kind === 'invite'}
-            <button bind:this={firstItem} role="menuitem" type="button" disabled={!!choice.disabled} onclick={() => inviteThem(() => inviteHandle(handle), `Invited @${handle}.`)}
+            <button bind:this={firstItem} role="menuitem" type="button" disabled={!!choice.disabled} onclick={() => inviteThem(() => inviteHandle(handle))}
               >{choice.label}{#if choice.disabled} — {choice.disabled}{/if}</button
             >
           {:else if choice?.kind === 'host'}
             {#each choice.games as g, i (g.id)}
               {#if i === 0}
-                <button bind:this={firstItem} role="menuitem" type="button" onclick={() => inviteThem(() => hostWith(g.id, [handle]), `Invited @${handle} to ${g.name}.`)}
+                <button bind:this={firstItem} role="menuitem" type="button" onclick={() => inviteThem(() => hostWith(g.id, [handle]))}
                   >Host {g.name} with @{handle}</button
                 >
               {:else}
-                <button role="menuitem" type="button" onclick={() => inviteThem(() => hostWith(g.id, [handle]), `Invited @${handle} to ${g.name}.`)}>Host {g.name} with @{handle}</button>
+                <button role="menuitem" type="button" onclick={() => inviteThem(() => hostWith(g.id, [handle]))}>Host {g.name} with @{handle}</button>
               {/if}
             {/each}
           {/if}

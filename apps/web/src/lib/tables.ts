@@ -4,8 +4,11 @@ import type { GameInfo, IdentityPublic, Status, TableInfo } from '@cs/shared/pro
 export function gatherNote(t: TableInfo, gameName: string): string {
   if (t.seated.length >= t.size) return `The table is full — @${t.host.handle}, start when you're ready.`;
   const short = t.minPlayers - t.seated.length;
-  if (short > 0) return `${gameName} needs at least ${t.minPlayers} players — invite ${short} more to start.`;
-  return t.invites.length > 0 ? 'Start now, or wait for the rest.' : 'Click a name to invite more, or start.';
+  const invitesShort = short - t.invites.length;
+  if (invitesShort > 0) return `${gameName} needs at least ${t.minPlayers} players — invite ${invitesShort} more to start.`;
+  if (short > 0) return t.invites.length === 1 ? `Waiting for @${t.invites[0].to.handle} to accept.` : 'Waiting for an invite to be accepted.';
+  // How to invite is the host's own hint under this line, so the note only says where things stand.
+  return t.invites.length > 0 ? 'Start now, or wait for the rest.' : `Enough to play — @${t.host.handle}, start when you're ready.`;
 }
 
 export const secondsLeft = (iso: string, now: number): number => Math.max(0, Math.ceil((Date.parse(iso) - now) / 1000));

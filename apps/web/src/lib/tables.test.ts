@@ -14,7 +14,11 @@ const table = (over: Partial<TableInfo> = {}): TableInfo => ({
 describe('gatherNote', () => {
   test('says how many more are needed, then when to start', () => {
     expect(gatherNote(table(), 'Critical Mass')).toBe('Critical Mass needs at least 2 players — invite 1 more to start.');
-    expect(gatherNote(table({ seated: [person('me'), person('b')] }), 'Critical Mass')).toBe('Click a name to invite more, or start.');
+    const invite = (h: string) => ({ id: `i_${h}`, to: person(h), expiresAt: '2026-09-29T12:00:00.000Z' });
+    expect(gatherNote(table({ invites: [invite('bob')] }), 'Critical Mass')).toBe('Waiting for @bob to accept.');
+    expect(gatherNote(table({ size: 4, minPlayers: 3, invites: [invite('bob')] }), 'Critical Mass')).toBe('Critical Mass needs at least 3 players — invite 1 more to start.');
+    expect(gatherNote(table({ invites: [invite('bob'), invite('cy')] }), 'Critical Mass')).toBe('Waiting for an invite to be accepted.');
+    expect(gatherNote(table({ seated: [person('me'), person('b')] }), 'Critical Mass')).toBe("Enough to play — @me, start when you're ready.");
     const full = table({ seated: [person('me'), person('b'), person('c'), person('d')] });
     expect(gatherNote(full, 'Critical Mass')).toBe("The table is full — @me, start when you're ready.");
   });

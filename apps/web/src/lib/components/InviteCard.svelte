@@ -8,6 +8,7 @@
   let { offer }: { offer: InviteOffer } = $props();
 
   let error = $state('');
+  let busy = $state(false);
   let now = $state(Date.now());
   $effect(() => {
     const t = setInterval(() => (now = Date.now()), 1000);
@@ -18,10 +19,13 @@
 
   async function run(fn: () => Promise<unknown>) {
     error = '';
+    busy = true;
     try {
       await fn();
     } catch (e) {
       error = (e as Error).message;
+    } finally {
+      busy = false;
     }
   }
 </script>
@@ -30,8 +34,8 @@
   <div class="invite panel" role="group" aria-label="Invite from @{offer.from.handle}">
     <p><IdentityChip identity={offer.from} badge={false} /> invites you to {name} · <span class="secs" aria-hidden="true">{secs}s</span></p>
     <div class="row">
-      <button class="btn primary" type="button" onclick={() => run(() => tableApi.accept(offer.invite.id))}>Accept</button>
-      <button class="btn" type="button" onclick={() => run(() => tableApi.decline(offer.invite.id))}>Decline</button>
+      <button class="btn primary" type="button" disabled={busy} onclick={() => run(() => tableApi.accept(offer.invite.id))}>Accept</button>
+      <button class="btn" type="button" disabled={busy} onclick={() => run(() => tableApi.decline(offer.invite.id))}>Decline</button>
     </div>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
   </div>
