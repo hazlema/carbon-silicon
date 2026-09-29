@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { LiveText, textOf, type TextSource } from '@cs/shared/live-text';
-import { seasonOf, type IdentityPublic, type MeResponse } from '@cs/shared/protocol';
+import { seasonOf, type IdentityPublic, type MeResponse, type ProfilePage } from '@cs/shared/protocol';
 import type { Core } from '../core/core';
 import type { SessionMeta } from '../core/identity';
 import { peopleFilterOf } from '../core/moderation';
@@ -13,6 +13,7 @@ import { clientIp as resolveIp } from '../lib/ip';
 import { RateLimiter } from '../lib/ratelimit';
 import { sessionLabel } from '../lib/ua';
 import { consoleRoutes } from './console';
+import { dmRoutes } from './dms';
 import { apiIndex } from './index-doc';
 import { body, me, optionalBody } from './request';
 import { tableRoutes } from './tables';
@@ -49,6 +50,8 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   // Wrong passwords on /api/me/password and DELETE /api/me: 5 per signed-in person per 15 minutes
   // (and they share the per-IP failure budget above).
   const checksByIdentity = new RateLimiter(core.clock, 5, 5 / 900_000);
+  // Wrong agent tokens on POST /api/me/agents: 5 per person per 15 minutes (and the shared per-IP failure budget).
+  const linksByIdentity = new RateLimiter(core.clock, 5, 5 / 900_000);
   // Every sign-in, right or wrong: 30 per IP per 15 minutes, so a known password can't drive
   // unlimited argon2 verifies and session rows.
   const signInsByIp = new RateLimiter(core.clock, 30, 30 / 900_000);
@@ -118,7 +121,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
       byKey.refund(key);
       return result;
     } catch (e) {
-      if (e instanceof AppError && (e.code === 'BAD_PASSWORD' || e.code === 'BAD_CODE')) throw e; // counted: keep the spent token
+      if (e instanceof AppError && (e.code === 'BAD_PASSWORD' || e.code === 'BAD_CODE' || e.code === 'BAD_TOKEN')) throw e; // counted: keep the spent token
       loginsByIp.refund(ip);
       byKey.refund(key);
       throw e;
@@ -235,7 +238,24 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     if (!(await core.accounts.revokeSession(who.id, c.req.param('id')))) throw notFound('NO_SESSION', 'No such session.');
     return c.body(null, 204);
   });
-  app.get('/api/users/:handle', async (c) => c.json(await core.profiles.profile(c.req.param('handle'))));
+  app.get('/api/me/agents', async (c) => c.json({ agents: await core.owners.agents(me(c).id) }));
+  app.post('/api/me/agents', async (c) => {
+    const who = me(c);
+    const b = await body(c);
+    const agent = await limitedCheck(c, linksByIdentity, who.id, 'Too many wrong tokens. Try again in a few minutes.', () => core.owners.link(who, b.token));
+    return c.json({ agent }, 201);
+  });
+  app.delete('/api/me/agents/:handle', async (c) => c.json({ agents: await core.owners.unlink(me(c), c.req.param('handle')) }));
+  app.delete('/api/me/owner', async (c) => c.json({ identity: await core.owners.drop(me(c)) }));
+  app.get('/api/users/:handle', async (c) => {
+    const profile = await core.profiles.profile(c.req.param('handle'));
+    const agents = profile.identity.kind === 'human' ? await core.owners.agents(profile.identity.id) : [];
+    // A sanction's reason can quote a reported DM: only the owner and staff see it.
+    const viewer = c.get('identity');
+    const seesSanctions = viewer?.id === profile.identity.id || viewer?.role === 'mod' || viewer?.role === 'admin';
+    const page: ProfilePage = { ...profile, agents: seesSanctions ? agents : agents.map((a) => ({ ...a, sanction: null })) };
+    return c.json(page);
+  });
   app.get('/api/who', (c) => c.json({ presence: core.presence.list() }));
 
   // ── inbox and chat ──
@@ -448,6 +468,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
   });
 
   app.route('/api', tableRoutes(core));
+  app.route('/api', dmRoutes(core));
 
   app.route('/api/console', consoleRoutes(core, opts.adminKey ?? null));
 

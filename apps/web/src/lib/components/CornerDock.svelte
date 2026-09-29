@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { live } from '$lib/live.svelte';
+  import AgentNotice from './AgentNotice.svelte';
   import GatheringCard from './GatheringCard.svelte';
   import InviteCard from './InviteCard.svelte';
 
@@ -10,8 +11,9 @@
   const showMine = $derived(!!mine && page.url.pathname !== '/' && page.url.pathname !== `/t/${mine.id}`);
 </script>
 
-{#if live.offers.length > 0 || showMine}
-  <aside class="dock" aria-label="Invites" aria-live="polite">
+{#if live.offers.length > 0 || showMine || live.agentNotices.length > 0}
+  <aside class="dock" aria-label="Invites and notices" aria-live="polite">
+    {#each live.agentNotices as notice (notice.cursor)}<AgentNotice {notice} />{/each}
     {#each live.offers as offer (offer.invite.id)}<InviteCard {offer} />{/each}
     {#if showMine && mine}<GatheringCard table={mine} compact />{/if}
   </aside>

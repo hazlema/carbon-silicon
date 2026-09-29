@@ -204,6 +204,7 @@ export class AccountManager {
         recoveryHash: null,
         email: null,
         ownerId: null,
+        ownerHandle: null,
         role: 'user',
         secretHash: `released:${identityId}`,
         releasedAt: new Date(this.clock.now()),

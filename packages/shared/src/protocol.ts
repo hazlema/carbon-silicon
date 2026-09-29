@@ -111,6 +111,30 @@ export type InviteAnswer = 'accepted' | 'declined' | 'expired';
 export const tableChannel = (tableId: string) => `table:${tableId}`;
 export const railChannel = (tableId: string) => `rail:${tableId}`;
 
+/** A direct-message channel: the two ids, sorted, so both people name it the same way. */
+export const dmChannel = (a: string, b: string): string => `dm:${[a, b].sort().join(':')}`;
+
+const DM_RE = /^dm:([A-Za-z0-9_]+):([A-Za-z0-9_]+)$/;
+
+/** The two people of a `dm:` channel, or null unless it is well formed (two distinct ids, sorted). */
+export function dmParticipants(channel: string): [string, string] | null {
+  const m = DM_RE.exec(channel);
+  if (!m || m[1] >= m[2]) return null;
+  return [m[1], m[2]];
+}
+
+/** One conversation as its viewer sees it (spec M2c §2). */
+export interface DmSummary {
+  with: IdentityPublic;
+  channel: string;
+  /** The newest message; null only for a conversation just opened on this page. */
+  last: ChatMessage | null;
+  /** Messages from the other person since you last read, at most 99. */
+  unread: number;
+  /** You closed its tab; the next message opens it again. */
+  hidden: boolean;
+}
+
 type Stamp = { cursor: number; at: string };
 export type InboxEvent =
   | (Stamp & { type: 'chat.mention'; message: ChatMessage })
@@ -125,6 +149,10 @@ export type InboxEvent =
   | (Stamp & { type: 'invite.cancelled'; inviteId: string; tableId: string; reason: string })
   | (Stamp & { type: 'table.updated'; table: TableInfo })
   | (Stamp & { type: 'table.closed'; tableId: string; reason: string })
+  | (Stamp & { type: 'chat.dm'; message: ChatMessage })
+  | (Stamp & { type: 'dm.read'; channel: string })
+  | (Stamp & { type: 'owner.changed'; owner: IdentityPublic | null })
+  | (Stamp & { type: 'moderation.agent'; agent: IdentityPublic; kind: SanctionKind | 'lift' | 'removed'; reason: string; endsAt: string | null })
   | (Stamp & { type: 'system'; text: string });
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -216,6 +244,20 @@ export interface Profile {
   matches: ProfileMatch[];
   record: ProfileRecord;
   rival: ProfileRival | null;
+}
+
+/** An agent on its owner's profile (spec M2c §3). */
+export interface AgentSummary {
+  identity: IdentityPublic;
+  status: Status;
+  /** The agent's record vs humans. */
+  record: ProfileRecord;
+  sanction: SanctionInfo | null;
+}
+
+/** GET /api/users/:handle: a profile plus, for a human, the agents they own. */
+export interface ProfilePage extends Profile {
+  agents: AgentSummary[];
 }
 
 export interface RelationsInfo {

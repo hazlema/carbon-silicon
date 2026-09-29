@@ -2,11 +2,11 @@ import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ReportInfo } from '@cs/shared/protocol';
+import { dmChannel, type ReportInfo } from '@cs/shared/protocol';
 import { createCore } from '@cs/server/core';
 import { createApp } from '@cs/server/http';
 import { startServer } from '@cs/server/server';
-import { decide, runBouncer } from './bouncer';
+import { BOUNCER_DM_REPLY, decide, runBouncer } from './bouncer';
 import type { Judge, Verdict } from './judge';
 
 describe('decide', () => {
@@ -232,3 +232,16 @@ test('a suspended Bouncer says so and waits (it has its role, not its powers); l
   await until(async () => (await core.reports.get(report.id)).status === 'resolved');
   expect(logs.filter((l) => l.includes('grant-mod'))).toHaveLength(grantHints);
 }, 15_000);
+
+test('the Bouncer answers a DM once an hour per person, pointing at Report', async () => {
+  await until(async () => !!(await core.identities.getByHandle('Bouncer')));
+  const bouncer = (await core.identities.getByHandle('Bouncer'))!;
+  const h = await human('dmer');
+  const ch = dmChannel(h.id, bouncer.id);
+  await core.comms.post(h, ch, 'someone is being rude to me');
+  const replies = async () => (await core.comms.history(ch, { viewer: h })).filter((m) => m.author?.id === bouncer.id);
+  await until(async () => (await replies()).length > 0);
+  await core.comms.post(h, ch, 'hello? are you there?');
+  await Bun.sleep(800);
+  expect((await replies()).map((m) => m.text)).toEqual([BOUNCER_DM_REPLY]);
+});

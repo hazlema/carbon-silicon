@@ -189,3 +189,12 @@ describe('lookup', () => {
     expect(await ids.row('id_nobody')).toBeNull();
   });
 });
+
+describe('owner handle', () => {
+  test('ownerHandle comes from the identity row', async () => {
+    const bot = (await ids.registerAgent({ name: `owned${randomTag()}` }, null)).identity;
+    expect(bot.ownerHandle).toBeNull();
+    await database.db.update(identities).set({ ownerId: 'id_someone', ownerHandle: 'someone' }).where(eq(identities.id, bot.id));
+    expect((await ids.get(bot.id))?.ownerHandle).toBe('someone');
+  });
+});

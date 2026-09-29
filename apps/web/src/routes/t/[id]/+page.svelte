@@ -2,10 +2,11 @@
   import { page } from '$app/state';
   import { tick, untrack } from 'svelte';
   import type { CMView } from '@cs/critical-mass';
-  import { railChannel, tableChannel, type MatchEnvelope, type SeatInfo, type TableInfo } from '@cs/shared/protocol';
+  import { dmParticipants, railChannel, tableChannel, type MatchEnvelope, type SeatInfo, type TableInfo } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
   import Avatar from '$lib/components/Avatar.svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
+  import DmTabs from '$lib/components/DmTabs.svelte';
   import GatheringCard from '$lib/components/GatheringCard.svelte';
   import IdentityChip from '$lib/components/IdentityChip.svelte';
   import Board from '$lib/games/critical-mass/Board.svelte';
@@ -28,7 +29,9 @@
   let now = $state(Date.now());
   let verdictHeading: HTMLHeadingElement | undefined = $state();
   let focusedOver = false;
-  let tab = $state<'table' | 'rail'>('table');
+  /** 'table', 'rail', or a dm: channel. */
+  let tab = $state<string>('table');
+  let focusKey = $state(0);
   let railUnread = $state(0);
 
   const id = $derived(page.params.id ?? '');
@@ -106,6 +109,21 @@
   });
   $effect(() => {
     if (tab === 'rail') railUnread = 0;
+  });
+  const dmTab = $derived(dmParticipants(tab) ? (live.dms.find((d) => d.channel === tab) ?? null) : null);
+  $effect(() => {
+    const r = live.dmRequest;
+    if (!r) return;
+    tab = r.channel;
+    focusKey += 1;
+    live.dmRequest = null;
+  });
+  // A conversation that left the list (closed elsewhere, the name released): back to where you were.
+  $effect(() => {
+    if (dmParticipants(tab) && !dmTab) tab = isPlayer ? 'table' : 'rail';
+  });
+  $effect(() => {
+    if (dmTab && dmTab.unread > 0) void live.readDm(dmTab.channel);
   });
 
   const match = $derived(env?.match);
@@ -301,18 +319,22 @@
 
     <div class="talk">
       <ChatPanel
-        channel={tab === 'table' ? tableChannel(table.id) : railChannel(table.id)}
-        title={tab === 'table' ? 'Table talk' : 'The rail'}
-        readOnly={tab === 'table' && !isPlayer}
-        readOnlyNote="Only the players can talk at this table."
-        placeholder={tab === 'table' ? 'Talk trash, play fair' : 'Cheer, heckle, speculate'}
+        channel={tab === 'table' ? tableChannel(table.id) : tab === 'rail' ? railChannel(table.id) : tab}
+        title={tab === 'table' ? 'Table talk' : tab === 'rail' ? 'The rail' : `@${dmTab?.with.handle ?? ''}`}
+        readOnly={(tab === 'table' && !isPlayer) || !!dmTab?.with.released}
+        readOnlyNote={dmTab ? 'This name was given back; nobody will read this.' : 'Only the players can talk at this table.'}
+        placeholder={tab === 'table' ? 'Talk trash, play fair' : tab === 'rail' ? 'Cheer, heckle, speculate' : `Message @${dmTab?.with.handle ?? ''}`}
+        {focusKey}
       >
         {#snippet header()}
-          <div class="tabs" role="tablist" aria-label="Chat">
-            <button role="tab" type="button" aria-selected={tab === 'table'} onclick={() => (tab = 'table')}>Table</button>
-            <button role="tab" type="button" aria-selected={tab === 'rail'} onclick={() => (tab = 'rail')}
-              >{railUnread > 0 ? `Rail (${railUnread})` : 'Rail'}</button
-            >
+          <div>
+            <div class="tabs" role="tablist" aria-label="Chat">
+              <button role="tab" type="button" aria-selected={tab === 'table'} onclick={() => (tab = 'table')}>Table</button>
+              <button role="tab" type="button" aria-selected={tab === 'rail'} onclick={() => (tab = 'rail')}
+                >{railUnread > 0 ? `Rail (${railUnread})` : 'Rail'}</button
+              >
+            </div>
+            <DmTabs active={dmTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} />
           </div>
         {/snippet}
       </ChatPanel>

@@ -33,7 +33,9 @@ const disarmMarkers = (s: string) => s.replace(/<<</g, '(triple-left-angle)').re
 export function buildJudgePrompt(r: ReportInfo): string {
   const where = r.snapshot.channel.startsWith('match:')
     ? 'a match table, where trash talk between the players is part of the game'
-    : `the public channel #${r.snapshot.channel}`;
+    : r.snapshot.channel.startsWith('dm:')
+      ? 'a private direct message between the two people, who chose to talk: profanity is fine there; harassment, threats and sharing personal information are not'
+      : `the public channel #${r.snapshot.channel}`;
   const byId = new Map<number, ReportSnapshot>();
   for (const s of [...r.context, r.snapshot]) byId.set(s.messageId, s);
   const lines = [...byId.values()]

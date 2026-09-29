@@ -67,7 +67,7 @@ export class ProfileService {
 
   /** All-time record against the other species, by SQL aggregation: every opponent in the match must be
    *  the other species (a solo/mixed match doesn't count), grouped by result and by game. */
-  private async record(row: IdentityRow): Promise<ProfileRecord> {
+  async record(row: IdentityRow): Promise<ProfileRecord> {
     const oppKind = row.kind === 'human' ? 'agent' : 'human';
     const versus: ProfileRecord['versus'] = row.kind === 'human' ? 'machines' : 'humans';
     const self = alias(matchPlayers, 'record_self');

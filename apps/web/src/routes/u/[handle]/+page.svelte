@@ -1,18 +1,19 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import type { Profile } from '@cs/shared/protocol';
+  import type { ProfilePage } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
   import Avatar from '$lib/components/Avatar.svelte';
   import IdentityChip from '$lib/components/IdentityChip.svelte';
   import AccountSettings from '$lib/components/profile/AccountSettings.svelte';
   import DeleteAccount from '$lib/components/profile/DeleteAccount.svelte';
+  import AgentList from '$lib/components/profile/AgentList.svelte';
   import RelationList from '$lib/components/profile/RelationList.svelte';
   import SessionList from '$lib/components/profile/SessionList.svelte';
   import { relativeTime } from '$lib/format';
   import { live } from '$lib/live.svelte';
   import { displayName, gameName, matchEndingText, recordScoreText, recordShares, recordSummaryLine, resultChip, rivalrySentence } from '$lib/profile';
 
-  let profile = $state<Profile | null>(null);
+  let profile = $state<ProfilePage | null>(null);
   let missing = $state(false);
   let error = $state('');
   const handle = $derived(page.params.handle ?? '');
@@ -26,7 +27,7 @@
     profile = null;
     missing = false;
     error = '';
-    api<Profile>('GET', `/api/users/${encodeURIComponent(h)}`)
+    api<ProfilePage>('GET', `/api/users/${encodeURIComponent(h)}`)
       .then((p) => alive && (profile = p))
       .catch((e) => {
         if (!alive) return;
@@ -70,6 +71,7 @@
               {#if who.locked}<span class="badge">locked name</span>{:else if who.kind === 'human' && !who.released}<span class="badge">guest</span>{/if}
               {#if who.isHouse}<span class="badge">house</span>{/if}
             </p>
+            {#if who.ownerHandle}<p class="owner">assistant of <a href="/u/{who.ownerHandle}">@{who.ownerHandle}</a></p>{/if}
             {#if who.tagline}
               <p class="bio">{who.tagline}</p>
             {:else if mine}
@@ -99,6 +101,10 @@
           {/if}
         </div>
       </section>
+
+      {#if who.kind === 'human'}
+        <AgentList agents={profile.agents} {mine} onchange={(agents) => profile && (profile = { ...profile, agents })} />
+      {/if}
 
       <section class="matches panel" aria-labelledby="matches-title">
         <h2 id="matches-title">Recent matches</h2>
@@ -151,6 +157,10 @@
 {/if}
 
 <style>
+  .owner {
+    margin: 0.35rem 0 0;
+    color: var(--fog);
+  }
   .profile {
     display: grid;
     gap: 1.25rem;

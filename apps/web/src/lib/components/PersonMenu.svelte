@@ -25,6 +25,12 @@
   /** While you host, names you could invite show a small + on hover. */
   const hint = $derived(choice?.kind === 'invite' && !choice.disabled);
   const isMe = $derived(live.me?.id === identity.id);
+  /** You block them: say so rather than offering a message that will bounce. */
+  const blocking = $derived(live.relations.blocks.some((b) => b.id === identity.id));
+  function message() {
+    open = false; // no refocus on the name: the composer takes focus
+    live.openDm(identity);
+  }
 
   async function show() {
     if (isMe || !live.me) return;
@@ -114,6 +120,7 @@
   </button>
   {#if open}
     <div class="pop panel" use:portal bind:this={pop} style={pos ? `left: ${pos.left}px; top: ${pos.top}px` : 'visibility: hidden'}>
+      {#if identity.ownerHandle}<p class="owner">assistant of <a href="/u/{identity.ownerHandle}">@{identity.ownerHandle}</a></p>{/if}
       {#if note}
         <p role="status">{note}</p>
       {:else}
@@ -135,6 +142,14 @@
             {/if}
           {/each}
         {/if}
+        {#snippet messageLabel()}Message @{identity.handle}{#if blocking}<span class="why"> — you block them</span>{/if}{/snippet}
+        {#if !identity.released}
+          {#if choice}
+            <button role="menuitem" type="button" disabled={blocking} onclick={message}>{@render messageLabel()}</button>
+          {:else}
+            <button bind:this={firstItem} role="menuitem" type="button" disabled={blocking} onclick={message}>{@render messageLabel()}</button>
+          {/if}
+        {/if}
         <a role="menuitem" href="/u/{identity.handle}">Profile</a>
         <button role="menuitem" type="button" onclick={() => run(() => live.setRelation(identity.handle, 'ignore', true), `Ignoring @${identity.handle}.`)}
           >Ignore @{identity.handle}</button
@@ -150,6 +165,10 @@
 </span>
 
 <style>
+  .owner {
+    color: var(--fog);
+    border-bottom: 1px solid var(--lattice);
+  }
   .pm {
     position: relative;
     display: inline-block;

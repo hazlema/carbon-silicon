@@ -1,9 +1,9 @@
 import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
-import { PUBLIC_CHANNELS, type ChatMessage } from '@cs/shared/protocol';
+import { PUBLIC_CHANNELS, dmChannel, type ChatMessage } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
 import { FakeClock } from '../lib/clock';
-import type { AppError } from '../lib/errors';
+import { forbidden, type AppError } from '../lib/errors';
 import { randomTag } from '../lib/testing';
 import { EventBus } from './bus';
 import { CommunicationManager } from './communication';
@@ -166,5 +166,93 @@ describe('inbox', () => {
     bus.on('inbox', ({ identityId, event }) => seen.push(`${identityId}:${event.type}`));
     comms.deliver(bob.id, { type: 'system', text: 'x' });
     expect(seen).toEqual([`${bob.id}:system`]);
+  });
+});
+
+describe('direct messages', () => {
+  test('the two can post and read; anyone else can do neither', async () => {
+    const { comms, ids, ada, bob, tag } = await setup();
+    const cy = (await ids.createHuman(`cy${tag}`)).identity;
+    const ch = dmChannel(ada.id, bob.id);
+    expect(comms.channelKind(ch)).toBe('dm');
+    const m = await comms.post(ada, ch, 'psst');
+    expect(m.channel).toBe(ch);
+    expect((await comms.history(ch, { viewer: bob })).map((x) => x.text)).toEqual(['psst']);
+    expect((await errorOf(comms.post(cy, ch, 'me too'))).code).toBe('NOT_YOURS');
+    expect((await errorOf(comms.history(ch, { viewer: cy }))).code).toBe('NOT_YOURS');
+    expect((await errorOf(comms.history(ch))).code).toBe('NOT_YOURS');
+  });
+
+  test('a dm: channel that is unsorted or names one person twice does not exist', async () => {
+    const { comms, ada, bob } = await setup();
+    const [lo, hi] = [ada.id, bob.id].sort();
+    expect(comms.channelKind(`dm:${hi}:${lo}`)).toBeNull();
+    expect((await errorOf(comms.post(ada, `dm:${hi}:${lo}`, 'x'))).code).toBe('NO_CHANNEL');
+    expect((await errorOf(comms.post(ada, `dm:${ada.id}:${ada.id}`, 'x'))).code).toBe('NO_CHANNEL');
+  });
+
+  test('a DM goes to the two, never to channel listeners; the recipient gets chat.dm; mentions stay private', async () => {
+    const { comms, bus, ids, ada, bob, tag } = await setup();
+    const cy = (await ids.createHuman(`cy${tag}`)).identity;
+    const heard: ChatMessage[] = [];
+    bus.on('chat.message', (m) => heard.push(m));
+    const pushed: { message: ChatMessage; to: string[] }[] = [];
+    bus.on('dm.message', (e) => pushed.push(e));
+    const m = await comms.post(ada, dmChannel(ada.id, bob.id), `hey, don't tell @cy${tag}`);
+    expect(heard).toEqual([]);
+    expect(pushed).toEqual([{ message: m, to: [ada.id, bob.id] }]);
+    const bobs = await comms.poll(bob.id, 0, 0);
+    expect(bobs.events.map((e) => e.type)).toEqual(['chat.dm']);
+    expect((await comms.poll(cy.id, 0, 0)).events).toEqual([]);
+    expect((await comms.poll(ada.id, 0, 0)).events).toEqual([]);
+  });
+
+  test('the hooks decide: a refusing check stops the post; stored() picks who sees it', async () => {
+    const { comms, bus, ada, bob } = await setup();
+    const ch = dmChannel(ada.id, bob.id);
+    comms.setDmHooks({
+      check: async (author) => {
+        if (author.id === bob.id) throw forbidden('BLOCKED', 'no');
+      },
+      stored: async (message) => [message.author!.id],
+    });
+    expect((await errorOf(comms.post(bob, ch, 'hi'))).code).toBe('BLOCKED');
+    const pushed: string[][] = [];
+    bus.on('dm.message', (e) => pushed.push(e.to));
+    await comms.post(ada, ch, 'only I see this arrive');
+    expect(pushed).toEqual([[ada.id]]);
+    expect((await comms.poll(bob.id, 0, 0)).events).toEqual([]);
+  });
+
+  test('system posts to a DM channel are refused', async () => {
+    const { comms, ada, bob } = await setup();
+    expect((await errorOf(comms.postSystem(dmChannel(ada.id, bob.id), 'notice'))).code).toBe('NO_SYSTEM_DM');
+  });
+
+  test('a hook that names a third person does not push or deliver to them', async () => {
+    const { comms, bus, ids, ada, bob, tag } = await setup();
+    const cy = (await ids.createHuman(`cy${tag}`)).identity;
+    comms.setDmHooks({ check: async () => {}, stored: async (message) => [message.author!.id, bob.id, cy.id] });
+    const pushed: string[][] = [];
+    bus.on('dm.message', (e) => pushed.push(e.to));
+    await comms.post(ada, dmChannel(ada.id, bob.id), 'hi');
+    expect(pushed).toEqual([[ada.id, bob.id]]);
+    expect((await comms.poll(cy.id, 0, 0)).events).toEqual([]);
+    expect((await comms.poll(bob.id, 0, 0)).events.map((e) => e.type)).toEqual(['chat.dm']);
+  });
+
+  test('DMs are not profanity-censored', async () => {
+    const { comms, ada, bob } = await setup();
+    const ch = dmChannel(ada.id, bob.id);
+    expect((await comms.post(ada, ch, 'what the fuck')).text).toBe('what the fuck');
+  });
+
+  test('older messages page backwards with `before`', async () => {
+    const { comms, ada, bob } = await setup();
+    const ch = dmChannel(ada.id, bob.id);
+    const sent: ChatMessage[] = [];
+    for (let i = 0; i < 4; i++) sent.push(await comms.post(ada, ch, `line ${i}`));
+    const older = await comms.history(ch, { viewer: ada, before: sent[2].id, limit: 10 });
+    expect(older.map((m) => m.text)).toEqual(['line 0', 'line 1']);
   });
 });
