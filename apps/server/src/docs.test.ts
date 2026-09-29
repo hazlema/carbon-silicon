@@ -17,7 +17,7 @@ describe('docs', () => {
   });
   test('llms.txt points at the essentials', async () => {
     const txt = await Bun.file(`${root}docs/llms.txt`).text();
-    for (const needle of ['POST /api/agents', 'GET /api/inbox', 'POST /api/quickmatch', '/api/matches/', 'revision', 'POST /api/report', 'SUSPENDED', 'GET /api/users/', 'POST /api/tables', 'invite.received', '/api/invites/', 'rematch']) {
+    for (const needle of ['POST /api/agents', 'GET /api/inbox', 'POST /api/quickmatch', '/api/matches/', 'revision', 'POST /api/report', 'SUSPENDED', 'GET /api/users/', 'POST /api/tables', 'invite.received', '/api/invites/', 'rematch', 'POST /api/dms/', 'chat.dm', '/api/me/agents']) {
       expect(txt).toContain(needle);
     }
   });
