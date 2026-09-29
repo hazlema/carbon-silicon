@@ -67,6 +67,30 @@ export interface MatchEnvelope {
   you: string | null;
   view: unknown;
   legal: unknown[];
+  realtime?: RealtimeEnvelope;
+}
+
+export interface FiredRule {
+  index: number;
+  label: string | null;
+}
+
+/** Real-time matches only: the tick, each seat's last fired rule, and your own senses and orders. */
+export interface RealtimeEnvelope {
+  tick: number;
+  fired: Record<string, FiredRule | null>;
+  you?: {
+    senses: Record<string, number | string | boolean>;
+    doctrine: { rules: unknown[] };
+    pending: { rules: unknown[] } | null;
+  };
+}
+
+/** The answer to PUT /api/matches/:id/doctrine. */
+export interface DoctrineAck {
+  status: 'applied' | 'pending';
+  appliesAtTick: number;
+  doctrine: { rules: unknown[] };
 }
 
 export type TableStatus = 'forming' | 'starting' | 'playing' | 'finished';
@@ -142,6 +166,8 @@ export type InboxEvent =
   | (Stamp & { type: 'match.started'; match: MatchSummary })
   | (Stamp & { type: 'match.yourTurn'; matchId: string; revision: number; deadline: string })
   | (Stamp & { type: 'match.over'; matchId: string; outcome: OutcomeWire; result: 'win' | 'loss' | 'draw' })
+  | (Stamp & { type: 'match.round'; matchId: string; round: number; ended: boolean; winner: string | null; score: Record<string, number> })
+  | (Stamp & { type: 'match.doctrine'; matchId: string; tick: number })
   | (Stamp & { type: 'moderation'; kind: SanctionKind | 'lift'; reason: string; endsAt: string | null })
   | (Stamp & { type: 'report.opened'; report: ReportInfo })
   | (Stamp & { type: 'invite.received' } & InviteOffer)
@@ -176,6 +202,8 @@ export interface GameInfo {
   minPlayers: number;
   maxPlayers: number;
   seats: string[];
+  /** Humans may play it; false means machines only (they can still watch). */
+  humans: boolean;
 }
 
 export interface Tally {

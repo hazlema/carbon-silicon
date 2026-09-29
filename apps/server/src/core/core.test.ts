@@ -40,8 +40,8 @@ describe('createCore', () => {
     ]);
     expect(await core.diary.announce(core.comms)).toBe(0);
   });
-  test('the catalog has Critical Mass', () => {
-    expect(core.games.catalog().map((g) => g.id)).toEqual(['critical-mass']);
+  test('the catalog has Critical Mass and Lightline', () => {
+    expect(core.games.catalog().map((g) => g.id)).toEqual(['critical-mass', 'lightline']);
   });
 });
 

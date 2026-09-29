@@ -1,8 +1,9 @@
 import { and, eq, inArray } from 'drizzle-orm';
-import { createRng, GameRuleError, type GameModule, type Outcome, type Rng, type SeatId } from '@cs/game-api';
+import { createRng, GameRuleError, validateDoctrine, type Action, type GameModule, type Outcome, type Rng, type SeatId } from '@cs/game-api';
 import {
   seasonOf,
   tableChannel,
+  type DoctrineAck,
   type GameInfo,
   type IdentityPublic,
   type MatchEnvelope,
@@ -19,12 +20,18 @@ import type { EventBus } from './bus';
 import type { CommunicationManager } from './communication';
 import type { Guard } from './guard';
 import type { PresenceManager } from './presence';
+import { DoctrineDesk, FLOOR_DEFAULT_MS, floorTicks } from './realtime';
 
 export interface GameManagerOptions {
   countdownMs: number;
   maxTimeouts: number;
   retainMs: number;
   seed: () => number;
+  /** The reaction floor for machines in real-time games (DOCTRINE_FLOOR_MS). */
+  doctrineFloorMs: number;
+  /** Tests only: a faster tick and a shorter countdown than the game's own. */
+  realtimeTickMs?: number;
+  realtimeCountdownMs?: number;
 }
 
 const DEFAULTS: GameManagerOptions = {
@@ -32,6 +39,7 @@ const DEFAULTS: GameManagerOptions = {
   maxTimeouts: 3,
   retainMs: 30 * 60_000,
   seed: () => Math.floor(Math.random() * 2 ** 31),
+  doctrineFloorMs: FLOOR_DEFAULT_MS,
 };
 
 interface LiveMatch {
@@ -51,6 +59,7 @@ interface LiveMatch {
   timer: unknown;
   waiters: Set<() => void>;
   rng: Rng;
+  desk: DoctrineDesk | null;
 }
 
 const resultFor = (o: Outcome, seat: SeatId): 'win' | 'loss' | 'draw' =>
@@ -90,7 +99,12 @@ export class GameManager {
       minPlayers: meta.minPlayers,
       maxPlayers: meta.maxPlayers,
       seats: meta.seats,
+      humans: meta.humans,
     }));
+  }
+
+  get doctrineFloorMs(): number {
+    return this.opts.doctrineFloorMs;
   }
 
   module(gameId: string): GameModule<any> {
@@ -150,6 +164,8 @@ export class GameManager {
     const seed = this.opts.seed();
     const seats: SeatInfo[] = players.map((identity, i) => ({ seat: seatNames[i], identity }));
     const id = newId('m');
+    const rt = module.realtime;
+    const countdownMs = rt ? (this.opts.realtimeCountdownMs ?? rt.countdownSeconds * 1000) : this.opts.countdownMs;
     const m: LiveMatch = {
       id,
       gameId,
@@ -159,7 +175,7 @@ export class GameManager {
       seats,
       status: 'countdown',
       revision: 1,
-      startsAt: now + this.opts.countdownMs,
+      startsAt: now + countdownMs,
       deadline: null,
       timeouts: Object.fromEntries(seats.map((s) => [s.seat, 0])),
       outcome: null,
@@ -167,6 +183,7 @@ export class GameManager {
       timer: null,
       waiters: new Set(),
       rng: createRng(seed ^ 0x5eed),
+      desk: rt ? new DoctrineDesk(seatNames.slice(0, players.length), rt.defaultDoctrine, floorTicks(this.opts.doctrineFloorMs, 1000 / rt.tickHz)) : null,
     };
     this.matches.set(id, m);
     for (const s of seats) {
@@ -175,7 +192,7 @@ export class GameManager {
     }
     m.timer = this.clock.setTimeout(() => {
       this.goLive(id).catch((e) => console.error('[games] goLive failed', e));
-    }, this.opts.countdownMs);
+    }, countdownMs);
     try {
       await this.db.transaction(async (tx) => {
         await tx.insert(matches).values({
@@ -216,6 +233,10 @@ export class GameManager {
     if (!m || m.status !== 'countdown') return;
     m.status = 'live';
     m.revision += 1;
+    if (m.desk) {
+      m.desk.live = true;
+      this.scheduleTick(m);
+    }
     this.startTurn(m);
     this.changed(m);
     await this.db
@@ -225,6 +246,8 @@ export class GameManager {
   }
 
   private startTurn(m: LiveMatch): void {
+    // A real-time match's timer is its tick loop; there are no turns to start (or clear).
+    if (!m.module.turn) return;
     this.clock.clearTimeout(m.timer);
     m.timer = null;
     m.deadline = null;
@@ -295,7 +318,7 @@ export class GameManager {
     if (m.status === 'over' || m.status === 'abandoned') throw conflict('MATCH_OVER', 'This match is already over.');
     if (m.module.isOut?.(m.state, seat)) throw conflict('OUT', "You're already out of this match.");
     let wentLive: Promise<unknown> | null = null;
-    if (m.status === 'countdown') {
+    if (m.status === 'countdown' && !m.desk) {
       m.status = 'live';
       // The goLive timer will now find the match live and do nothing, so record it here. The guard
       // keeps a faster finish() write ('over') from being overwritten.
@@ -334,6 +357,65 @@ export class GameManager {
     const text = turn.describe ? turn.describe(command) : JSON.stringify(command);
     await this.comms.postSystem(table, `@${who.handle} dozed off — autopilot played ${text}.`);
     await done;
+  }
+
+  private scheduleTick(m: LiveMatch): void {
+    const ms = this.opts.realtimeTickMs ?? 1000 / m.module.realtime!.tickHz;
+    m.timer = this.clock.setTimeout(() => this.tick(m.id), ms);
+  }
+
+  /**
+   * One tick: waiting doctrine changes take over, every seat still in decides by its doctrine (or
+   * the game's default action), the game steps, and everyone hears. A tick that throws is logged
+   * and skipped; the next one still comes.
+   */
+  private tick(id: string): void {
+    const m = this.matches.get(id);
+    if (!m || !m.desk || m.status !== 'live') return;
+    const rt = m.module.realtime!;
+    const desk = m.desk;
+    try {
+      for (const seat of desk.beginTick()) {
+        this.comms.deliver(this.seatInfo(m, seat).identity.id, { type: 'match.doctrine', matchId: m.id, tick: desk.tick });
+      }
+      const actions: Record<SeatId, Action> = {};
+      for (const s of m.seats) {
+        if (m.module.isOut?.(m.state, s.seat)) {
+          desk.fired[s.seat] = null;
+          continue;
+        }
+        actions[s.seat] = desk.decide(s.seat, rt.senses(m.state, s.seat)) ?? rt.defaultAction;
+      }
+      const before = m.state;
+      const next = rt.step(before, actions, m.rng);
+      desk.endTick();
+      const round = rt.roundEvent?.(before, next) ?? null;
+      if (round) for (const s of m.seats) this.comms.deliver(s.identity.id, { type: 'match.round', matchId: m.id, ...round });
+      // advance installs the state (and, at the end, marks the match over) before its first await.
+      this.advance(m, next).catch((e) => console.error(`[games] tick ${m.id} could not record its end`, e));
+    } catch (e) {
+      console.error(`[games] a tick of ${m.id} failed`, e);
+    }
+    if (m.status === 'live') this.scheduleTick(m);
+  }
+
+  setDoctrine(matchId: string, identity: IdentityPublic, raw: unknown): DoctrineAck {
+    this.guard.assert(identity, 'play');
+    const m = this.require(matchId);
+    const seat = this.seatOf(m, identity.id);
+    if (!seat) throw forbidden('NOT_SEATED', 'You are not playing in this match.');
+    const rt = m.module.realtime;
+    if (!rt || !m.desk) throw conflict('NOT_REALTIME', `${m.module.meta.name} is turn-based: send moves, not doctrine.`);
+    if (m.status === 'over' || m.status === 'abandoned') throw conflict('MATCH_OVER', 'This match is already over.');
+    if (m.module.isOut?.(m.state, seat)) throw conflict('OUT', "You're already out of this match.");
+    let doctrine;
+    try {
+      doctrine = validateDoctrine(raw, rt.catalog);
+    } catch (e) {
+      if (e instanceof GameRuleError) throw new AppError(400, e.code, e.message);
+      throw e;
+    }
+    return { ...m.desk.set(seat, doctrine), doctrine };
   }
 
   private async finish(m: LiveMatch, outcome: Outcome): Promise<void> {
@@ -409,7 +491,16 @@ export class GameManager {
     const you = identityId ? this.seatOf(m, identityId) : null;
     const turn = m.module.turn;
     const legal = you && m.status === 'live' && turn && turn.toMove(m.state).includes(you) ? turn.legal(m.state, you) : [];
-    return { match: this.toSummary(m), you, view: m.module.view(m.state, you), legal };
+    const rt = m.module.realtime;
+    const realtime =
+      m.desk && rt
+        ? {
+            tick: m.desk.tick,
+            fired: { ...m.desk.fired },
+            ...(you ? { you: { senses: rt.senses(m.state, you), doctrine: m.desk.doctrineOf(you), pending: m.desk.pendingOf(you) } } : {}),
+          }
+        : undefined;
+    return { match: this.toSummary(m), you, view: m.module.view(m.state, you), legal, ...(realtime ? { realtime } : {}) };
   }
 
   summary(matchId: string): MatchSummary {

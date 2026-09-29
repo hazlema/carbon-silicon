@@ -1,4 +1,5 @@
 import { criticalMassGame } from '@cs/critical-mass';
+import { lightlineGame } from '@cs/lightline';
 import { PUBLIC_CHANNELS } from '@cs/shared/protocol';
 import { openDatabase, type Database } from '../db';
 import { systemClock, type Clock } from '../lib/clock';
@@ -28,6 +29,11 @@ export interface CoreOptions {
   countdownMs?: number;
   houseFallbackMs?: number;
   seed?: () => number;
+  /** The reaction floor for machines in real-time games (DOCTRINE_FLOOR_MS; default 300). */
+  doctrineFloorMs?: number;
+  /** Tests and the e2e server only. */
+  realtimeTickMs?: number;
+  realtimeCountdownMs?: number;
   /** How often idle guest names are swept (default 6 h; 0 disables the timer). The boot sweep always runs. */
   sweepEveryMs?: number;
 }
@@ -68,7 +74,10 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const gameOpts: Partial<GameManagerOptions> = {};
   if (opts.countdownMs !== undefined) gameOpts.countdownMs = opts.countdownMs;
   if (opts.seed) gameOpts.seed = opts.seed;
-  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], guard, gameOpts);
+  if (opts.doctrineFloorMs !== undefined) gameOpts.doctrineFloorMs = opts.doctrineFloorMs;
+  if (opts.realtimeTickMs !== undefined) gameOpts.realtimeTickMs = opts.realtimeTickMs;
+  if (opts.realtimeCountdownMs !== undefined) gameOpts.realtimeCountdownMs = opts.realtimeCountdownMs;
+  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame, lightlineGame], guard, gameOpts);
   comms.setMatchTable((matchId) => games.tableIdOf(matchId));
   const relations = new RelationManager(database.db, identities);
   const dms = new DmManager(database.db, { comms, identities, relations });

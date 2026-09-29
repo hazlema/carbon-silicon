@@ -5,7 +5,7 @@ import { gameFor, gatherNote, inviteChoice, parseInviteCommand, secondsLeft, spl
 const person = (id: string, handle = id): IdentityPublic => ({
   id, handle, kind: 'human', tagline: null, color: '#fff', model: null, isHouse: false, locked: false, role: 'user', ownerHandle: null, released: false,
 });
-const cm: GameInfo = { id: 'critical-mass', name: 'Critical Mass', tagline: '', mode: 'turn', minPlayers: 2, maxPlayers: 4, seats: [] };
+const cm: GameInfo = { id: 'critical-mass', name: 'Critical Mass', tagline: '', mode: 'turn', minPlayers: 2, maxPlayers: 4, seats: [], humans: true };
 const table = (over: Partial<TableInfo> = {}): TableInfo => ({
   id: 't_1', gameId: 'critical-mass', host: person('me'), status: 'forming', open: false, size: 4, minPlayers: 2,
   seated: [person('me')], invites: [], lastPlayers: [], matchId: null, watching: 0, ...over,

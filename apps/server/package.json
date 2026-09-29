@@ -12,6 +12,7 @@
   "dependencies": {
     "@cs/critical-mass": "workspace:*",
     "@cs/game-api": "workspace:*",
+    "@cs/lightline": "workspace:*",
     "@cs/shared": "workspace:*",
     "@electric-sql/pglite": "0.5.8",
     "drizzle-orm": "0.45.3",

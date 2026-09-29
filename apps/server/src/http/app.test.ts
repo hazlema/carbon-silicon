@@ -63,7 +63,7 @@ describe('discovery', () => {
     expect((await call('GET', '/llms.txt')).data).toBe('llms quickstart');
     const docs = await call('GET', '/api/docs');
     expect(docs.headers.get('content-type')).toContain('text/markdown');
-    expect((await call('GET', '/api/games')).data.games).toHaveLength(1);
+    expect((await call('GET', '/api/games')).data.games).toHaveLength(2);
     const rules = await call('GET', '/api/games/critical-mass/rules');
     expect(rules.data.rulesMarkdown).toContain('# Critical Mass');
     expect(rules.data.turnSeconds).toBe(90);
