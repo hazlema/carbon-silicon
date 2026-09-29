@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { ReportInfo } from '@cs/shared/protocol';
+import { instructionsPath } from './instructions';
 import { buildJudgePrompt, LlmJudge, parseVerdict } from './judge';
+
+const RULES = await Bun.file(instructionsPath('bouncer.md')).text();
 
 const who = (handle: string, kind: 'human' | 'agent' = 'human') =>
   ({ id: `id_${handle}`, handle, kind, tagline: null, color: '#ffffff', model: null, isHouse: false, locked: false, role: 'user', ownerHandle: null, released: false }) as const;
@@ -60,15 +63,15 @@ describe('LlmJudge', () => {
   const reply = (content: unknown, status = 200): typeof fetch =>
     (async () => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status })) as unknown as typeof fetch;
   test('turns the model reply into a verdict', async () => {
-    const judge = new LlmJudge({ baseUrl: 'http://llm/v1', model: 'm', fetchImpl: reply('{"action":"dismiss","reason":"banter"}') });
+    const judge = new LlmJudge({ rules: RULES, baseUrl: 'http://llm/v1', model: 'm', fetchImpl: reply('{"action":"dismiss","reason":"banter"}') });
     expect(await judge.judge(report())).toEqual({ action: 'dismiss', reason: 'banter' });
   });
   test('an HTTP error, garbage or a timeout is no verdict', async () => {
-    expect(await new LlmJudge({ baseUrl: 'http://llm/v1', model: 'm', fetchImpl: reply('x', 500) }).judge(report())).toBeNull();
-    expect(await new LlmJudge({ baseUrl: 'http://llm/v1', model: 'm', fetchImpl: reply('no idea') }).judge(report())).toBeNull();
+    expect(await new LlmJudge({ rules: RULES, baseUrl: 'http://llm/v1', model: 'm', fetchImpl: reply('x', 500) }).judge(report())).toBeNull();
+    expect(await new LlmJudge({ rules: RULES, baseUrl: 'http://llm/v1', model: 'm', fetchImpl: reply('no idea') }).judge(report())).toBeNull();
     const hang = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
     const started = Date.now();
-    expect(await new LlmJudge({ baseUrl: 'http://llm/v1', model: 'm', timeoutMs: 50, fetchImpl: hang }).judge(report())).toBeNull();
+    expect(await new LlmJudge({ rules: RULES, baseUrl: 'http://llm/v1', model: 'm', timeoutMs: 50, fetchImpl: hang }).judge(report())).toBeNull();
     expect(Date.now() - started).toBeLessThan(2000);
   });
   test('sends a low temperature and the rules as the system prompt', async () => {
@@ -77,10 +80,11 @@ describe('LlmJudge', () => {
       sent = JSON.parse(String(init.body));
       return new Response(JSON.stringify({ choices: [{ message: { content: '{"action":"escalate","reason":"?"}' } }] }));
     }) as unknown as typeof fetch;
-    await new LlmJudge({ baseUrl: 'http://llm/v1/', model: 'judge-model', fetchImpl: capture }).judge(report());
+    await new LlmJudge({ rules: RULES, baseUrl: 'http://llm/v1/', model: 'judge-model', fetchImpl: capture }).judge(report());
     expect(sent.model).toBe('judge-model');
     expect(sent.temperature).toBe(0.2);
     expect(sent.messages[0].content).toContain('Be conservative');
+    expect(sent.messages[0].content.trim().endsWith('"minutes": <number, mute only>}')).toBe(true); // the answer format comes last
   });
   test('a live connection is asked each time: its key is sent, its temperature ignored, and null means no request', async () => {
     const seen: { model: string; auth: string | null; temperature: number }[] = [];
@@ -95,7 +99,7 @@ describe('LlmJudge', () => {
       apiKey: 'sk-or-1',
       temperature: 1.4,
     };
-    const judge = new LlmJudge({ connection: async () => conn, fetchImpl: capture });
+    const judge = new LlmJudge({ rules: RULES, connection: async () => conn, fetchImpl: capture });
     expect((await judge.judge(report()))?.action).toBe('dismiss');
     expect(seen).toEqual([{ model: 'safety:free', auth: 'Bearer sk-or-1', temperature: 0.2 }]);
     conn = null;
@@ -106,15 +110,16 @@ describe('LlmJudge', () => {
     const hang = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
     const c = new AbortController();
     c.abort();
-    const judge = new LlmJudge({ baseUrl: 'http://llm/v1', model: 'm', fetchImpl: hang });
+    const judge = new LlmJudge({ rules: RULES, baseUrl: 'http://llm/v1', model: 'm', fetchImpl: hang });
     await expect(judge.judge(report(), c.signal)).resolves.toBeNull();
   });
   test('the timeout firing while the connection lookup is still pending resolves null, not a crash', async () => {
-    const judge = new LlmJudge({ timeoutMs: 20, connection: async () => (await Bun.sleep(100), null) });
+    const judge = new LlmJudge({ rules: RULES, timeoutMs: 20, connection: async () => (await Bun.sleep(100), null) });
     await expect(judge.judge(report())).resolves.toBeNull();
   });
   test('a connection lookup that throws resolves null rather than escaping judge()', async () => {
     const judge = new LlmJudge({
+      rules: RULES,
       connection: async () => {
         throw new Error('settings file is corrupt');
       },

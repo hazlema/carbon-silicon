@@ -7,6 +7,7 @@
     "./brand": "./src/brand.ts",
     "./filter": "./src/filter.ts",
     "./handles": "./src/handles.ts",
+    "./live-text": "./src/live-text.ts",
     "./protocol": "./src/protocol.ts"
   },
   "dependencies": { "obscenity": "0.4.6" }

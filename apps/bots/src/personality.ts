@@ -3,8 +3,6 @@ export interface Personality {
   tagline: string;
   color: string;
   model: string | null;
-  /** The character sheet handed to an LLM voice, if this bot has one. */
-  persona?: string;
   /** Force the voice's lines into capitals (canned lines are written the way they should look). */
   shout?: boolean;
   /** How hard it plays Critical Mass (default: depth 2, randomness 0.15). */

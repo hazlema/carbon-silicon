@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runBot, type BotOptions } from './bot';
 import { runBouncer } from './bouncer';
+import { instructions } from './instructions';
 import { LlmJudge } from './judge';
 import { connectionFor, describeSettings, SettingsFile, settingsFromEnv } from './llm-settings';
 import { oldIron } from './personalities/old-iron';
@@ -31,9 +32,13 @@ const llmLog = (m: string) => console.log(`[llm] ${m}`);
 const settings = new SettingsFile({ path: settingsPath, base: settingsFromEnv(env), log: llmLog });
 llmLog(`settings file: ${settingsPath}; starting with ${describeSettings(await settings.get())}`);
 
+// What the residents are told lives in apps/bots/instructions/*.md, re-read while running like llm.json.
+const houseRules = await instructions('house-rules.md');
+
 const ironLog = (m: string) => console.log(`[${oldIron.name}] ${m}`);
 const ironVoice = new LlmVoice({
-  persona: oldIron.persona!,
+  persona: await instructions('old-iron.md'),
+  houseRules,
   name: oldIron.name,
   log: ironLog,
   settings: async () => connectionFor(await settings.get(), 'voice'),
@@ -41,7 +46,7 @@ const ironVoice = new LlmVoice({
 
 // The Bouncer reads the same settings file as OLD IRON (bouncerModel, else model), live.
 const bouncerLog = (m: string) => console.log(`[Bouncer] ${m}`);
-const judge = new LlmJudge({ connection: async () => connectionFor(await settings.get(), 'bouncer'), log: bouncerLog });
+const judge = new LlmJudge({ rules: await instructions('bouncer.md'), connection: async () => connectionFor(await settings.get(), 'bouncer'), log: bouncerLog });
 const bouncerModel = connectionFor(await settings.get(), 'bouncer')?.model ?? null;
 bouncerLog(`judge: ${bouncerModel ?? 'off — every report goes to a human'}`);
 

@@ -8,7 +8,8 @@ export const textOf = (source: TextSource): Promise<string> =>
 
 /**
  * A text file the server re-reads while running, so docs and rules can be edited without a restart.
- * Checked at most every `minCheckMs`; while the file is missing or unreadable the last good text stays.
+ * Checked at most every `minCheckMs`; while the file is missing, unreadable or blank the last good text stays.
+ * Server and bots only: it reads the disk, so it stays out of the package's index (the web imports that).
  */
 export class LiveText {
   private current: string;
@@ -30,8 +31,9 @@ export class LiveText {
     const info = await stat(this.opts.path).catch(() => null);
     if (!info || info.mtimeMs === this.seenMtime) return this.current;
     try {
-      this.current = await Bun.file(this.opts.path).text();
+      const text = await Bun.file(this.opts.path).text();
       this.seenMtime = info.mtimeMs;
+      if (text.trim()) this.current = text; // a blank save is a slip, not an edit
     } catch {
       // unreadable for a moment; try again on the next check
     }

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { instructionsPath } from './instructions';
 import { oldIron } from './personalities/old-iron';
 import { LlmVoice } from './voice';
 
@@ -24,7 +25,7 @@ const available = await probe();
 
 test.skipIf(!available)('a real model answers a mention in character, in one short line', async () => {
   const logs: string[] = [];
-  const voice = new LlmVoice({ baseUrl: BASE, model: MODEL, persona: oldIron.persona!, name: oldIron.name, log: (m) => logs.push(m) });
+  const voice = new LlmVoice({ baseUrl: BASE, model: MODEL, persona: await Bun.file(instructionsPath('old-iron.md')).text(), houseRules: await Bun.file(instructionsPath('house-rules.md')).text(), name: oldIron.name, log: (m) => logs.push(m) });
   const line = await voice.say({
     kind: 'mention',
     channel: 'lobby',

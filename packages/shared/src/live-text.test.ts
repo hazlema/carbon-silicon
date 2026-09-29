@@ -35,4 +35,16 @@ describe('LiveText', () => {
     now += 1000;
     expect(await text.get()).toBe('# Kept');
   });
+
+  test('a blank save keeps the last good text too', async () => {
+    const path = join(dir, 'prompt.md');
+    let now = 0;
+    await Bun.write(path, 'Stay in character.');
+    const text = new LiveText({ path, fallback: '', minCheckMs: 1000, now: () => now });
+    expect(await text.get()).toBe('Stay in character.');
+    await Bun.write(path, '  \n');
+    await utimes(path, new Date(), new Date(Date.now() + 5000));
+    now += 1000;
+    expect(await text.get()).toBe('Stay in character.');
+  });
 });

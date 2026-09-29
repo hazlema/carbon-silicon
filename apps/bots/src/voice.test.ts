@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import { instructionsPath } from './instructions';
 import { LlmVoice, type Moment } from './voice';
 
 const PERSONA = 'You are TEST UNIT 9, a cranky tin can that speaks in capitals.';
+/** The real file, so the checks below pin what the shipped house rules must say. */
+const HOUSE_RULES = await Bun.file(instructionsPath('house-rules.md')).text();
 
 interface Captured {
   url: string;
@@ -33,7 +36,7 @@ const moment = (over: Partial<Moment> = {}): Moment => ({
 
 function voiceWith(fetchImpl: typeof fetch, extra: Partial<ConstructorParameters<typeof LlmVoice>[0]> = {}) {
   const logs: string[] = [];
-  const voice = new LlmVoice({ baseUrl: 'http://llm.test/v1', model: 'test-model', persona: PERSONA, name: 'OLD_IRON', fetchImpl, log: (m) => logs.push(m), ...extra });
+  const voice = new LlmVoice({ baseUrl: 'http://llm.test/v1', model: 'test-model', persona: PERSONA, houseRules: HOUSE_RULES, name: 'OLD_IRON', fetchImpl, log: (m) => logs.push(m), ...extra });
   return { voice, logs };
 }
 
@@ -294,7 +297,7 @@ describe('LlmVoice connection settings', () => {
       apiKey: 'k1',
       temperature: 0.7,
     };
-    const voice = new LlmVoice({ persona: PERSONA, name: 'OLD_IRON', fetchImpl, settings: async () => connection });
+    const voice = new LlmVoice({ persona: PERSONA, houseRules: HOUSE_RULES, name: 'OLD_IRON', fetchImpl, settings: async () => connection });
     await voice.say(moment());
     connection = { ...connection!, model: 'free-two:free' };
     await voice.say(moment());

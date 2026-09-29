@@ -2,9 +2,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BRAND } from '@cs/shared/brand';
+import { LiveText } from '@cs/shared/live-text';
 import { createCore } from './core/core';
 import { createApp } from './http/app';
-import { LiveText } from './lib/live-text';
 import { secretFromEnv } from './lib/secrets';
 import { startServer } from './server';
 
