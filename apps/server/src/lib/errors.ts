@@ -1,4 +1,4 @@
-export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 410 | 429 | 500;
+export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 410 | 413 | 429 | 500;
 
 /** An error with an HTTP status and a stable UPPER_SNAKE code; the HTTP door renders it as {error:{code,message}}. */
 export class AppError extends Error {
@@ -18,6 +18,7 @@ export const forbidden = (code: string, message: string) => new AppError(403, co
 export const notFound = (code: string, message: string) => new AppError(404, code, message);
 export const conflict = (code: string, message: string) => new AppError(409, code, message);
 export const gone = (code: string, message: string) => new AppError(410, code, message);
+export const tooLarge = (code: string, message: string) => new AppError(413, code, message);
 export const tooMany = (code: string, message: string) => new AppError(429, code, message);
 
 /** Postgres unique_violation (23505), looking through Drizzle's error wrapping. */

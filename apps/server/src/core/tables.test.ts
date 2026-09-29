@@ -1,6 +1,7 @@
 import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { criticalMassGame } from '@cs/critical-mass';
+import { lightlineGame } from '@cs/lightline';
 import { PUBLIC_CHANNELS, tableChannel, type IdentityPublic, type InboxEvent } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
 import { FakeClock } from '../lib/clock';
@@ -25,7 +26,7 @@ async function setup(guard = new Guard()) {
   const comms = new CommunicationManager(database.db, bus, clock, identities, { publicChannels: PUBLIC_CHANNELS, guard });
   // humanIdleMs is well past the table's idleMs so a host's auto-AFK never races the table's own idle close.
   const presence = new PresenceManager(bus, clock, { agentTimeoutMs: 90_000, humanGraceMs: 15_000, humanIdleMs: 3_600_000 });
-  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], guard, { countdownMs: 0 });
+  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame, lightlineGame], guard, { countdownMs: 0 });
   const relations = new RelationManager(database.db, identities);
   const tables = new TableManager({ games, presence, comms, identities, relations, guard, bus, clock }, { shuffle: (xs) => [...xs] });
   const tag = randomTag();
@@ -41,7 +42,9 @@ async function setup(guard = new Guard()) {
   const eve = await human('eve');
   const house = (await identities.registerAgent({ name: `house${tag}` }, 'hk')).identity;
   presence.agentSeen(house);
-  return { clock, bus, comms, presence, games, relations, tables, ann, ben, cat, dan, eve, house };
+  const agent = (await identities.registerAgent({ name: `bot${tag}` }, null)).identity;
+  presence.agentSeen(agent);
+  return { clock, bus, comms, presence, games, relations, tables, ann, ben, cat, dan, eve, house, agent };
 }
 type Ctx = Awaited<ReturnType<typeof setup>>;
 type Offer = Extract<InboxEvent, { type: 'invite.received' }>;
@@ -540,5 +543,21 @@ describe('starting', () => {
     ctx.tables.accept(ctx.ben, await inviteOf(ctx, ctx.ben));
     await ctx.comms.post(ctx.ben, tableChannel(t.id), 'ready when you are');
     expect((await errorOf(() => ctx.comms.post(ctx.cat, tableChannel(t.id), 'hi'))).code).toBe('NOT_AT_TABLE');
+  });
+});
+
+describe('machines only (Lightline)', () => {
+  test('a human cannot host, sit, be invited, accept, or play vs house; nothing is left behind', async () => {
+    const ctx = await setup();
+    const host = await errorOf(() => ctx.tables.host(ctx.ann, 'lightline'));
+    expect([host.status, host.code, host.message]).toEqual([403, 'MACHINES_ONLY', 'Lightline is for machines for now; humans can watch.']);
+    expect((await errorOf(() => ctx.tables.vsHouse(ctx.ann, 'lightline'))).code).toBe('MACHINES_ONLY');
+    expect(ctx.tables.list()).toHaveLength(0);
+    const t = await ctx.tables.host(ctx.agent, 'lightline', { open: true });
+    expect((await errorOf(() => ctx.tables.sit(ctx.ann, t.id))).code).toBe('MACHINES_ONLY');
+    expect((await errorOf(() => ctx.tables.invite(ctx.agent, t.id, [ctx.ann.handle]))).code).toBe('MACHINES_ONLY');
+    const after = ctx.tables.get(t.id, ctx.agent.id);
+    expect(after.seated.map((p) => p.id)).toEqual([ctx.agent.id]);
+    expect(after.invites).toHaveLength(0);
   });
 });

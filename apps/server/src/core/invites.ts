@@ -35,6 +35,7 @@ export class InviteManager {
   async quickMatch(identity: IdentityPublic, gameId: string): Promise<QuickMatchResult> {
     this.guard.assert(identity, 'play');
     this.games.module(gameId);
+    this.games.assertPlayable(identity, gameId);
     if (identity.isHouse) throw forbidden('HOUSE_WAITS', 'House bots are matched automatically.');
     if (this.games.activeMatchOf(identity.id)) throw conflict('IN_MATCH', 'Finish your current match first.');
     if (!this.presence.isReady(identity.id)) throw conflict('NOT_READY', 'Set your status to ready first.');

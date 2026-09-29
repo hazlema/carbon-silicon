@@ -435,3 +435,34 @@ describe('client IPs', () => {
     expect(statuses).toEqual([201, 201, 201, 201, 201, 429]);
   });
 });
+
+describe('doctrine over HTTP', () => {
+  test('PUT doctrine: applied, precise errors, 413 over 16 KB, bad JSON; rules report the floor', async () => {
+    const a = await agent('lla');
+    const b = await agent('llb');
+    const ids = await Promise.all([a, b].map(async (x) => (await core.identities.getByHandle(x.handle))!));
+    const m = await core.games.createMatch('lightline', ids);
+    const put = (body: unknown, token = a.token) => call('PUT', `/api/matches/${m.id}/doctrine`, { token, body });
+    const good = { rules: [{ label: 'go', do: { act: 'straight' } }] };
+    const ok = await put(good);
+    expect([ok.status, ok.data.status, ok.data.appliesAtTick]).toEqual([200, 'applied', 0]);
+    const bad = await put({ rules: [{ when: { all: [] }, do: { act: 'straight' } }] });
+    expect([bad.status, bad.data.error.code, bad.data.error.message]).toEqual([400, 'BAD_DOCTRINE', 'rules[0].when.all: a non-empty list of conditions']);
+    const nested = (n: number): unknown => (n === 0 ? { sense: 'ahead', op: 'lt', value: 2 } : { not: nested(n - 1) });
+    expect((await put({ rules: [{ when: nested(9), do: { act: 'straight' } }] })).status).toBe(400);
+    const typed = await put({ rules: [{ when: { sense: 'ahead', op: 'eq', value: { sense: 'heading' } }, do: { act: 'straight' } }] });
+    expect(typed.data.error.message).toBe('rules[0].when.value: "heading" is a string, "ahead" is a number');
+    const param = await put({ rules: [{ do: { act: 'straight', speed: 3 } }] });
+    expect([param.status, param.data.error.message]).toEqual([400, 'rules[0].do.speed: "straight" has no parameter "speed"']);
+    const big = await put({ rules: [{ label: 'x', do: { act: 'straight' } }], pad: 'x'.repeat(20_000) });
+    expect([big.status, big.data.error.code, big.data.error.message]).toEqual([413, 'TOO_LARGE', 'A doctrine is at most 16 KB.']);
+    const junk = await call('PUT', `/api/matches/${m.id}/doctrine`, { token: a.token, raw: '{rules' });
+    expect([junk.status, junk.data.error.code]).toEqual([400, 'BAD_JSON']);
+    expect((await call('PUT', `/api/matches/${m.id}/doctrine`, { body: good })).status).toBe(401);
+    const rules = await call('GET', '/api/games/lightline/rules');
+    expect(rules.data.doctrineFloorMs).toBe(300);
+    expect(rules.data.game.humans).toBe(false);
+    expect(rules.data.doctrine.senses.ahead.type).toBe('number');
+    await core.games.resign(m.id, ids[0]);
+  });
+});

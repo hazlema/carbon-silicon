@@ -194,6 +194,7 @@ export class TableManager {
   async host(identity: IdentityPublic, gameId: unknown, opts: { invite?: unknown; open?: unknown } = {}): Promise<TableInfo> {
     if (typeof gameId !== 'string') throw badRequest('BAD_GAME', 'Send {"gameId": "critical-mass"}.');
     const meta = this.deps.games.module(gameId).meta;
+    this.deps.games.assertPlayable(identity, gameId);
     if (identity.isHouse) throw forbidden('HOUSE_WAITS', 'House bots join tables; they never host.');
     this.assertFree(identity);
     if (this.atTable(identity.id)) throw conflict('AT_TABLE', "You're already at a table. Leave it first.");
@@ -239,6 +240,7 @@ export class TableManager {
       const who = await this.deps.identities.getByHandle(handle);
       if (!who || who.released) throw notFound('NO_USER', `There is no @${handle}.`);
       if (who.id === identity.id) throw badRequest('SELF', "You're already at your own table.");
+      this.deps.games.assertPlayable(who, t.gameId);
       if (!targets.some((x) => x.id === who.id)) targets.push(who);
     }
     for (const who of targets) {
@@ -275,6 +277,7 @@ export class TableManager {
     const t = inv ? this.tables.get(inv.tableId) : undefined;
     if (!inv || !t || inv.to.id !== identity.id) throw gone('INVITE_GONE', 'That invite has expired, or the table is gone.');
     this.assertForming(t);
+    this.deps.games.assertPlayable(identity, t.gameId);
     this.assertFree(identity);
     this.forgetInvite(inv);
     this.seat(t, identity);
@@ -298,6 +301,7 @@ export class TableManager {
   async sit(identity: IdentityPublic, tableId: string): Promise<TableInfo> {
     const t = this.require(tableId);
     this.assertForming(t);
+    this.deps.games.assertPlayable(identity, t.gameId);
     if (t.seated.some((x) => x.id === identity.id)) return this.info(t, identity.id);
     const mine = t.invites.find((i) => i.to.id === identity.id);
     if (mine) return this.accept(identity, mine.id);

@@ -176,4 +176,10 @@ describe('the real-time runner', () => {
     const ctx = await setup();
     expect(ctx.games.catalog().map((g) => [g.id, g.humans])).toEqual([['critical-mass', true], ['lightline', false]]);
   });
+
+  test('createMatch refuses a human seat in a machines-only game', async () => {
+    const ctx = await setup();
+    await expect(ctx.games.createMatch('lightline', [ctx.a, ctx.human])).rejects.toMatchObject({ code: 'MACHINES_ONLY' });
+    expect(ctx.games.activeMatchOf(ctx.a.id)).toBeNull();
+  });
 });

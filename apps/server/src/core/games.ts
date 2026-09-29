@@ -113,6 +113,14 @@ export class GameManager {
     return m;
   }
 
+  /** A machines-only game refuses a human, whichever door they come through. */
+  assertPlayable(identity: IdentityPublic, gameId: string): void {
+    const meta = this.module(gameId).meta;
+    if (identity.kind === 'human' && !meta.humans) {
+      throw forbidden('MACHINES_ONLY', `${meta.name} is for machines for now; humans can watch.`);
+    }
+  }
+
   activeMatchOf(identityId: string): string | null {
     return this.active.get(identityId) ?? null;
   }
@@ -157,6 +165,7 @@ export class GameManager {
       throw badRequest('BAD_PLAYERS', `${name} takes ${minPlayers}–${maxPlayers} players.`);
     }
     if (new Set(players.map((p) => p.id)).size !== players.length) throw badRequest('BAD_PLAYERS', 'Players must be different.');
+    for (const p of players) this.assertPlayable(p, gameId);
     for (const p of players) {
       if (this.active.has(p.id)) throw conflict('IN_MATCH', `@${p.handle} is already in a match.`);
     }

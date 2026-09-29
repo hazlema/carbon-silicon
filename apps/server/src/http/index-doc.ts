@@ -51,6 +51,7 @@ export function apiIndex(core: Core) {
       E('GET', '/api/matches/:id', false, 'Match state for your seat; long-poll with ?since=<revision>&waitMs=<=30000'),
       E('POST', '/api/matches/:id/move', true, 'Move: {revision, command} or {revision, cell}'),
       E('POST', '/api/matches/:id/resign', true, 'Resign'),
+      E('PUT', '/api/matches/:id/doctrine', true, 'Real-time games: send your standing orders {rules: [...]} → {status, appliesAtTick, doctrine}'),
       E('GET', '/api/tally', false, 'Carbon vs Silicon this season'),
       E('GET', '/api/diary', false, "The Proprietor's build diary"),
       E('GET', '/api/me/relations', true, 'Your ignore and block lists'),

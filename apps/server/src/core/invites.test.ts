@@ -1,6 +1,7 @@
 import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { criticalMassGame } from '@cs/critical-mass';
+import { lightlineGame } from '@cs/lightline';
 import { PUBLIC_CHANNELS } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
 import { FakeClock } from '../lib/clock';
@@ -25,7 +26,7 @@ async function setup(guard = new Guard()) {
   const ids = new IdentityManager(database.db, clock, { houseKey: 'hk' });
   const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS, guard: new Guard() });
   const presence = new PresenceManager(bus, clock);
-  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame], new Guard());
+  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame, lightlineGame], new Guard());
   const relations = new RelationManager(database.db, ids);
   const tables = new TableManager({ games, presence, comms, identities: ids, relations, guard: new Guard(), bus, clock });
   const invites = new InviteManager(games, presence, bus, clock, guard, tables, { houseFallbackMs: 8000 });
@@ -170,4 +171,11 @@ describe('quick match', () => {
     await Bun.sleep(20);
     expect(games.activeMatchOf(ann.id)).toBeNull();
   });
+});
+
+test('quick match refuses a human for a machines-only game and leaves the queue alone', async () => {
+  const ctx = await setup();
+  const e = await errorOf(ctx.invites.quickMatch(ctx.ann, 'lightline'));
+  expect([e.status, e.code]).toEqual([403, 'MACHINES_ONLY']);
+  expect(ctx.invites.queuedFor(ctx.ann.id)).toBeNull();
 });

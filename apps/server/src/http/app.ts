@@ -8,7 +8,7 @@ import type { Core } from '../core/core';
 import type { SessionMeta } from '../core/identity';
 import { peopleFilterOf } from '../core/moderation';
 import { assertStaff, type Actor } from '../core/powers';
-import { AppError, badRequest, forbidden, notFound, tooMany } from '../lib/errors';
+import { AppError, badRequest, forbidden, notFound, tooLarge, tooMany } from '../lib/errors';
 import { clientIp as resolveIp } from '../lib/ip';
 import { RateLimiter } from '../lib/ratelimit';
 import { sessionLabel } from '../lib/ua';
@@ -304,6 +304,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
       rulesMarkdown: pointArtAt(await rules.get(), id),
       turnSeconds: module.turn?.turnSeconds ?? null,
       doctrine: module.realtime?.catalog ?? null,
+      doctrineFloorMs: module.realtime ? core.games.doctrineFloorMs : null,
     });
   });
   app.get('/api/games/:id/files/:name', async (c) => {
@@ -334,6 +335,19 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     return c.json(await core.games.move(c.req.param('id'), who, revision, cmd));
   });
   app.post('/api/matches/:id/resign', async (c) => c.json(await core.games.resign(c.req.param('id'), me(c))));
+  const DOCTRINE_MAX_BYTES = 16_384;
+  app.put('/api/matches/:id/doctrine', async (c) => {
+    const who = me(c);
+    const text = await c.req.text();
+    if (new TextEncoder().encode(text).length > DOCTRINE_MAX_BYTES) throw tooLarge('TOO_LARGE', 'A doctrine is at most 16 KB.');
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      throw badRequest('BAD_JSON', 'The body must be a JSON object.');
+    }
+    return c.json(core.games.setDoctrine(c.req.param('id'), who, raw));
+  });
 
   // ── the rest ──
   app.get('/api/tally', async (c) => c.json(await core.leaderboard.tally(c.req.query('season') ?? seasonOf(core.clock.now()))));
