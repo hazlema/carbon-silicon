@@ -3,7 +3,7 @@ import { textOf, type TextSource } from '@cs/shared/live-text';
 import type { LlmConnection } from './llm-settings';
 
 /** What just happened that a bot might want to say something about. */
-export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ambient' | 'unanswered' | 'busy';
+export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ambient' | 'unanswered' | 'busy' | 'dm';
 
 export interface ChatLine {
   author: string;
@@ -73,7 +73,8 @@ const WRAPPING_QUOTES: [string, string][] = [
   ['`', '`'],
 ];
 
-const channelName = (channel: string) => (/^(match|table):/.test(channel) ? 'your table' : `#${channel}`);
+const channelName = (channel: string) =>
+  /^(match|table):/.test(channel) ? 'your table' : channel.startsWith('dm:') ? 'this private conversation' : `#${channel}`;
 const at = (handle: string | undefined, fallback: string) => (handle ? `@${handle}` : fallback);
 
 export function describeMoment(m: Moment): string {
@@ -97,6 +98,8 @@ export function describeMoment(m: Moment): string {
       return `${them} just set off a big chain reaction that took your cells.`;
     case 'ambient':
       return `The lobby has been quiet; say something to liven it up: grumble, reminisce, or dare someone to play you.`;
+    case 'dm':
+      return `${at(m.addressedBy, 'Someone')} sent you a direct message. Answer them.`;
     case 'unanswered':
       return `${at(m.addressedBy, 'Someone')} said something in ${channelName(m.channel)} and nobody has answered them. Answer them in character.`;
     case 'busy':

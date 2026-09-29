@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { stateFromView, type CMView } from '@cs/critical-mass';
 import { PUBLIC_CHANNELS, type ChatMessage, type InboxEvent, type MatchEnvelope, type PresenceInfo } from '@cs/shared/protocol';
 import { ApiError, Client } from './client';
+import { DmBudget } from './dm-budget';
 import { DEFAULT_STRATEGY, line, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
 import type { ChatLine, Moment, MomentKind, Voice } from './voice';
@@ -26,6 +27,8 @@ export interface BotOptions {
   tableTalkChance?: number;
   /** At most one mention or table-talk reply per channel per this long (default 20 s). */
   replyCooldownMs?: number;
+  /** DM replies per person per hour (default 3 to agents, 30 to humans). */
+  dmCaps?: { agent: number; human: number };
   /** How long a line at a match table may wait for the voice before the canned bank answers
    *  instead (default 4 s), so a slow or hanging model never holds up a match. */
   voiceDeadlineMs?: number;
@@ -70,6 +73,7 @@ const BANK: Record<MomentKind, keyof Personality['lines'] | null> = {
   ambient: 'ambient',
   unanswered: 'unanswered',
   busy: 'busy',
+  dm: 'mentioned',
 };
 
 /** Should a bot with a voice speak up in the lobby now? (The coin flip happens elsewhere.) */
@@ -138,7 +142,7 @@ async function speak(
     const lines = bank ? opts.personality.lines[bank] : undefined;
     text ||= lines ? line(lines) : null;
     if (!text) return;
-    if (extra.addressedBy && !text.includes(`@${extra.addressedBy}`)) text = `@${extra.addressedBy} ${text}`;
+    if (extra.addressedBy && !channel.startsWith('dm:') && !text.includes(`@${extra.addressedBy}`)) text = `@${extra.addressedBy} ${text}`;
     for (let attempt = 0; attempt < 2 && !opts.signal?.aborted; attempt++) {
       try {
         await client.chat(channel, text);
@@ -324,6 +328,8 @@ export async function runBot(opts: BotOptions): Promise<void> {
   }
   if (!opts.signal?.aborted) myId = (await client.me()).identity.id;
 
+  const dmBudget = new DmBudget(opts.dmCaps);
+
   /** One reply per channel per cooldown; claims the slot if it's free. */
   const cooldown = opts.replyCooldownMs ?? 20_000;
   const mayReply = (channel: string) => {
@@ -403,6 +409,16 @@ export async function runBot(opts: BotOptions): Promise<void> {
       const poll = await client.inbox(cursor, opts.pollWaitMs ?? 25_000);
       cursor = poll.cursor;
       for (const event of poll.events) {
+        if (event.type === 'chat.dm') {
+          const m = event.message;
+          // Never another house bot (two residents would talk forever), and within the hourly caps.
+          if (m.author && m.author.id !== myId && !m.author.isHouse && dmBudget.take(m.author.id, m.author.kind, Date.now())) {
+            const [lo, hi] = opts.thinkMs;
+            const from = m.author.handle;
+            track(sleep(lo + Math.random() * Math.max(0, hi - lo), opts.signal).then(() => speak(client, opts, 'dm', m.channel, { addressedBy: from, answering: m })));
+          }
+          continue;
+        }
         if (event.type === 'invite.received') {
           track(answer(event));
           continue;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { instructionsPath } from './instructions';
-import { LlmVoice, type Moment } from './voice';
+import { buildUserPrompt, LlmVoice, type Moment } from './voice';
 
 const PERSONA = 'You are TEST UNIT 9, a cranky tin can that speaks in capitals.';
 /** The real file, so the checks below pin what the shipped house rules must say. */
@@ -313,4 +313,19 @@ describe('LlmVoice connection settings', () => {
 
 test('a reply that names the router behind the voice is discarded', async () => {
   expect(await sanitized('I RUN ON OPENROUTER, OPERATOR.')).toBeNull();
+});
+
+describe('the dm moment', () => {
+  test('asks for an answer to the direct message, with the conversation as quoted data', () => {
+    const prompt = buildUserPrompt({
+      kind: 'dm',
+      channel: 'dm:id_a:id_b',
+      addressedBy: 'frosty',
+      recent: [{ author: 'frosty', kind: 'human', text: 'you awake, old timer?' }],
+      answering: { author: 'frosty', kind: 'human', text: 'you awake, old timer?' },
+    });
+    expect(prompt).toContain('@frosty sent you a direct message. Answer them.');
+    expect(prompt).toContain('The last messages in this private conversation, oldest first:');
+    expect(prompt).toContain('frosty (human): you awake, old timer?');
+  });
 });

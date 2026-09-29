@@ -1,4 +1,4 @@
-import type { ReportInfo } from '@cs/shared/protocol';
+import type { ChatMessage, ReportInfo } from '@cs/shared/protocol';
 import { connect } from './bot';
 import { ApiError, Client } from './client';
 import type { Judge, Verdict } from './judge';
@@ -8,6 +8,10 @@ export const BOUNCER = {
   tagline: 'Keeps the peace. Reads the reports.',
   color: '#9aa1cf',
 } as const;
+
+/** The Bouncer doesn't chat: a DM gets this, once an hour per person. */
+export const BOUNCER_DM_REPLY = "I read reports, not DMs. Use Report on the message and I'll take a look.";
+const HOUR = 3_600_000;
 
 export interface BouncerOptions {
   base: string;
@@ -76,6 +80,15 @@ export async function runBouncer(opts: BouncerOptions): Promise<void> {
   await client.setStatus('afk');
 
   const note = (id: string, text: string) => client.call('POST', `/api/mod/reports/${id}/notes`, { text: text.slice(0, 300) });
+
+  const pointedAt = new Map<string, number>();
+  async function answerDm(m: ChatMessage): Promise<void> {
+    if (!m.author || m.author.isHouse || m.author.handle === myHandle) return;
+    const now = Date.now();
+    if ((pointedAt.get(m.author.id) ?? -Infinity) + HOUR > now) return;
+    pointedAt.set(m.author.id, now);
+    await client.chat(m.channel, BOUNCER_DM_REPLY).catch(() => {});
+  }
 
   async function handle(report: ReportInfo): Promise<void> {
     const verdict = opts.judge ? await opts.judge.judge(report, opts.signal).catch(() => null) : null;
@@ -157,7 +170,9 @@ export async function runBouncer(opts: BouncerOptions): Promise<void> {
       if (me.presence?.status !== 'afk') await client.setStatus('afk');
       if (cursor === null) cursor = (await client.inbox(0, 0)).cursor;
       await sweep();
-      cursor = (await client.inbox(cursor, opts.pollWaitMs ?? 25_000)).cursor;
+      const poll = await client.inbox(cursor, opts.pollWaitMs ?? 25_000);
+      cursor = poll.cursor;
+      for (const e of poll.events) if (e.type === 'chat.dm') await answerDm(e.message);
     } catch (e) {
       if (opts.signal?.aborted) break;
       log(`error: ${(e as Error).message}`);

@@ -194,6 +194,16 @@ describe('Sprocket', () => {
       await done;
     }
   }, 30_000);
+
+  test('answers a DM with a canned line', async () => {
+    const { client } = await newHuman(running.url, `dms${randomTag()}`);
+    await client.call('POST', `/api/dms/${sprocket.name}`, { text: 'hi sprocket, fancy a chat?' });
+    const reply = await until(async () => {
+      const r = await client.call<{ messages: ChatMessage[] }>('GET', `/api/dms/${sprocket.name}`);
+      return r.messages.find((m) => m.author?.handle === sprocket.name)?.text;
+    });
+    expect(sprocket.lines.mentioned).toContain(reply);
+  }, 30_000);
 });
 
 describe('tables', () => {
@@ -430,6 +440,40 @@ describe('OLD IRON (a bot with a voice)', () => {
     } finally {
       voiceMode = 'talk';
     }
+  }, 30_000);
+
+  const ironDmReplies = async (client: Client) =>
+    (await client.call<{ messages: ChatMessage[] }>('GET', '/api/dms/OLD_IRON')).messages.filter((m) => m.author?.handle === 'OLD_IRON');
+
+  test('answers a DM through its voice, with no @ prefix, the conversation as its transcript', async () => {
+    await ironUp();
+    voiceMode = 'talk';
+    const { client, handle } = await newHuman(ironServer.url, `dmh${randomTag()}`);
+    await client.call('POST', '/api/dms/OLD_IRON', { text: 'you awake, old timer?' });
+    const reply = await until(async () => (await ironDmReplies(client))[0]?.text);
+    expect(reply).toBe('VOICE DM LINE.');
+    const asked = heard.find((m) => m.kind === 'dm' && m.addressedBy === handle)!;
+    expect(asked.channel.startsWith('dm:')).toBe(true);
+    expect(asked.answering?.text).toBe('you awake, old timer?');
+  }, 30_000);
+
+  test('answers one agent at most 3 times an hour, so two machines cannot talk forever', async () => {
+    await ironUp();
+    voiceMode = 'talk';
+    const { client } = await newAgent(ironServer.url, `loop${randomTag()}`);
+    for (let i = 0; i < 4; i++) await client.call('POST', '/api/dms/OLD_IRON', { text: `ping ${i}` });
+    await until(async () => (await ironDmReplies(client)).length >= 3);
+    await Bun.sleep(1500); // time enough for a fourth reply, which must not come
+    expect(await ironDmReplies(client)).toHaveLength(3);
+  }, 30_000);
+
+  test("never answers another house bot's DM", async () => {
+    await ironUp();
+    const { client } = await newAgent(ironServer.url, `House${randomTag()}`, 'hk');
+    await client.setStatus('afk'); // a ready house resident could be seated by the quick-match fallback in other tests
+    await client.call('POST', '/api/dms/OLD_IRON', { text: 'hello, colleague' });
+    await Bun.sleep(1500);
+    expect(await ironDmReplies(client)).toEqual([]);
   }, 30_000);
 });
 
