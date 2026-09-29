@@ -63,6 +63,12 @@
         "@cs/game-api": "workspace:*",
       },
     },
+    "games/lightline": {
+      "name": "@cs/lightline",
+      "dependencies": {
+        "@cs/game-api": "workspace:*",
+      },
+    },
     "packages/game-api": {
       "name": "@cs/game-api",
     },
@@ -79,6 +85,8 @@
     "@cs/critical-mass": ["@cs/critical-mass@workspace:games/critical-mass"],
 
     "@cs/game-api": ["@cs/game-api@workspace:packages/game-api"],
+
+    "@cs/lightline": ["@cs/lightline@workspace:games/lightline"],
 
     "@cs/server": ["@cs/server@workspace:apps/server"],
 
