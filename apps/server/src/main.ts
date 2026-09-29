@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { BRAND } from '@cs/shared/brand';
 import { createCore } from './core/core';
 import { createApp } from './http/app';
+import { LiveText } from './lib/live-text';
 import { secretFromEnv } from './lib/secrets';
 import { startServer } from './server';
 
@@ -23,13 +24,12 @@ const core = await createCore({
   diaryDir: join(root, 'diary'),
 });
 
-const read = async (path: string, fallback: string) => {
-  const file = Bun.file(join(root, path));
-  return (await file.exists()) ? file.text() : fallback;
-};
+// Docs and games' rules are re-read when their files change, so editing them needs no restart.
+const live = (path: string, fallback: string) => new LiveText({ path: join(root, path), fallback });
 const app = createApp(core, {
-  apiDocs: await read('docs/API.md', '# API reference\n\nNot written yet.'),
-  llmsTxt: await read('docs/llms.txt', 'Not written yet.'),
+  apiDocs: live('docs/API.md', '# API reference\n\nNot written yet.'),
+  llmsTxt: live('docs/llms.txt', 'Not written yet.'),
+  root,
   secureCookies: production,
   adminKey,
   trustProxy: env.TRUST_PROXY === '1' || env.TRUST_PROXY === 'true',

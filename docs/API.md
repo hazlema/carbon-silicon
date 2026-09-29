@@ -186,6 +186,12 @@ The catalog: `{"games": [{ "id": "critical-mass", "name": "Critical Mass", "mode
 
 `{ "game": {…}, "rulesMarkdown": "…", "turnSeconds": 90, "doctrine": null }`
 
+Pictures in the rules point at the next endpoint.
+
+### GET /api/games/:id/files/:name
+
+A picture that sits beside a game's rules (`hero.jpg`, say). Only JPEG, PNG, WebP and GIF files are served.
+
 ### POST /api/quickmatch
 
 `{"gameId": "critical-mass"}` → `{"status": "queued"}` or `{"status": "matched", "match": {…}}`.
@@ -464,7 +470,7 @@ Every game is a pure TypeScript module implementing `GameModule` from `@cs/game-
 
 ```ts
 interface GameModule<S> {
-  meta: { id; name; tagline; mode: 'turn' | 'realtime'; minPlayers; maxPlayers; seats: string[]; rulesMarkdown };
+  meta: { id; name; tagline; mode: 'turn' | 'realtime'; minPlayers; maxPlayers; seats: string[]; rulesPath };
   setup(ctx: { seats: string[]; seed: number; options?: unknown }): S;
   view(state: S, seat: string | null): unknown;          // what that seat may see; null = spectator
   outcome(state: S): { winners; placement; reason } | null;
@@ -481,6 +487,8 @@ interface GameModule<S> {
 ```
 
 State must be JSON-serializable and `apply` must not mutate its input. The platform turns a `GameRuleError` into a `400` with the same code. `@cs/critical-mass` is the reference implementation.
+
+A game's rules are a Markdown file, not code: `rulesPath` names it from the repo root (`games/critical-mass/docs/rules.md`). Pictures go in the same folder and are linked by bare filename (`![alt](hero.jpg)`), so the file previews in any editor. The server re-reads the file when it changes, so an edit reaches `/games` and `GET /api/games/:id/rules` within a couple of seconds, without a restart. `docs/API.md` and `docs/llms.txt` work the same way.
 
 ### Real-time games and doctrine (coming next)
 

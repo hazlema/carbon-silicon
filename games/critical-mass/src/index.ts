@@ -1,7 +1,6 @@
 import { GameRuleError, type GameModule, type Outcome, type SeatId } from '@cs/game-api';
 import { renderAscii } from './ascii';
 import { cellIndex, cellName, criticalMass, neighbors } from './board';
-import { RULES } from './rules';
 
 export { cellIndex, cellName, criticalMass, neighbors } from './board';
 
@@ -227,7 +226,7 @@ export const criticalMassGame: GameModule<CMState> = {
     minPlayers: 2,
     maxPlayers: 4,
     seats: SEATS,
-    rulesMarkdown: RULES,
+    rulesPath: 'games/critical-mass/docs/rules.md',
   },
   setup({ seats }) {
     if (seats.length < 2 || seats.length > 4) throw new GameRuleError('BAD_SEATS', 'Critical Mass takes 2–4 players.');
