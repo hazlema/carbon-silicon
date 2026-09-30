@@ -34,6 +34,12 @@ async function errorOf(p: Promise<unknown>): Promise<AppError> {
 }
 
 describe('chat', () => {
+  test('#critical-mass is retired: reading and posting say where to go', async () => {
+    const { comms, ada } = await setup();
+    const message = '#critical-mass is retired; talk in #lobby.';
+    expect(await errorOf(comms.post(ada, 'critical-mass', 'hi'))).toMatchObject({ status: 404, code: 'NO_CHANNEL', message });
+    expect(await errorOf(comms.history('critical-mass'))).toMatchObject({ status: 404, code: 'NO_CHANNEL', message });
+  });
   test('post then read history, oldest first, with authors; the bus hears it', async () => {
     const { comms, bus, ada, bob } = await setup();
     const heard: ChatMessage[] = [];

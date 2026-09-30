@@ -146,13 +146,13 @@ describe('reports', () => {
   test('a report keeps its snapshot and context after the message is deleted', async () => {
     const mod = await staff('mod');
     const [a, b, c, d, reporter] = await Promise.all(['a', 'b', 'c', 'd', 'r'].map((x) => person(x)));
-    const before = [await core.comms.post(a, 'critical-mass', 'good game'), await core.comms.post(b, 'critical-mass', 'rematch?')];
-    const bad = await core.comms.post(c, 'critical-mass', 'you play like a toaster, idiot');
-    const after = [await core.comms.post(d, 'critical-mass', 'harsh')];
+    const before = [await core.comms.post(a, 'lobby', 'good game'), await core.comms.post(b, 'lobby', 'rematch?')];
+    const bad = await core.comms.post(c, 'lobby', 'you play like a toaster, idiot');
+    const after = [await core.comms.post(d, 'lobby', 'harsh')];
     const report = await core.reports.create(reporter, bad.id, 'insult');
     await core.moderation.deleteMessage(as(mod), bad.id, 'insult');
     const again = await core.reports.get(report.id);
-    expect(again.snapshot).toMatchObject({ messageId: bad.id, channel: 'critical-mass', text: 'you play like a toaster, idiot', author: { id: c.id } });
+    expect(again.snapshot).toMatchObject({ messageId: bad.id, channel: 'lobby', text: 'you play like a toaster, idiot', author: { id: c.id } });
     const contextIds = again.context.map((x) => x.messageId);
     expect(contextIds).toEqual(expect.arrayContaining([...before, ...after].map((m) => m.id)));
     expect(contextIds).not.toContain(bad.id);

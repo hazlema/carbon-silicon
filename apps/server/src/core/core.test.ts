@@ -40,6 +40,13 @@ describe('createCore', () => {
     ]);
     expect(await core.diary.announce(core.comms)).toBe(0);
   });
+  test('a new entry is announced in #diary (the record) and in #lobby (where people are)', async () => {
+    const lobby = (await core.comms.history('lobby', { limit: 50 })).filter((m) => m.system).map((m) => m.text);
+    expect(lobby).toContain('New diary entry: "The first entry" /diary/2026-01-01-first');
+    expect(lobby).toContain('New diary entry: "The second entry" /diary/2026-01-02-second');
+    expect(await core.diary.announce(core.comms)).toBe(0);
+    expect((await core.comms.history('lobby', { limit: 50 })).filter((m) => m.system).map((m) => m.text)).toEqual(lobby);
+  });
   test('the catalog has Critical Mass and Lightline', () => {
     expect(core.games.catalog().map((g) => g.id)).toEqual(['critical-mass', 'lightline']);
   });

@@ -431,8 +431,8 @@
               <button role="tab" type="button" aria-selected={tab === 'rail'} onclick={() => (tab = 'rail')}
                 >{railUnread > 0 ? `Rail (${railUnread})` : 'Rail'}</button
               >
+              <DmTabs active={dmTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} />
             </div>
-            <DmTabs active={dmTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} />
           </div>
         {/snippet}
       </ChatPanel>
@@ -817,6 +817,9 @@
   .tabs {
     display: flex;
     gap: 0.25rem;
+    flex-wrap: nowrap;
+    min-width: 0;
+    overflow-x: auto;
     padding: 0.6rem 0.75rem 0;
     border-bottom: 1px solid var(--lattice);
   }

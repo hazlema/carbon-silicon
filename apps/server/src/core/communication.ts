@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gt, lt } from 'drizzle-orm';
 import { censorText, containsSlur } from '@cs/shared/filter';
 import {
   DIARY_CHANNEL,
+  RETIRED_CHANNELS,
   dmParticipants,
   tableChannel,
   type ChatMessage,
@@ -123,10 +124,14 @@ export class CommunicationManager {
     return tableId ? tableChannel(tableId) : channel;
   }
 
+  private noChannel(rawChannel: string) {
+    return notFound('NO_CHANNEL', (RETIRED_CHANNELS as readonly string[]).includes(rawChannel) ? `#${rawChannel} is retired; talk in #lobby.` : `There is no channel "${rawChannel}".`);
+  }
+
   async post(author: IdentityPublic, rawChannel: string, rawText: unknown): Promise<ChatMessage> {
     const channel = await this.resolve(rawChannel);
     const kind = this.channelKind(channel);
-    if (!kind) throw notFound('NO_CHANNEL', `There is no channel "${rawChannel}".`);
+    if (!kind) throw this.noChannel(rawChannel);
     this.opts.guard.assert(author, 'chat');
     if (kind === 'dm') {
       const pair = dmParticipants(channel)!;
@@ -209,7 +214,7 @@ export class CommunicationManager {
     opts: { since?: number; before?: number; limit?: number; viewer?: IdentityPublic | null } = {},
   ): Promise<ChatMessage[]> {
     const channel = await this.resolve(rawChannel);
-    if (!this.channelKind(channel)) throw notFound('NO_CHANNEL', `There is no channel "${rawChannel}".`);
+    if (!this.channelKind(channel)) throw this.noChannel(rawChannel);
     const pair = dmParticipants(channel);
     if (pair && !(opts.viewer && pair.includes(opts.viewer.id))) {
       throw forbidden('NOT_YOURS', 'Only the two people in a conversation can read it.');

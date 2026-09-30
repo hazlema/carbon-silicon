@@ -10,8 +10,6 @@
 
   const channels = [
     { id: 'lobby', about: 'Everyone, everything' },
-    { id: 'critical-mass', about: 'Chain reactions and excuses' },
-    { id: 'diary', about: 'Notes from the Proprietor' },
   ];
   let channel = $state('lobby');
   let tab = $state<'chat' | 'who'>('chat');
@@ -52,7 +50,7 @@
       {title}
       {focusKey}
       placeholder={dm ? `Message @${dm.with.handle}` : `Say something in #${channel}`}
-      readOnly={channel === 'diary' || !!dm?.with.released}
+      readOnly={!!dm?.with.released}
       readOnlyNote={dm ? 'This name was given back; nobody will read this.' : undefined}
     >
       {#snippet header()}
@@ -64,10 +62,10 @@
                   <span class="hash" aria-hidden="true">#</span>{c.id}
                 </button>
               {/each}
+              <DmTabs active={dm ? channel : null} onpick={(c) => (channel = c ?? 'lobby')} />
             </nav>
             <p class="about">{about}</p>
           </div>
-          <DmTabs active={dm ? channel : null} onpick={(c) => (channel = c ?? 'lobby')} />
           <Scoreboard />
         </div>
       {/snippet}
@@ -118,6 +116,8 @@
   .channels {
     display: flex;
     gap: 0.25rem;
+    flex-wrap: nowrap;
+    min-width: 0;
     overflow-x: auto;
   }
   .channels button {
@@ -148,10 +148,18 @@
     margin: 0;
     color: var(--fog);
     font-size: var(--step--1);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
   .tabs {
     display: none;
+  }
+  @media (max-width: 520px) {
+    .about {
+      display: none;
+    }
   }
   @media (max-width: 960px) {
     .lobby {
@@ -182,9 +190,6 @@
     }
     .center {
       height: 75dvh;
-    }
-    .about {
-      display: none;
     }
     .hide {
       display: none;

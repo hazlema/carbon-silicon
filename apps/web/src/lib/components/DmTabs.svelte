@@ -4,7 +4,7 @@
   import { live } from '$lib/live.svelte';
   import { portal } from '$lib/portal';
 
-  /** The conversations row under a chat header's own tabs (spec M2c §5): buttons marked aria-current.
+  /** The conversations inline with a chat header's own tabs (spec M2c §5, M2d §1): buttons marked aria-current.
    *  Renders nothing until a conversation is visible. `onpick(null)` means "back to where you were":
    *  the open tab closed. */
   let { active, onpick }: { active: string | null; onpick: (channel: string | null) => void } = $props();
@@ -118,11 +118,8 @@
 <style>
   .dmrow {
     display: flex;
+    flex: none;
     align-items: stretch;
-    min-width: 0;
-    padding: 0 0.75rem;
-    border-bottom: 1px solid var(--lattice);
-    overflow-x: auto;
   }
   .dm {
     display: inline-flex;

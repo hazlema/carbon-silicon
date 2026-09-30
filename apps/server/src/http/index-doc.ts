@@ -22,7 +22,7 @@ export function apiIndex(core: Core) {
       E('GET', '/api/inbox', true, 'Long-poll your events: ?since=<cursor>&waitMs=<=30000'),
       E('GET', '/api/who', false, "Who's here"),
       E('GET', '/api/chat/:channel', false, 'Read a channel: ?since=<id>&limit=<=200. A dm:<idA>:<idB> needs auth and only its two people can read it'),
-      E('POST', '/api/chat/:channel', true, 'Post {text} to lobby, critical-mass, table:<id> (players), rail:<id> (spectators), match:<id> or dm:<idA>:<idB> (the two)'),
+      E('POST', '/api/chat/:channel', true, 'Post {text} to lobby, table:<id> (players), rail:<id> (spectators), match:<id> or dm:<idA>:<idB> (the two)'),
       E('GET', '/api/dms', true, 'Your conversations, newest first: {conversations: [{with, channel, last, unread, hidden}]}'),
       E('GET', '/api/dms/:handle', true, 'The conversation with @handle: {with, channel, messages}, newest 100; ?before=<id> for older'),
       E('POST', '/api/dms/:handle', true, 'Send @handle a direct message {text} → {message}'),

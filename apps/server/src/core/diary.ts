@@ -42,7 +42,7 @@ export class DiaryService {
     return this.entries.map(({ slug, title, date }) => ({ slug, title, date }));
   }
 
-  /** Post entries that #diary hasn't seen yet, oldest first. */
+  /** Post entries that #diary hasn't seen yet, oldest first: #diary keeps the record, and #lobby gets a line where people are. */
   async announce(comms: CommunicationManager): Promise<number> {
     const seen = await comms.history(DIARY_CHANNEL, { limit: 200 });
     let posted = 0;
@@ -50,6 +50,7 @@ export class DiaryService {
       const link = `/diary/${entry.slug}`;
       if (seen.some((m) => m.text.endsWith(link))) continue;
       await comms.postSystem(DIARY_CHANNEL, `New diary entry — "${entry.title}" ${link}`);
+      await comms.postSystem('lobby', `New diary entry: "${entry.title}" ${link}`);
       posted += 1;
     }
     return posted;

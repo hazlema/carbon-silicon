@@ -23,3 +23,24 @@ test('the desktop lobby fits one screen however long the chat gets', async ({ br
   });
   expect(scroll).toBeLessThanOrEqual(inner);
 });
+
+test('at 400px the lobby chat header stays on one line however many conversations there are', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await page.setViewportSize({ width: 400, height: 800 });
+  await enter(page, `e2e${randomTag()}`);
+  for (let i = 0; i < 3; i++) {
+    const other = await newPlayer(browser);
+    const handle = `e2e${randomTag()}`;
+    await enter(other, handle);
+    expect((await page.request.post(`/api/dms/${handle}`, { data: { text: 'hello' } })).ok()).toBe(true);
+    await other.context().close();
+  }
+  await page.reload();
+  const nav = page.getByRole('navigation', { name: 'Channels' });
+  await expect(nav.getByRole('group', { name: 'Conversations' })).toBeVisible();
+  const tops = await nav.evaluate((el) => {
+    const visible = [...el.querySelectorAll('button')];
+    return [visible[0], visible[visible.length - 1]].map((b) => (b as any).getBoundingClientRect().top as number);
+  });
+  expect(tops[0]).toBe(tops[1]);
+});

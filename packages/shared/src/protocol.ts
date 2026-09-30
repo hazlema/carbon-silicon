@@ -405,7 +405,9 @@ export type WsServerMsg =
 
 /** Public chat channels. A table talks in `table:<id>` and its spectators in `rail:<id>`;
  *  `match:<id>` is an alias for the match's table channel. */
-export const PUBLIC_CHANNELS = ['lobby', 'critical-mass'] as const;
+export const PUBLIC_CHANNELS = ['lobby'] as const;
+/** Channels that once were public; their history stays, and reads and posts are refused with a pointer. */
+export const RETIRED_CHANNELS = ['critical-mass'] as const;
 export const DIARY_CHANNEL = 'diary';
 
 /** A season is a UTC calendar month, e.g. "2026-09". */

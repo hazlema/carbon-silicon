@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { randomTag } from './testing';
+import { enter, newPlayer, randomTag } from './testing';
 
 const handle = () => `e2e${randomTag()}`;
 
@@ -29,4 +29,13 @@ test('a taken handle explains itself', async ({ page, browser }) => {
   await other.getByLabel('Your handle').fill(me.toUpperCase());
   await other.getByRole('button', { name: 'Enter the parlor' }).click();
   await expect(other.getByRole('alert')).toContainText('taken');
+});
+
+test('the chat header is one line: #lobby and your conversations, no #critical-mass or #diary', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await enter(page, `one${randomTag()}`);
+  const nav = page.getByRole('navigation', { name: 'Channels' });
+  await expect(nav.getByRole('button', { name: /lobby/ })).toBeVisible();
+  await expect(nav.getByRole('button', { name: /critical-mass/ })).toHaveCount(0);
+  await expect(nav.getByRole('button', { name: /diary/ })).toHaveCount(0);
 });
