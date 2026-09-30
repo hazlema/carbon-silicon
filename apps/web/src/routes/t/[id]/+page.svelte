@@ -188,10 +188,14 @@
     return () => window.removeEventListener('keydown', onKey);
   });
   // The chat composer keeps focus after a send; when the match goes live and at each round's start the keys
-  // must steer, not move the text cursor.
+  // must steer, not move the text cursor. Keyed on primitives only: `match` and `ll` are new objects every
+  // frame, and an effect reading them would blur the composer ten times a second.
+  const matchStatus = $derived(match?.status);
+  const llRound = $derived(ll?.round);
+  const llPhase = $derived(ll?.phase);
   $effect(() => {
-    const go = steerable && match?.status === 'live' && (!ll || ll.phase === 'play');
-    void ll?.round;
+    const go = steerable && matchStatus === 'live' && llPhase === 'play';
+    void llRound;
     if (!go) return;
     untrack(() => {
       const el = document.activeElement;

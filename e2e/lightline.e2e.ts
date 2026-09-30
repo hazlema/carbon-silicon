@@ -120,6 +120,12 @@ test('a reply typed in the countdown does not keep the arrow keys from steering'
   await composer.press('Enter');
   const matchId = (await (await page.request.get(`/api/tables/${table.id}`)).json()).table.matchId;
   await expect.poll(async () => (await (await page.request.get(`/api/matches/${matchId}`)).json()).match.status).toBe('live');
+  // Mid-round, the chat still takes a whole line: typed across several frames, nothing is lost to a blur.
+  await composer.click();
+  await composer.pressSequentially('gg ez', { delay: 60 });
+  await expect(composer).toHaveValue('gg ez');
+  // Esc hands the keys back to the board.
+  await composer.press('Escape');
   await page.keyboard.press('ArrowUp');
   await expect.poll(async () => {
     const env = await (await page.request.get(`/api/matches/${matchId}`)).json();
