@@ -13,6 +13,7 @@
   import Board from '$lib/games/critical-mass/Board.svelte';
   import LightlineBoard from '$lib/games/lightline/Board.svelte';
   import { live } from '$lib/live.svelte';
+  import { pollMatch } from '$lib/match-poll';
   import { clock, colorOf, tableColors } from '$lib/seats';
 
   const REASONS: Record<string, string> = {
@@ -82,13 +83,20 @@
     if (untrack(() => env?.match.id) !== mid) env = null;
     focusedOver = false;
     const off = live.watchMatch(mid, accept);
+    const ctl = new AbortController();
     api<MatchEnvelope>('GET', `/api/matches/${mid}`)
-      .then((e) => alive && accept(e))
+      .then((e) => {
+        if (!alive) return;
+        accept(e);
+        // No socket for a guest: follow the match by long-poll instead, or the board would freeze.
+        if (!untrack(() => live.me)) void pollMatch(mid, e.match.revision, accept, (p) => api<MatchEnvelope>('GET', p), ctl.signal);
+      })
       .catch((e) => {
         if (alive && !(e instanceof ApiError && e.status === 404)) error = (e as Error).message;
       });
     return () => {
       alive = false;
+      ctl.abort();
       off();
     };
   });

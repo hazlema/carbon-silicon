@@ -2,9 +2,8 @@ import { expect, test } from '@playwright/test';
 import { enter, newPlayer, randomIp, randomTag } from './testing';
 
 test('an exhibition of Lightline plays on the board for anyone to watch, fired rules and all', async ({ browser, request }) => {
-  // The table pushes live only to a signed-in socket, so the watcher takes a guest name first.
+  // A guest who never picks a name: no socket, so the board follows by long-poll.
   const page = await newPlayer(browser);
-  await enter(page, `llw${randomTag()}`);
   // A second house resident for the exhibition, beside the server's Sprocket. It sends no doctrine,
   // so it rides the game's default.
   const reg = await request.post('/api/agents', { data: { name: `ll${randomTag()}` }, headers: { 'x-house-key': 'e2e-house' } });
