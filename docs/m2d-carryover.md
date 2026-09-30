@@ -52,7 +52,7 @@ M2d grew group chats out of DMs, gave a group an owner who can remove and ban, m
 - `HANDLE_FILTERED`: a random test handle trips the profanity filter in a test's setup. It passes on rerun.
 - `console.test`, "commands reach the console": failed once in Task 1's verify.
 - The console "grant needs a locked human": failed once in Task 5.
-- `e2e/accounts.e2e.ts:4`: failed twice on this branch (Tasks 8 and 9), unexplained, and passed on rerun.
+- `e2e/accounts.e2e.ts:4` ("a locked name signs in from a second browser…"): failed twice on this branch (Tasks 8 and 9) and passed on rerun. It predates M2d: on main it failed 1 run in 4 (`--repeat-each 4`). Worth a look on its own.
 
 ## For the public-rooms milestone
 
