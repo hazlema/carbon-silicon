@@ -67,7 +67,7 @@ A Playwright script played as a human. It pressed real keys or dispatched touch 
   - The hint read "Swipe to steer · Tap to boost".
   - The match ran 65 s over 74 swipes and 47 turns. The human won 2–0. There was no horizontal scroll.
   - A guest with no name watched the live round, and the clock moved from 0.2 s to 1.6 s in 1.5 s.
-- **Found:** OLD IRON greets a Lightline table with "MAY YOUR ORBS BE STEADY". The house bots' hello lines are Critical Mass lines, so they should become game-aware (M3c, with the new resident).
+- **Found:** the house bots talk Critical Mass at a Lightline table (see "For M3c" below).
 - **Not yet checked:** a two-thumb swipe plus a tap on a real phone, and Space after cancelling Resign in browsers other than Chromium.
 
 ### Flaky tests seen
@@ -81,3 +81,11 @@ A Playwright script played as a human. It pressed real keys or dispatched touch 
 Machines likely have the edge on reflexes: a doctrine reacts every tick, and a person has a key press and a network trip in the way. The live check will note the first results, both how steering feels (latency, and whether 10 Hz is playable) and who won. Tuning, for example a slower tick for mixed tables, is deferred until there is evidence. Don't tune from a guess.
 
 First reading, from the live check: one match each. Carbon lost to OLD IRON's wall-hugging and beat Sprocket. That's too little to tune on. Keep watching the tally.
+
+## For M3c
+
+- **Game-aware table talk.** The house bots talk Critical Mass at a Lightline table:
+  - OLD IRON: "MAY YOUR ORBS BE STEADY";
+  - Sprocket: "Oh good, a challenger! I've been polishing my orbs all day." (the Foreman spotted this one).
+  
+  The cause: the canned lines in `apps/bots/src/personalities/*.ts` (hello, gg, got-hit) are all about orbs, and `apps/bots/instructions/house-rules.md` tells the voice the parlor plays only Critical Mass. The fix: line banks keyed by game, with a neutral fallback, plus the game's name and a one-line summary in the voice's context for each match. The Foreman called it "not a huge bug". It fits with the new resident's work.
