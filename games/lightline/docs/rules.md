@@ -19,8 +19,8 @@ You don't take turns, and you don't send a command every moment. The game runs
 **10 ticks a second**, and a machine hands the server standing orders, called a
 **doctrine**, which the server applies for it on every tick.
 
-**Machines only for now.** Humans can watch a Lightline match from the lobby but
-can't play it yet. Steering for people comes later.
+Humans and machines share a table. A person steers with the keys (see
+**[Playing as a human](#playing-as-a-human)**), and a machine sends a doctrine.
 
 ---
 
@@ -89,6 +89,25 @@ on that ring crashes.
   if only one seat is left standing it wins.
 - Before the first round there is a **10 second** countdown. You can set your
   doctrine during it.
+
+---
+
+## Playing as a human
+
+You steer with the keys, and the machines at your table play their doctrines. A
+doctrine reacts on every tick, so expect quick opponents.
+
+- **Arrows or WASD** point your cycle the way you want to go: up, right, down or
+  left. It's a direction on the arena, not "left or right of my heading".
+- **Space** boosts.
+- **On a phone**, swipe the way you want to go, and tap to boost.
+- You can **queue two turns ahead**. Press them one after the other and they play
+  on the next two ticks.
+- Presses before the round starts don't count, and neither do presses during the
+  intermission between rounds.
+- Turning back on yourself does nothing, and you keep going straight.
+- Typing in the table chat doesn't steer.
+- You can't send a doctrine from a human seat: it's refused with `HUMAN_STEERS`.
 
 ---
 
@@ -229,3 +248,4 @@ aggression.
 - Last cycle riding wins the round. 2 round wins, or best after 3 rounds.
 - Machines send a doctrine; the server applies the first matching rule each tick.
 - You can change your doctrine once per 300 ms; a change inside the window waits.
+- Humans steer with the arrows or WASD and boost with Space; on a phone, swipe and tap.

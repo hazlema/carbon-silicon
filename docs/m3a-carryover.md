@@ -1,15 +1,14 @@
 # Carry-over from Milestone 3a ("Engine")
 
-This file records what M3a (the real-time runner, doctrine and Lightline) deferred, the rulings made while building it, and the open questions. Read it before planning M3b. M2c's list is in `docs/m2c-carryover.md`.
+This file records what M3a (the real-time runner, doctrine and Lightline) deferred, the rulings made while building it, and the open questions. M3b's list is in `docs/m3b-carryover.md`. M2c's is in `docs/m2c-carryover.md`.
 
 **The whole-branch review ran, and its findings were fixed in one wave before merge:** conditions refuse unknown and conflicting keys; shutdown wakes parked long-polls before stopping the server (and a second signal exits); a resign that ends a real-time round sends `match.round`; the table page names its game and explains `rounds` and `forfeit` verdicts; a human's Sit is off at a machines-only table; and API.md's real-time errors were corrected. The items below are what remains.
 
 The build ran subagent-driven: 8 tasks, each implemented and reviewed. The Foreman was away, so the calls below are rulings.
 
-## Deferred to M3b
+## Deferred to later
 
-- Human steering for real-time games. Lightline is `humans: false`, and every door (quickmatch, tables, invites, vs house) answers `MACHINES_ONLY`. M3b designs how a person steers, and lifts the flag.
-- The Foreman's group-DM idea, as a pointer for M3b planning: grow DMs with "add someone to this DM" for private pre-game talk, not a separate group chat. A DM channel is pair-shaped today (`dm:<idA>:<idB>`, sorted, exactly two), so this means a new channel shape, not a tweak.
+- The Foreman's group-DM idea, as a pointer for planning: grow DMs with "add someone to this DM" for private pre-game talk, not a separate group chat. A DM channel is pair-shaped today (`dm:<idA>:<idB>`, sorted, exactly two), so this means a new channel shape, not a tweak.
 
 ## Rulings made while building
 
@@ -21,14 +20,6 @@ The build ran subagent-driven: 8 tasks, each implemented and reviewed. The Forem
 - **One permission denial happened, in Task 6.** The Foreman approved committing as it was.
 
 ## Deferred findings
-
-### Worth doing soon
-
-- **Anonymous watchers see a frozen frame.** An anonymous visitor behind the name gate sees only the first frame of a table, because live pushes go only to signed-in sockets. This was already true for Critical Mass, but it is glaring for a real-time board. The e2e watches as a guest.
-- **A failing tick retries at 10 Hz forever** (Task 3); there is no abandon after N failures.
-- **`envelope()` calls `rt.senses` unguarded** (Task 3): a senses bug would make seated GETs return 500.
-- **Bot doctrine sends** (Task 6): a 5xx or network error in `playRealtime` escapes `playMatch`, a re-greet risk the turn loop guards against. A refused 4xx marks `sent` anyway, so the bot rides the default for that phase.
-- **After `close()`, timer-setting entry points aren't guarded** (Task 5: `createMatch`, `startTurn` via move, `finish`; `wait` now returns at once). Only reachable if requests race shutdown.
 
 ### Minor
 
@@ -54,7 +45,6 @@ The build ran subagent-driven: 8 tasks, each implemented and reviewed. The Forem
   - Pre-existing: `invites.test` "going afk leaves the queue" can flake when a random handle trips the profanity filter (`HANDLE_FILTERED`). The same happens, rarely, in `games.test`'s `setup`.
 - Task 6: no test drives the shrinking flip and re-send.
 - Task 7 (board):
-  - The Resign button shows for a Lightline seat holder (`iAmOut` is always false for Lightline); harmless while machines only.
   - The new `tables.test` test sits above the describe's setup consts, and `.stage.ll` CSS is ordered before `.stage`.
   - The e2e doesn't assert that Sprocket is free after the resign.
 
