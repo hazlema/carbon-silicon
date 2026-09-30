@@ -89,7 +89,7 @@
       .then((e) => {
         if (!alive) return;
         accept(e);
-        // No socket for a guest: follow the match by long-poll instead, or the board would freeze.
+        // No socket for a guest: follow the match by short-poll instead, or the board would freeze.
         if (!untrack(() => live.me)) void pollMatch(mid, e.match.revision, accept, (p) => api<MatchEnvelope>('GET', p), ctl.signal);
       })
       .catch((e) => {
@@ -161,6 +161,8 @@
   let pressedTimer: ReturnType<typeof setTimeout> | undefined;
   function steer(matchId: string, key: SteerKey) {
     live.steer(matchId, key);
+    // The server drops presses in the countdown and the intermission; the server decides, but don't light up.
+    if (countdown !== null || ll?.phase === 'intermission') return;
     pressed = key;
     clearTimeout(pressedTimer);
     pressedTimer = setTimeout(() => (pressed = null), 150);
@@ -169,14 +171,32 @@
     if (!steerable || !env) return;
     const id = env.match.id;
     const onKey = (e: KeyboardEvent) => {
+      // Esc leaves the composer, so steering resumes.
+      if (e.key === 'Escape' && typing(e.target)) {
+        (e.target as HTMLElement).blur();
+        return;
+      }
       if (typing(e.target)) return;
       const key = keyOf(e);
       if (!key) return;
       e.preventDefault(); // arrows and Space would scroll the page
+      // A focused button (Resign, Cancel) would take Space as a click.
+      if (document.activeElement instanceof HTMLButtonElement) document.activeElement.blur();
       steer(id, key);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  });
+  // The chat composer keeps focus after a send; when the match goes live and at each round's start the keys
+  // must steer, not move the text cursor.
+  $effect(() => {
+    const go = steerable && match?.status === 'live' && (!ll || ll.phase === 'play');
+    void ll?.round;
+    if (!go) return;
+    untrack(() => {
+      const el = document.activeElement;
+      if (typing(el)) (el as HTMLElement).blur();
+    });
   });
   const myTurn = $derived(!!match && match.status === 'live' && !!mySeat && match.toMove.includes(mySeat));
   const legalCells = $derived((env?.legal ?? []).map((l) => (l as { cell: string }).cell));
@@ -198,10 +218,13 @@
     if (match.status === 'over' || match.status === 'abandoned') return { lead: verdict || 'This match was abandoned.' };
     if (ll) {
       const human = !!mySeat && match.seats.find((s) => s.seat === mySeat)?.identity.kind === 'human';
-      return {
-        lead: `Round ${ll.round}`,
-        detail: ll.shrinking ? 'The arena is closing in.' : human ? 'You steer: arrows or WASD, Space to boost.' : 'Machines at work: each rides its own doctrine.',
-      };
+      const anyHuman = match.seats.some((s) => s.identity.kind === 'human');
+      const detail = ll.shrinking
+        ? 'The arena is closing in.'
+        : human && !iAmOut
+          ? coarse ? 'You steer: swipe, tap to boost.' : 'You steer: arrows or WASD, Space to boost.'
+          : anyHuman ? 'Humans steer; machines ride their doctrine.' : 'Machines at work: each rides its own doctrine.';
+      return { lead: `Round ${ll.round}`, detail };
     }
     if (myTurn) return { lead: 'Your move.', detail: 'Place an orb on an empty cell or one of yours.' };
     return { lead: `Waiting for ${handleOf(match.toMove[0] ?? '')}…` };

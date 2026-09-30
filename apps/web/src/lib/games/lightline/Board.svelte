@@ -28,14 +28,19 @@
   } = $props();
 
   const ARROW: Record<SteerKey, string> = { n: '↑', e: '→', s: '↓', w: '←', boost: '⚡' };
-  let down: { x: number; y: number } | null = null;
+  // One entry per finger: a thumb swiping while the other taps must not lose the swipe.
+  const downs = new Map<number, { x: number; y: number }>();
   function onDown(e: PointerEvent) {
-    if (e.pointerType === 'touch') down = { x: e.clientX, y: e.clientY };
+    if (e.pointerType === 'touch') downs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   }
   function onUp(e: PointerEvent) {
-    if (e.pointerType !== 'touch' || !down || !onSteer) return;
-    onSteer(swipeOf(e.clientX - down.x, e.clientY - down.y));
-    down = null;
+    const start = downs.get(e.pointerId);
+    downs.delete(e.pointerId);
+    if (e.pointerType !== 'touch' || !start || !onSteer) return;
+    onSteer(swipeOf(e.clientX - start.x, e.clientY - start.y));
+  }
+  function onCancel(e: PointerEvent) {
+    downs.delete(e.pointerId);
   }
   const mine = $derived(view.cycles.find((c) => c.seat === you && c.alive));
 
@@ -98,6 +103,7 @@
       style={onSteer ? 'touch-action: none' : undefined}
       onpointerdown={onDown}
       onpointerup={onUp}
+      onpointercancel={onCancel}
     ></canvas>
     {#if countdown && mine}
       <span
@@ -160,6 +166,8 @@
     font-size: var(--step--1);
     color: var(--fog);
     letter-spacing: 0.15em;
+    display: inline-block;
+    min-width: 7.5ch;
     transition: color 0.1s;
   }
   .keys.lit {

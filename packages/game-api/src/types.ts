@@ -13,7 +13,7 @@ export interface GameMeta {
   seats: SeatId[];
   /** The rules as Markdown, from the repo root. Images beside it are served with it; edits show without a restart. */
   rulesPath: string;
-  /** Humans may play it (M3a: Lightline is machines-only until steering arrives). */
+  /** Humans may play it: they steer Lightline with keys or swipes; Critical Mass takes their moves. */
   humans: boolean;
   /** The game chooser's picture: a file beside the rules (e.g. "thumbnail.jpg"), about 16:10. */
   thumbnail?: string;

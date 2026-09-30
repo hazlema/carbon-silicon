@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { enter, newPlayer, randomIp, randomTag } from './testing';
 
 test('an exhibition of Lightline plays on the board for anyone to watch, fired rules and all', async ({ browser, request }) => {
-  // A guest who never picks a name: no socket, so the board follows by long-poll.
+  // A guest who never picks a name: no socket, so the board follows by short-poll.
   const page = await newPlayer(browser);
   // A second house resident for the exhibition, beside the server's Sprocket. It sends no doctrine,
   // so it rides the game's default.
@@ -107,6 +107,27 @@ test('a human hosts Lightline against Sprocket, steers with the keys, and resign
   await expect(page.getByRole('dialog').getByText('By forfeit: everyone else resigned.')).toBeVisible();
 });
 
+test('a reply typed in the countdown does not keep the arrow keys from steering', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await enter(page, `llc${randomTag()}`);
+  const { table } = await (await page.request.post('/api/vs-house', { data: { gameId: 'lightline' } })).json();
+  await expect.poll(async () => (await (await page.request.get(`/api/tables/${table.id}`)).json()).table.seated.length, { timeout: 10_000 }).toBe(2);
+  await page.goto(`/t/${table.id}`);
+  // The table chat appears with the match: reply during the countdown, so focus stays in the composer.
+  expect((await page.request.post(`/api/tables/${table.id}/start`)).status()).toBe(200);
+  const composer = page.getByPlaceholder('Talk trash, play fair');
+  await composer.fill('Talk trash, play fair');
+  await composer.press('Enter');
+  const matchId = (await (await page.request.get(`/api/tables/${table.id}`)).json()).table.matchId;
+  await expect.poll(async () => (await (await page.request.get(`/api/matches/${matchId}`)).json()).match.status).toBe('live');
+  await page.keyboard.press('ArrowUp');
+  await expect.poll(async () => {
+    const env = await (await page.request.get(`/api/matches/${matchId}`)).json();
+    return env.view.cycles.find((c: { seat: string }) => c.seat === env.you).heading;
+  }, { timeout: 2000 }).toBe('n');
+  await page.request.post(`/api/matches/${matchId}/resign`);
+});
+
 test('at 400 px a swipe on the arena turns the cycle', async ({ browser }) => {
   const page = await newPlayer(browser);
   await page.setViewportSize({ width: 400, height: 860 });
@@ -119,8 +140,19 @@ test('at 400 px a swipe on the arena turns the cycle', async ({ browser }) => {
   await expect.poll(async () => (await (await page.request.get(`/api/matches/${matchId}`)).json()).match.status).toBe('live');
   const box = (await page.locator('.arena canvas').boundingBox())!;
   const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  await page.locator('.arena canvas').dispatchEvent('pointerdown', { pointerType: 'touch', clientX: at.x, clientY: at.y, isPrimary: true });
-  await page.locator('.arena canvas').dispatchEvent('pointerup', { pointerType: 'touch', clientX: at.x, clientY: at.y + 60, isPrimary: true });
+  const mine = async () => {
+    const env = await (await page.request.get(`/api/matches/${matchId}`)).json();
+    return env.view.cycles.find((c: { seat: string }) => c.seat === env.you);
+  };
+  const boosts0 = (await mine()).boosts;
+  // Two thumbs: finger A swipes down while finger B taps for a boost, interleaved.
+  const canvas = page.locator('.arena canvas');
+  const touch = (type: string, id: number, x: number, y: number) => canvas.dispatchEvent(type, { pointerType: 'touch', pointerId: id, clientX: x, clientY: y, isPrimary: id === 1 });
+  await touch('pointerdown', 1, at.x, at.y);
+  await touch('pointerdown', 2, at.x + 40, at.y);
+  await touch('pointerup', 2, at.x + 41, at.y);
+  await touch('pointerup', 1, at.x, at.y + 60);
+  await expect.poll(async () => (await mine()).boosts, { timeout: 2000 }).toBeLessThan(boosts0);
   await expect.poll(async () => {
     const env = await (await page.request.get(`/api/matches/${matchId}`)).json();
     return env.view.cycles.find((c: { seat: string }) => c.seat === env.you).heading;
