@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gt, isNull, max, ne } from 'drizzle-orm';
+import { and, asc, count, eq, gt, inArray, isNull, max, ne, notInArray, or } from 'drizzle-orm';
 import { containsProfanity, containsSlur } from '@cs/shared/filter';
 import { groupChannel, type ChatMessage, type GroupInfo, type IdentityPublic } from '@cs/shared/protocol';
 import type { DB } from '../db';
@@ -63,9 +63,34 @@ export class GroupManager {
     return { after: member.firstMessageId, hidden: await this.deps.relations.mutedBy(viewer.id) };
   }
 
-  /** CommunicationManager hook, after a line is stored: who should see it now (for now, every member). */
-  async stored(_message: ChatMessage, groupId: string): Promise<string[]> {
-    return this.memberIds(groupId);
+  /**
+   * CommunicationManager hook, after a line is stored: records it and returns who should see it now.
+   * A person's line is read by its author and reopens the tab for everyone who doesn't ignore the author;
+   * a system line reaches every member and changes nothing.
+   */
+  async stored(message: ChatMessage, groupId: string): Promise<string[]> {
+    const ids = await this.memberIds(groupId);
+    const author = message.author;
+    if (!author) return ids;
+    const others: string[] = [];
+    for (const id of ids) if (id !== author.id && !(await this.deps.relations.mutes(id, author.id))) others.push(id);
+    const here = (who: string[]) => and(eq(groupMembers.groupId, groupId), inArray(groupMembers.identityId, who));
+    if (ids.includes(author.id)) {
+      await this.db.update(groupMembers).set({ lastReadId: message.id, hidden: false }).where(here([author.id]));
+    }
+    if (others.length > 0) await this.db.update(groupMembers).set({ hidden: false }).where(here(others));
+    return ids.includes(author.id) ? [author.id, ...others] : others;
+  }
+
+  /** Where `identityId`'s view of a live group begins (the id of the last line before they joined), or null if they aren't in it. */
+  async visibleFrom(identityId: string, groupId: string): Promise<number | null> {
+    const [row] = await this.db
+      .select({ first: groupMembers.firstMessageId })
+      .from(groupMembers)
+      .innerJoin(chatGroups, eq(groupMembers.groupId, chatGroups.id))
+      .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.identityId, identityId), isNull(chatGroups.endedAt)))
+      .limit(1);
+    return row ? row.first : null;
   }
 
   async create(me: IdentityPublic, withHandles: unknown): Promise<GroupInfo> {
@@ -279,14 +304,8 @@ export class GroupManager {
           .where(eq(groupBans.groupId, group.id))
           .orderBy(asc(groupBans.bannedAt))
       : [];
-    const seen = gt(messages.id, member.firstMessageId);
-    const [lastRow] = await this.db
-      .select({ m: messages, i: identities })
-      .from(messages)
-      .leftJoin(identities, eq(messages.authorId, identities.id))
-      .where(and(eq(messages.channel, channel), seen))
-      .orderBy(desc(messages.id))
-      .limit(1);
+    const last = (await this.deps.comms.history(channel, { viewer: me, limit: 1 }))[0] ?? null;
+    const { hidden } = await this.view(me, group.id);
     const [{ n }] = await this.db
       .select({ n: count() })
       .from(messages)
@@ -296,19 +315,9 @@ export class GroupManager {
           gt(messages.id, Math.max(member.firstMessageId, member.lastReadId)),
           eq(messages.system, false),
           ne(messages.authorId, me.id),
+          hidden.length > 0 ? or(isNull(messages.authorId), notInArray(messages.authorId, hidden)) : undefined,
         ),
       );
-    const last: ChatMessage | null = lastRow
-      ? {
-          id: lastRow.m.id,
-          channel,
-          author: lastRow.i ? toPublic(lastRow.i) : null,
-          text: lastRow.m.deletedAt ? '' : lastRow.m.text,
-          createdAt: lastRow.m.createdAt.toISOString(),
-          system: lastRow.m.system,
-          removed: lastRow.m.deletedAt ? { by: lastRow.m.deletedBy ?? 'a moderator' } : null,
-        }
-      : null;
     return {
       id: group.id,
       channel,

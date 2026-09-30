@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
-import { dmParticipants } from '@cs/shared/protocol';
+import { dmParticipants, groupOf } from '@cs/shared/protocol';
 import type {
   ChatMessage,
   IdentityPublic,
@@ -46,6 +46,7 @@ export interface ReportDeps {
   comms: CommunicationManager;
   moderation: ModerationManager;
   guard: Guard;
+  groups: { visibleFrom(identityId: string, groupId: string): Promise<number | null> };
 }
 
 export class ReportManager {
@@ -66,10 +67,18 @@ export class ReportManager {
     // A DM line exists only for its two people; a guessed id must not pull it into the mod queue.
     const pair = dmParticipants(message.channel);
     if (pair && !pair.includes(reporter.id)) throw notFound('NO_MESSAGE', 'There is no such message.');
+    // Likewise a group line: only a current member who could see it (it came after they joined) may report it.
+    const groupId = groupOf(message.channel);
+    let seenFrom = 0;
+    if (groupId) {
+      const from = await this.deps.groups.visibleFrom(reporter.id, groupId);
+      if (from === null || message.id <= from) throw notFound('NO_MESSAGE', 'There is no such message.');
+      seenFrom = from;
+    }
     if (message.system || !message.author) throw badRequest('CANT_REPORT', 'System messages cannot be reported.');
     if (message.author.id === reporter.id) throw badRequest('CANT_REPORT', "You can't report your own message.");
     if (message.removed) throw badRequest('CANT_REPORT', 'That message has already been removed.');
-    const context = (await this.deps.comms.around(messageId, CONTEXT_SPAN)).filter((m) => m.id !== messageId).map(snap);
+    const context = (await this.deps.comms.around(messageId, CONTEXT_SPAN)).filter((m) => m.id !== messageId && m.id > seenFrom).map(snap);
     const stored: Stored = { message: snap(message), context };
     const id = newId('r');
     try {

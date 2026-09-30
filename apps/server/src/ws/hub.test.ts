@@ -169,3 +169,18 @@ test('steer from a fresh socket reaches the match with no subscription first', a
     core.games.steer = original;
   }
 });
+
+test('group lines go to members\' sockets only; subscribing to a grp: channel is refused', async () => {
+  const ann = (await core.identities.createHuman(`ga${randomTag()}`, { label: 'test', ip: null })).identity;
+  const ben = (await core.identities.createHuman(`gb${randomTag()}`, { label: 'test', ip: null })).identity;
+  const eve = (await core.identities.createHuman(`ge${randomTag()}`, { label: 'test', ip: null })).identity;
+  const [wa, wb, we] = [socket(ann), socket(ben), socket(eve)];
+  for (const w of [wa, wb, we]) hub.handlers.open(w);
+  const g = await core.groups.create(ann, [ben.handle]);
+  hub.handlers.message(we, JSON.stringify({ type: 'subscribe', channel: g.channel }));
+  expect(we.data.channels.has(g.channel)).toBe(false);
+  clock.advance(2100);
+  await core.comms.post(ann, g.channel, 'members only');
+  await waitFor(() => wb.sent.some((m) => m.type === 'chat' && m.message.text === 'members only'));
+  expect(we.sent.some((m) => m.type === 'chat' && m.message.channel === g.channel)).toBe(false);
+});

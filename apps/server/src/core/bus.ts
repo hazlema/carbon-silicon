@@ -6,6 +6,8 @@ export interface BusEvents {
   'chat.removed': { channel: string; id: number; by: string };
   /** A direct message, for the sockets of `to` only (never channel subscribers). */
   'dm.message': { message: ChatMessage; to: string[] };
+  /** A group line (or system line), for the sockets of `to` only (never channel subscribers). */
+  'group.message': { message: ChatMessage; to: string[] };
   inbox: { identityId: string; event: InboxEvent };
   'match.updated': { matchId: string; revision: number };
   'match.finished': { matchId: string; tableId: string | null };

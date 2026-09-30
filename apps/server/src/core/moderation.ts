@@ -334,8 +334,8 @@ export class ModerationManager {
       throw badRequest('BAD_MESSAGE', 'Send the id of a message.');
     }
     const message = await this.deps.comms.message(messageId);
-    if (!message || message.system || (message.channel.startsWith('dm:') && !(await this.reported(messageId)))) {
-      // A DM is private: staff reach one of its lines only through a report on it.
+    if (!message || message.system || ((message.channel.startsWith('dm:') || message.channel.startsWith('grp:')) && !(await this.reported(messageId)))) {
+      // A DM or group is private: staff reach one of its lines only through a report on it.
       throw notFound('NO_MESSAGE', 'There is no such message.');
     }
     this.authorize(actor, { action: 'delete-message' }, message.author);

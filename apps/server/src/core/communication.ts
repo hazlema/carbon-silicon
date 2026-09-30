@@ -163,6 +163,7 @@ export class CommunicationManager {
       if (!pair.includes(author.id)) throw forbidden('NOT_YOURS', 'That conversation is between two other people.');
       await this.dmHooks.check(author, pair[0] === author.id ? pair[1] : pair[0]);
     }
+    if (kind === 'group') await this.groupHooks.check(author, groupOf(channel)!);
     if (kind === 'diary' && author.role !== 'admin') throw forbidden('READ_ONLY', "#diary is the Proprietor's channel.");
     if (kind === 'table' || kind === 'match') {
       const id = channel.slice(channel.indexOf(':') + 1);
@@ -196,6 +197,14 @@ export class CommunicationManager {
       .values({ channel, authorId: author?.id ?? null, text, system, createdAt: new Date(this.clock.now()) })
       .returning();
     const message: ChatMessage = { id: row.id, channel, author, text, createdAt: row.createdAt.toISOString(), system, removed: null };
+    const groupId = groupOf(channel);
+    if (groupId) {
+      // A group line never reaches channel listeners or mention inboxes: members only, as the hooks decide.
+      const to = await this.groupHooks.stored(message, groupId);
+      this.bus.emit('group.message', { message, to });
+      for (const id of to) if (id !== author?.id) this.deliver(id, { type: 'chat.group', message });
+      return message;
+    }
     const pair = dmParticipants(channel);
     if (pair && author) {
       // A DM never reaches channel listeners or mention inboxes: only the two, and only those the hooks allow.

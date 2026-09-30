@@ -2,7 +2,7 @@ import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { fileURLToPath } from 'node:url';
-import { groupChannel } from '@cs/shared/protocol';
+import { dmChannel, groupChannel, type IdentityPublic } from '@cs/shared/protocol';
 import { groupBans } from '../db/schema';
 import { FakeClock } from '../lib/clock';
 import type { AppError } from '../lib/errors';
@@ -33,6 +33,16 @@ async function messageOf(p: Promise<unknown>): Promise<string> {
     return (e as AppError).message;
   }
   throw new Error('expected a rejection');
+}
+
+/** A line in a group, past the two-second flood limit. */
+async function say(who: IdentityPublic, groupId: string, text: string) {
+  clock.advance(2100);
+  return core.comms.post(who, groupChannel(groupId), text);
+}
+async function staff(role: 'mod' | 'admin'): Promise<IdentityPublic> {
+  const base = (await core.accounts.lock(await person(role), 'correct horse battery')).identity;
+  return core.identities.setRole(base.id, role);
 }
 
 describe('groups', () => {
@@ -183,5 +193,117 @@ describe('groups', () => {
     expect(page.some((m) => m.text === 'visible two')).toBe(true);
     expect((await core.comms.history(g.channel, { viewer: ann, limit: 50 })).some((m) => m.text.startsWith('noise'))).toBe(false);
     expect((await core.comms.history(g.channel, { viewer: cal, limit: 50 })).some((m) => m.text.startsWith('noise'))).toBe(true);
+  });
+});
+
+describe('talking in a group', () => {
+  test('an added person sees only what came after they joined: history, last, unread', async () => {
+    const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
+    const g = await core.groups.create(ann, [ben.handle]);
+    await say(ann, g.id, 'before cal');
+    await core.groups.add(ann, g.id, cal.handle);
+    const after = await say(ben, g.id, 'after cal');
+    const seen = await core.comms.history(g.channel, { viewer: cal, limit: 50 });
+    expect(seen.map((m) => m.text)).not.toContain('before cal');
+    expect(seen.map((m) => m.text)).toContain('after cal');
+    const mine = await core.groups.get(cal, g.id);
+    expect(mine.last?.id).toBe(after.id);
+    expect(mine.unread).toBe(1); // "after cal" only; the system line doesn't count
+  });
+
+  test('a DM that grows into a group stays private: the group starts empty for everyone', async () => {
+    const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
+    clock.advance(2100);
+    await core.dms.send(ann, ben.handle, 'just us');
+    const g = await core.groups.create(ann, [ben.handle, cal.handle]);
+    const seen = await core.comms.history(g.channel, { viewer: cal, limit: 50 });
+    expect(seen.every((m) => m.system)).toBe(true);
+    expect(await codeOf(core.comms.history(dmChannel(ann.id, ben.id), { viewer: cal }))).toBe('NOT_YOURS');
+  });
+
+  test('non-members cannot read or post; a removed person stops receiving at once', async () => {
+    const [ann, ben, cal, eve] = [await person('ann'), await person('ben'), await person('cal'), await person('eve')];
+    const g = await core.groups.create(ann, [ben.handle, cal.handle]);
+    expect(await codeOf(core.comms.history(g.channel, { viewer: eve }))).toBe('NOT_MEMBER');
+    expect(await codeOf(core.comms.history(g.channel))).toBe('NOT_MEMBER');
+    expect(await codeOf(say(eve, g.id, 'hi'))).toBe('NOT_MEMBER');
+    const pushed: string[][] = [];
+    const off = core.bus.on('group.message', ({ to }) => void pushed.push(to));
+    await core.groups.remove(ann, g.id, cal.handle);
+    await say(ben, g.id, 'cal is gone');
+    off();
+    expect(pushed.at(-1)).not.toContain(cal.id);
+    expect(await codeOf(say(cal, g.id, 'let me back'))).toBe('NOT_MEMBER');
+    const calEvents = (await core.comms.poll(cal.id, 0, 0)).events;
+    expect(calEvents.some((e) => e.type === 'chat.group' && e.message.text === 'cal is gone')).toBe(false);
+    expect(calEvents.some((e) => e.type === 'group.gone' && e.groupId === g.id && e.reason === 'removed')).toBe(true);
+  });
+
+  test('lines reach members as chat.group; the author and those who ignore the author are left out', async () => {
+    const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
+    const g = await core.groups.create(ann, [ben.handle, cal.handle]);
+    await core.relations.set(cal, ann.handle, 'ignore'); // cal ignores ann
+    const line = await say(ann, g.id, 'hello all');
+    const got = async (who: IdentityPublic) => (await core.comms.poll(who.id, 0, 0)).events.some((e) => e.type === 'chat.group' && e.message.id === line.id);
+    expect(await got(ben)).toBe(true);
+    expect(await got(ann)).toBe(false);
+    expect(await got(cal)).toBe(false);
+    expect((await core.comms.history(g.channel, { viewer: cal, limit: 50 })).some((m) => m.id === line.id)).toBe(false);
+    expect((await core.groups.get(cal, g.id)).unread).toBe(0);
+  });
+
+  test('system lines reach members but raise no unread; a line reopens a closed tab', async () => {
+    const [ann, ben] = [await person('ann'), await person('ben')];
+    const g = await core.groups.create(ann, [ben.handle]);
+    await core.groups.read(ben, g.id);
+    await core.groups.close(ben, g.id);
+    await core.groups.rename(ann, g.id, 'crew');
+    expect(await core.groups.get(ben, g.id)).toMatchObject({ unread: 0, hidden: true });
+    await say(ann, g.id, 'back?');
+    expect(await core.groups.get(ben, g.id)).toMatchObject({ unread: 1, hidden: false });
+  });
+
+  test('a mention in a group reaches no one outside it', async () => {
+    const [ann, ben, out] = [await person('ann'), await person('ben'), await person('out')];
+    const g = await core.groups.create(ann, [ben.handle]);
+    await say(ann, g.id, `hey @${out.handle}`);
+    expect((await core.comms.poll(out.id, 0, 0)).events.some((e) => e.type === 'chat.mention')).toBe(false);
+  });
+});
+
+describe('reports and moderation in a group', () => {
+  test('a non-member cannot report a guessed group line, nor a line from before they joined', async () => {
+    const [ann, ben, cal, eve] = [await person('ann'), await person('ben'), await person('cal'), await person('eve')];
+    const g = await core.groups.create(ann, [ben.handle]);
+    const early = await say(ann, g.id, 'before cal');
+    await core.groups.add(ann, g.id, cal.handle);
+    const late = await say(ann, g.id, 'after cal');
+    expect(await codeOf(core.reports.create(eve, late.id, null))).toBe('NO_MESSAGE');
+    expect(await codeOf(core.reports.create(cal, early.id, null))).toBe('NO_MESSAGE');
+    await core.groups.remove(ann, g.id, cal.handle);
+    expect(await codeOf(core.reports.create(cal, late.id, null))).toBe('NO_MESSAGE');
+  });
+
+  test("a member's report works, and its context holds nothing from before they joined", async () => {
+    const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
+    const g = await core.groups.create(ann, [ben.handle]);
+    await say(ann, g.id, 'secret before cal');
+    await core.groups.add(ann, g.id, cal.handle);
+    const bad = await say(ann, g.id, 'rude line');
+    const report = await core.reports.create(cal, bad.id, 'rude');
+    expect(report.snapshot.text).toBe('rude line');
+    expect(report.context.some((m) => m.text === 'secret before cal')).toBe(false);
+    expect(report.context.length).toBeGreaterThan(0);
+  });
+
+  test('a mod cannot delete an unreported group line, and can delete a reported one', async () => {
+    const [ann, ben] = [await person('ann'), await person('ben')];
+    const mod = await staff('mod');
+    const g = await core.groups.create(ann, [ben.handle]);
+    const line = await say(ann, g.id, 'private talk');
+    expect(await codeOf(core.moderation.deleteMessage({ kind: 'identity', identity: mod }, line.id, 'poking'))).toBe('NO_MESSAGE');
+    await core.reports.create(ben, line.id, 'bad');
+    const removed = await core.moderation.deleteMessage({ kind: 'identity', identity: mod }, line.id, 'reported');
+    expect(removed.removed).not.toBeNull();
   });
 });

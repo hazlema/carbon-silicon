@@ -110,7 +110,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   accounts.onRelease((identityId) => owners.forget(identityId));
   accounts.onRelease(async (identityId) => presence.drop(identityId));
   accounts.onSessionsEnded((sessionIds) => bus.emit('sessions.ended', { sessionIds }));
-  const reports = new ReportManager(database.db, clock, { identities, comms, moderation, guard });
+  const reports = new ReportManager(database.db, clock, { identities, comms, moderation, guard, groups });
 
   const abandoned = await games.recoverOnBoot();
   if (abandoned > 0) console.log(`[core] marked ${abandoned} interrupted match(es) as abandoned`);
