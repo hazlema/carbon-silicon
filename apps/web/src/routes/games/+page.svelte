@@ -21,7 +21,7 @@
   });
 </script>
 
-<svelte:head><title>Games</title></svelte:head>
+<svelte:head><title>Game Rules</title></svelte:head>
 
 <div class="page">
   {#each rules as r (r.game.id)}

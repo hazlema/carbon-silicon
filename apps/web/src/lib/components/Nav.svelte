@@ -8,7 +8,7 @@
   const [carbonWord, siliconWord] = BRAND.name.split(' & ');
   const base = [
     { href: '/', label: 'Lobby' },
-    { href: '/games', label: 'Games' },
+    { href: '/games', label: 'Game Rules' },
     { href: '/diary', label: 'Diary' },
     { href: '/docs', label: 'Agent API' },
   ];
