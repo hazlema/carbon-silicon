@@ -382,6 +382,40 @@ describe('host a table with everyone', () => {
     expect(r.skipped).toEqual([{ handle: cal.handle, reason: 'away' }]);
   });
 
+  test('a member seated at another table is skipped as unavailable', async () => {
+    const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
+    for (const p of [ann, ben, cal]) core.presence.humanConnected(p);
+    await core.tables.host(cal, 'critical-mass'); // cal is seated at her own table
+    const g = await core.groups.create(ann, [ben.handle, cal.handle]);
+    const r = await core.groups.host(ann, g.id, 'critical-mass');
+    expect(r.table.invites.map((i) => i.to.id)).toEqual([ben.id]);
+    expect(r.skipped).toEqual([{ handle: cal.handle, reason: 'unavailable' }]);
+  });
+
+  test('a block either way makes a member unavailable', async () => {
+    const [ann, ben, cal, dee] = [await person('ann'), await person('ben'), await person('cal'), await person('dee')];
+    for (const p of [ann, ben, cal, dee]) core.presence.humanConnected(p);
+    const g = await core.groups.create(ann, [ben.handle, cal.handle, dee.handle]);
+    await core.relations.set(cal, ann.handle, 'block'); // cal blocks ann
+    await core.relations.set(ann, dee.handle, 'block'); // ann blocks dee
+    const r = await core.groups.host(ann, g.id, 'critical-mass');
+    expect(r.table.invites.map((i) => i.to.id)).toEqual([ben.id]);
+    expect(r.skipped).toEqual([
+      { handle: cal.handle, reason: 'unavailable' },
+      { handle: dee.handle, reason: 'unavailable' },
+    ]);
+  });
+
+  test('a member in a match is skipped as playing', async () => {
+    const [ann, ben, cal, dee] = [await person('ann'), await person('ben'), await person('cal'), await person('dee')];
+    for (const p of [ann, ben, cal, dee]) core.presence.humanConnected(p);
+    await core.tables.startNow('critical-mass', [cal, dee]);
+    const g = await core.groups.create(ann, [ben.handle, cal.handle]);
+    const r = await core.groups.host(ann, g.id, 'critical-mass');
+    expect(r.table.invites.map((i) => i.to.id)).toEqual([ben.id]);
+    expect(r.skipped).toEqual([{ handle: cal.handle, reason: 'playing' }]);
+  });
+
   test('too many for the game is refused with the seat count', async () => {
     const people = [];
     for (let i = 0; i < 5; i++) people.push(await person('big'));

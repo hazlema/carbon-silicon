@@ -249,7 +249,7 @@ export class TableManager {
       let reason: 'away' | 'playing' | 'unavailable' | null = null;
       if (this.deps.games.activeMatchOf(who.id)) reason = 'playing';
       else if (!this.deps.presence.isReady(who.id)) reason = 'away';
-      else if (!this.available(who) || (this.declined.get(`${identity.id}:${who.id}`) ?? 0) > now) reason = 'unavailable';
+      else if (this.atTable(who.id) || !this.available(who) || (this.declined.get(`${identity.id}:${who.id}`) ?? 0) > now) reason = 'unavailable';
       else if ((await this.deps.relations.blocks(who.id, identity.id)) || (await this.deps.relations.blocks(identity.id, who.id))) reason = 'unavailable';
       else {
         try {
