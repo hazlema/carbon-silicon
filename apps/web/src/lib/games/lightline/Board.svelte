@@ -8,7 +8,7 @@
     colors,
     seats,
     fired,
-  }: { view: LLView; colors: TableColors; seats: SeatInfo[]; fired: Record<string, FiredRule | null> } = $props();
+  }: { view: LLView; colors: TableColors; seats: SeatInfo[]; fired: Record<string, FiredRule | 'steering' | null> } = $props();
 
   const SEAT_OF: Record<string, string> = { R: 'red', B: 'blue', G: 'green', Y: 'gold' };
   const CELL = 10;
@@ -64,7 +64,7 @@
         <span class="who">@{handleOf(cy.seat)}</span>
         <span class="score" aria-label="{view.score[cy.seat] ?? 0} rounds won">{view.score[cy.seat] ?? 0}</span>
         <span class="boosts" aria-label="{cy.boosts} boosts left">{'▮'.repeat(cy.boosts)}</span>
-        <span class="rule">{cy.alive ? (rule ? (rule.label ?? `rule ${rule.index + 1}`) : 'default') : 'crashed'}</span>
+        <span class="rule">{cy.alive ? (rule === 'steering' ? 'steering' : rule ? (rule.label ?? `rule ${rule.index + 1}`) : 'default') : 'crashed'}</span>
       </li>
     {/each}
   </ol>

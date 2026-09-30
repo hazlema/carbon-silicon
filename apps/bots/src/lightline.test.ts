@@ -37,7 +37,7 @@ test('an exhibition: both residents send their own doctrine, ride it, and finish
   const end = Date.now() + 90_000;
   while (core.games.summary(m.id).status !== 'over') {
     if (Date.now() > end) throw new Error('the match never ended');
-    for (const f of Object.values(core.games.envelope(m.id, null).realtime?.fired ?? {})) if (f?.label) seen.add(f.label);
+    for (const f of Object.values(core.games.envelope(m.id, null).realtime?.fired ?? {})) if (typeof f === 'object' && f?.label) seen.add(f.label);
     await Bun.sleep(10);
   }
   expect(seen.has('ride') || seen.has('veer-left') || seen.has('veer-right') || seen.has('boost-away')).toBe(true);

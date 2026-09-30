@@ -170,6 +170,9 @@ export class WsHub {
         case 'unwatchTable':
           if (ws.data.tables.delete(msg.tableId)) this.recount(msg.tableId);
           break;
+        case 'steer':
+          if (typeof msg.matchId === 'string' && typeof msg.key === 'string') this.core.games.steer(ws.data.identity.id, msg.matchId, msg.key);
+          break;
         case 'ping':
           send(ws, { type: 'pong' });
           break;

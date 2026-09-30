@@ -35,7 +35,7 @@ export class DoctrineDesk {
   live = false;
   /** The next tick to run (so, the ticks run so far). */
   tick = 0;
-  readonly fired: Record<SeatId, FiredRule | null> = {};
+  readonly fired: Record<SeatId, FiredRule | 'steering' | null> = {};
   private current = new Map<SeatId, Doctrine>();
   private pending = new Map<SeatId, Doctrine>();
   private changedAt = new Map<SeatId, number>();

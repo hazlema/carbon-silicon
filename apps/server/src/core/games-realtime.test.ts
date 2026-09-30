@@ -280,3 +280,75 @@ describe('the real-time runner', () => {
     expect(ctx.games.activeMatchOf(ctx.a.id)).toBeNull();
   });
 });
+
+describe('humans steer', () => {
+  const open: GameModule<any> = { ...lightlineGame, meta: { ...lightlineGame.meta, humans: true } };
+  const headingOf = (ctx: Ctx, id: string, seat: string) =>
+    (ctx.games.envelope(id, null).view as LLView).cycles.find((c) => c.seat === seat)!.heading;
+
+  test("a seated human's key turns the cycle on the next tick; no key rides straight; fired says steering", async () => {
+    const ctx = await setup({}, open);
+    const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
+    ctx.clock.advance(10_000);
+    expect(headingOf(ctx, m.id, 'red')).toBe('e');
+    ctx.clock.advance(100);
+    expect(headingOf(ctx, m.id, 'red')).toBe('e');
+    expect(ctx.games.steer(ctx.human.id, m.id, 'n')).toBe(true);
+    ctx.clock.advance(100);
+    expect(headingOf(ctx, m.id, 'red')).toBe('n');
+    const env = ctx.games.envelope(m.id, ctx.human.id);
+    expect(env.realtime!.fired.red).toBe('steering');
+    expect(env.realtime!.fired.blue).not.toBe('steering');
+  });
+
+  test('a reversal rides straight and the turn queued behind it still lands', async () => {
+    const ctx = await setup({}, open);
+    const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
+    ctx.clock.advance(10_000);
+    ctx.games.steer(ctx.human.id, m.id, 'w'); // heading east: a reversal, ignored
+    ctx.games.steer(ctx.human.id, m.id, 's');
+    ctx.clock.advance(100);
+    expect(headingOf(ctx, m.id, 'red')).toBe('e');
+    ctx.clock.advance(100);
+    expect(headingOf(ctx, m.id, 'red')).toBe('s');
+  });
+
+  test('presses in the countdown are dropped, not saved for the first tick', async () => {
+    const ctx = await setup({}, open);
+    const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
+    expect(ctx.games.steer(ctx.human.id, m.id, 'n')).toBe(false);
+    ctx.clock.advance(10_100);
+    expect(headingOf(ctx, m.id, 'red')).toBe('e');
+  });
+
+  test('a watcher, a machine, a turn-based match and an unknown key change nothing', async () => {
+    const ctx = await setup({}, open);
+    const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
+    ctx.clock.advance(10_000);
+    expect(ctx.games.steer(ctx.b.id, m.id, 'n')).toBe(false);
+    expect(ctx.games.steer(ctx.a.id, m.id, 'n')).toBe(false);
+    expect(ctx.games.steer(ctx.human.id, m.id, 'up')).toBe(false);
+    expect(ctx.games.steer(ctx.human.id, 'm_nope', 'n')).toBe(false);
+    const cm = await ctx.games.createMatch('critical-mass', [ctx.b, ctx.c]);
+    expect(ctx.games.steer(ctx.b.id, cm.id, 'n')).toBe(false);
+  });
+
+  test("a human's seat refuses doctrine: HUMAN_STEERS", async () => {
+    const ctx = await setup({}, open);
+    const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
+    const e = errorOf(() => ctx.games.setDoctrine(m.id, ctx.human, straight));
+    expect([e.status, e.code, e.message]).toEqual([409, 'HUMAN_STEERS', 'You steer with the keys; doctrine is for machines.']);
+  });
+
+  test('presses between rounds are dropped', async () => {
+    const ctx = await setup({}, open);
+    const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
+    ctx.clock.advance(10_000);
+    // Ride straight into the east wall: red crashes, and the round ends into intermission.
+    for (let i = 0; (ctx.games.envelope(m.id, null).view as LLView).phase === 'play'; i++) {
+      if (i >= 600) throw new Error('the round never ended');
+      ctx.clock.advance(100);
+    }
+    expect(ctx.games.steer(ctx.human.id, m.id, 'n')).toBe(false);
+  });
+});

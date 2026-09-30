@@ -152,3 +152,20 @@ test('a DM reaches only the two people\'s sockets, removal too; nobody can subsc
   expect(removals(wc)).toEqual([]);
   for (const ws of [wa, wb, wc]) hub.handlers.close(ws);
 });
+
+test('steer from a fresh socket reaches the match with no subscription first', async () => {
+  const human = (await core.identities.createHuman(`steer${randomTag()}`, { label: 'test', ip: null })).identity;
+  const calls: [string, string, string][] = [];
+  const original = core.games.steer.bind(core.games);
+  core.games.steer = (id, matchId, key) => (calls.push([id, matchId, key]), true);
+  try {
+    const ws = socket(human);
+    hub.handlers.open(ws);
+    hub.handlers.message(ws, JSON.stringify({ type: 'steer', matchId: 'm_x', key: 'n' }));
+    hub.handlers.message(ws, JSON.stringify({ type: 'steer', matchId: 42, key: 'n' }));
+    expect(calls).toEqual([[human.id, 'm_x', 'n']]);
+    expect(ws.sent.some((m) => (m as { type: string }).type === 'error')).toBe(false);
+  } finally {
+    core.games.steer = original;
+  }
+});

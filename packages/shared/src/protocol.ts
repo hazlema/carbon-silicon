@@ -78,7 +78,8 @@ export interface FiredRule {
 /** Real-time matches only: the tick, each seat's last fired rule, and your own senses and orders. */
 export interface RealtimeEnvelope {
   tick: number;
-  fired: Record<string, FiredRule | null>;
+  /** `'steering'`: a person at the keys, not a doctrine. */
+  fired: Record<string, FiredRule | 'steering' | null>;
   you?: {
     /** Null when the game could not work out your senses this tick (logged on the server). */
     senses: Record<string, number | string | boolean> | null;
@@ -386,7 +387,9 @@ export type WsClientMsg =
   | { type: 'unwatch'; matchId: string }
   | { type: 'watchTable'; tableId: string }
   | { type: 'unwatchTable'; tableId: string }
-  | { type: 'ping' };
+  | { type: 'ping' }
+  /** A person's key in a real-time match they're seated in: moves queue, modifiers ride along. */
+  | { type: 'steer'; matchId: string; key: string };
 
 export type WsServerMsg =
   | { type: 'hello'; identity: IdentityPublic; presence: PresenceInfo[] }

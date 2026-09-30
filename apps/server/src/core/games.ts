@@ -20,7 +20,7 @@ import type { EventBus } from './bus';
 import type { CommunicationManager } from './communication';
 import type { Guard } from './guard';
 import type { PresenceManager } from './presence';
-import { DoctrineDesk, FLOOR_DEFAULT_MS, floorTicks } from './realtime';
+import { DoctrineDesk, FLOOR_DEFAULT_MS, floorTicks, SteerQueue } from './realtime';
 
 export interface GameManagerOptions {
   countdownMs: number;
@@ -61,6 +61,8 @@ interface LiveMatch {
   waiters: Set<() => void>;
   rng: Rng;
   desk: DoctrineDesk | null;
+  /** The human seats' key queues (empty for turn games). */
+  steer: Map<SeatId, SteerQueue>;
 }
 
 const resultFor = (o: Outcome, seat: SeatId): 'win' | 'loss' | 'draw' =>
@@ -181,6 +183,8 @@ export class GameManager {
     const seats: SeatInfo[] = players.map((identity, i) => ({ seat: seatNames[i], identity }));
     const id = newId('m');
     const rt = module.realtime;
+    const steer = new Map<SeatId, SteerQueue>();
+    if (rt?.steer) for (const s of seats) if (s.identity.kind === 'human') steer.set(s.seat, new SteerQueue(rt.steer));
     const countdownMs = rt ? (this.opts.realtimeCountdownMs ?? rt.countdownSeconds * 1000) : this.opts.countdownMs;
     const m: LiveMatch = {
       id,
@@ -200,6 +204,7 @@ export class GameManager {
       failures: 0,
       waiters: new Set(),
       rng: createRng(seed ^ 0x5eed),
+      steer,
       desk: rt ? new DoctrineDesk(seatNames.slice(0, players.length), rt.defaultDoctrine, floorTicks(this.opts.doctrineFloorMs, 1000 / rt.tickHz)) : null,
     };
     this.matches.set(id, m);
@@ -416,9 +421,17 @@ export class GameManager {
         this.comms.deliver(this.seatInfo(m, seat).identity.id, { type: 'match.doctrine', matchId: m.id, tick: desk.tick });
       }
       const actions: Record<SeatId, Action> = {};
+      const paused = rt.paused?.(m.state) ?? false;
       for (const s of m.seats) {
         if (m.module.isOut?.(m.state, s.seat)) {
           desk.fired[s.seat] = null;
+          continue;
+        }
+        const q = m.steer.get(s.seat);
+        if (q) {
+          if (paused) q.clear();
+          actions[s.seat] = q.take();
+          desk.fired[s.seat] = 'steering';
           continue;
         }
         actions[s.seat] = desk.decide(s.seat, rt.senses(m.state, s.seat)) ?? rt.defaultAction;
@@ -454,6 +467,7 @@ export class GameManager {
     if (!seat) throw forbidden('NOT_SEATED', 'You are not playing in this match.');
     const rt = m.module.realtime;
     if (!rt || !m.desk) throw conflict('NOT_REALTIME', `${m.module.meta.name} is turn-based: send moves, not doctrine.`);
+    if (m.steer.has(seat)) throw conflict('HUMAN_STEERS', 'You steer with the keys; doctrine is for machines.');
     if (m.status === 'over' || m.status === 'abandoned') throw conflict('MATCH_OVER', 'This match is already over.');
     if (m.module.isOut?.(m.state, seat)) throw conflict('OUT', "You're already out of this match.");
     let doctrine;
@@ -464,6 +478,20 @@ export class GameManager {
       throw e;
     }
     return { ...m.desk.set(seat, doctrine), doctrine };
+  }
+
+  /**
+   * A person's key (over the WebSocket). Anything that isn't a live, unpaused real-time match this
+   * person is seated in, or a key the game doesn't know, is dropped quietly: a reply per keypress
+   * would be noise, and a real player never hits these.
+   */
+  steer(identityId: string, matchId: string, key: string): boolean {
+    const m = this.matches.get(matchId);
+    if (!m || m.status !== 'live') return false;
+    const seat = this.seatOf(m, identityId);
+    const q = seat ? m.steer.get(seat) : undefined;
+    if (!q || m.module.realtime?.paused?.(m.state)) return false;
+    return q.press(key);
   }
 
   private async finish(m: LiveMatch, outcome: Outcome): Promise<void> {
