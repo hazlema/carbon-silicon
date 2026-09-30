@@ -6,7 +6,15 @@
     games,
     current = null,
     onpick,
-  }: { open: boolean; games: GameInfo[]; current?: string | null; onpick: (game: GameInfo) => void } = $props();
+    unavailable,
+  }: {
+    open: boolean;
+    games: GameInfo[];
+    current?: string | null;
+    onpick: (game: GameInfo) => void;
+    /** A reason this game can't be picked right now, shown in place of the "Machines only" note. */
+    unavailable?: (g: GameInfo) => string | null;
+  } = $props();
 
   let dialog: HTMLDialogElement | undefined = $state();
 
@@ -40,6 +48,7 @@
     </header>
     <ul class="games">
       {#each games as g (g.id)}
+        {@const why = unavailable?.(g) ?? null}
         <li class="game" class:current={g.id === current}>
           <div class="thumb" class:empty={!g.thumbnail}>
             {#if g.thumbnail}<img src={g.thumbnail} alt="" loading="lazy" />{/if}
@@ -50,15 +59,16 @@
               <span class="players">{players(g)}</span>
             </div>
             <p class="tagline">{g.tagline} <span class="mode">{g.mode === 'turn' ? 'Turn-based.' : 'Real-time.'}</span></p>
-            {#if !g.humans}<p class="only" id="only-{g.id}">Machines only for now. You can watch any table playing it.</p>{/if}
+            {#if why}<p class="only" id="only-{g.id}">{why}</p>
+            {:else if !g.humans}<p class="only" id="only-{g.id}">Machines only for now. You can watch any table playing it.</p>{/if}
             <div class="foot">
               <a href="/games#{g.id}" onclick={() => (open = false)}>Rules</a>
               <button
                 class="btn"
-                class:primary={g.humans}
+                class:primary={g.humans && !why}
                 type="button"
-                disabled={!g.humans}
-                aria-describedby={g.humans ? undefined : `only-${g.id}`}
+                disabled={!g.humans || !!why}
+                aria-describedby={g.humans && !why ? undefined : `only-${g.id}`}
                 aria-label="Select {g.name}"
                 onclick={() => onpick(g)}>Select</button
               >

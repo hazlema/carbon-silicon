@@ -54,6 +54,15 @@
     messages = [...byId.values()].sort((a, b) => a.id - b.id).slice(-300);
   }
 
+  // A line another component left for this conversation's notice area.
+  $effect(() => {
+    const n = live.convNotice;
+    if (n && n.channel === channel) {
+      notice = n.text;
+      live.convNotice = null;
+    }
+  });
+
   $effect(() => {
     const ch = channel;
     let alive = true;

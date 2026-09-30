@@ -3,12 +3,13 @@ import { DM_TABS } from './dms';
 
 const MAX_UNREAD = 99;
 
-/** A group's tab title: its name, or its people, you first and then in the order they joined. */
+/** A group's tab title: its name, or its people, you first and then in the order they joined (ties by handle). */
 export function groupTitle(g: GroupInfo, meId: string): string {
   if (g.name) return g.name;
   const others = g.members
     .filter((m) => m.identity.id !== meId)
-    .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt, undefined, { numeric: true }))
+    // People who joined in the same instant (a group's first members) fall back to handle order, so the title never flickers.
+    .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt, undefined, { numeric: true }) || a.identity.handle.localeCompare(b.identity.handle))
     .map((m) => m.identity.handle);
   return ['you', ...others].join(', ');
 }

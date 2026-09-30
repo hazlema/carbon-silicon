@@ -59,6 +59,8 @@ class Live {
   /** A conversation someone asked to open (Message @x, /msg, a group). The page with a chat switches
    *  to it and clears this; `n` makes asking twice for the same one count. */
   convRequest = $state<{ channel: string; n: number } | null>(null);
+  /** A line for the open conversation's notice area (e.g. who a hosted table skipped). */
+  convNotice = $state<{ channel: string; text: string } | null>(null);
   get dmRequest() {
     return this.convRequest;
   }
@@ -321,9 +323,23 @@ class Live {
     this.groups = withGroupMessage(this.groups, m, meId);
   }
 
+  /** A group the page just changed itself (renamed, someone added): show it without waiting for group.changed. */
+  putGroup(g: GroupInfo): void {
+    this.#upsertGroup(g);
+  }
+
+  /** A group you just left: its tab goes. */
+  dropGroup(id: string): void {
+    this.groups = this.groups.filter((g) => g.id !== id);
+  }
+
   async #reloadGroup(groupId: string): Promise<void> {
+    const had = this.groups.some((g) => g.id === groupId);
     try {
-      this.#upsertGroup((await api<{ group: GroupInfo }>('GET', `/api/groups/${groupId}`)).group);
+      const { group } = await api<{ group: GroupInfo }>('GET', `/api/groups/${groupId}`);
+      // A group.gone that landed while this read was in flight wins; a group we never had (we were just added) still appears.
+      if (had && !this.groups.some((g) => g.id === groupId)) return;
+      this.#upsertGroup(group);
     } catch (e) {
       console.error(e);
     }

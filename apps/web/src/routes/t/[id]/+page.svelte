@@ -7,6 +7,7 @@
   import { api, ApiError } from '$lib/api';
   import Avatar from '$lib/components/Avatar.svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
+  import ConvMenu from '$lib/components/ConvMenu.svelte';
   import ConvTabs from '$lib/components/ConvTabs.svelte';
   import { groupTitle } from '$lib/groups';
   import GatheringCard from '$lib/components/GatheringCard.svelte';
@@ -430,12 +431,15 @@
       >
         {#snippet header()}
           <div>
+            <div class="tabbar">
             <div class="tabs" role="tablist" aria-label="Chat">
               <button role="tab" type="button" aria-selected={tab === 'table'} onclick={() => (tab = 'table')}>Table</button>
               <button role="tab" type="button" aria-selected={tab === 'rail'} onclick={() => (tab = 'rail')}
                 >{railUnread > 0 ? `Rail (${railUnread})` : 'Rail'}</button
               >
               <ConvTabs active={dmTab || groupTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} />
+            </div>
+            <ConvMenu channel={tab} />
             </div>
           </div>
         {/snippet}
@@ -817,6 +821,16 @@
   }
   .watching {
     margin-left: 0.25rem;
+  }
+  /* The chat's tab line with the conversation's ⋯ at its end. */
+  .tabbar {
+    display: flex;
+    align-items: stretch;
+    border-bottom: 1px solid var(--lattice);
+  }
+  .tabbar .tabs {
+    flex: 1;
+    border-bottom: 0;
   }
   .tabs {
     display: flex;

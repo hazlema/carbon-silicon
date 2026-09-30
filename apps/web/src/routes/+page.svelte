@@ -1,6 +1,7 @@
 <script lang="ts">
   import { dmParticipants, groupOf } from '@cs/shared/protocol';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
+  import ConvMenu from '$lib/components/ConvMenu.svelte';
   import ConvTabs from '$lib/components/ConvTabs.svelte';
   import QuickMatch from '$lib/components/QuickMatch.svelte';
   import Scoreboard from '$lib/components/Scoreboard.svelte';
@@ -72,6 +73,7 @@
               {/each}
               <ConvTabs active={dm || group ? channel : null} onpick={(c) => (channel = c ?? 'lobby')} />
             </nav>
+            <ConvMenu {channel} />
             <p class="about">{about}</p>
           </div>
           <Scoreboard />
