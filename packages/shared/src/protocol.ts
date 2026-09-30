@@ -80,7 +80,8 @@ export interface RealtimeEnvelope {
   tick: number;
   fired: Record<string, FiredRule | null>;
   you?: {
-    senses: Record<string, number | string | boolean>;
+    /** Null when the game could not work out your senses this tick (logged on the server). */
+    senses: Record<string, number | string | boolean> | null;
     doctrine: { rules: unknown[] };
     pending: { rules: unknown[] } | null;
   };

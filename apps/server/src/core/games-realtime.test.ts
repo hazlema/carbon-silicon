@@ -29,7 +29,7 @@ async function setup(opts: Partial<GameManagerOptions> = {}, lightline: GameModu
   const agent = async (n: string) => (await ids.registerAgent({ name: `${n}${tag}` }, null)).identity;
   const [a, b, c] = [await agent('lla'), await agent('llb'), await agent('llc')];
   const human = (await ids.createHuman(`llh${tag}`)).identity;
-  return { clock, comms, games, a, b, c, human, agent };
+  return { clock, bus, comms, games, a, b, c, human, agent };
 }
 type Ctx = Awaited<ReturnType<typeof setup>>;
 const events = async (ctx: Ctx, id: string): Promise<InboxEvent[]> => (await ctx.comms.poll(id, 0, 0)).events;
@@ -58,7 +58,7 @@ describe('the real-time runner', () => {
     expect(one.match.revision).toBe(live.match.revision + 1);
     expect((one.view as LLView).roundTick).toBe(1);
     expect(one.realtime?.fired[one.you!]).toEqual({ index: 2, label: 'cruise' });
-    expect(one.realtime?.you?.senses.heading).toBeDefined();
+    expect(one.realtime?.you?.senses?.heading).toBeDefined();
     expect(ctx.games.envelope(m.id, null).realtime?.you).toBeUndefined();
   });
 
@@ -177,18 +177,12 @@ describe('the real-time runner', () => {
     expect(ctx.games.summary(m.id).status).toBe('over');
   });
 
-  test('a tick that throws is logged and skipped; the match keeps ticking', async () => {
+  test('a tick that throws is logged and skipped; the match keeps ticking, and a good tick resets the count', async () => {
     let boom = false;
     const rt = lightlineGame.realtime!;
     const flaky: GameModule<any> = {
       ...lightlineGame,
-      realtime: {
-        ...rt,
-        step: (s, a, r) => {
-          if (boom) throw new Error('boom');
-          return rt.step(s, a, r);
-        },
-      },
+      realtime: { ...rt, step: (s, a, r) => { if (boom) throw new Error('boom'); return rt.step(s, a, r); } },
     };
     const ctx = await setup({}, flaky);
     const m = await ctx.games.createMatch('lightline', [ctx.a, ctx.b]);
@@ -197,16 +191,73 @@ describe('the real-time runner', () => {
     const original = console.error;
     console.error = (...args: unknown[]) => void errors.push(args);
     try {
-      boom = true;
-      ctx.clock.advance(300);
-      boom = false;
+      for (let i = 0; i < 2; i++) {
+        boom = true;
+        ctx.clock.advance(1900); // 19 failures: not yet 20
+        boom = false;
+        ctx.clock.advance(100); // one good tick resets the count
+      }
     } finally {
       console.error = original;
     }
-    expect(errors).toHaveLength(3);
-    ctx.clock.advance(200);
-    expect(ctx.games.envelope(m.id, null).realtime!.tick).toBe(4);
+    expect(errors).toHaveLength(38);
     expect(ctx.games.summary(m.id).status).toBe('live');
+  });
+
+  test('twenty failing ticks in a row abandon the match: seats freed, the table told, no more ticks', async () => {
+    const rt = lightlineGame.realtime!;
+    const broken: GameModule<any> = { ...lightlineGame, realtime: { ...rt, step: () => { throw new Error('boom'); } } };
+    const ctx = await setup({}, broken);
+    const finished: string[] = [];
+    ctx.bus.on('match.finished', ({ matchId }) => void finished.push(matchId));
+    const m = await ctx.games.createMatch('lightline', [ctx.a, ctx.b]);
+    ctx.clock.advance(10_000);
+    const original = console.error;
+    const errors: unknown[] = [];
+    console.error = (...args: unknown[]) => void errors.push(args);
+    try {
+      ctx.clock.advance(2000);
+      await Bun.sleep(20);
+    } finally {
+      console.error = original;
+    }
+    const s = ctx.games.summary(m.id);
+    expect([s.status, s.endReason]).toEqual(['abandoned', 'tick-failed']);
+    expect(finished).toEqual([m.id]);
+    expect(ctx.games.activeMatchOf(ctx.a.id)).toBeNull();
+    expect(errors.length).toBe(20);
+    const rev = s.revision;
+    ctx.clock.advance(1000);
+    expect(ctx.games.summary(m.id).revision).toBe(rev);
+  });
+
+  test('a senses bug never breaks the envelope: your senses read null, and it is logged', async () => {
+    const rt = lightlineGame.realtime!;
+    const blind: GameModule<any> = { ...lightlineGame, realtime: { ...rt, senses: () => { throw new Error('blind'); } } };
+    // The tick would fail too; only the envelope is under test, in the countdown.
+    const ctx = await setup({}, blind);
+    const m = await ctx.games.createMatch('lightline', [ctx.a, ctx.b]);
+    const original = console.error;
+    const errors: unknown[] = [];
+    console.error = (...args: unknown[]) => void errors.push(args);
+    try {
+      const env = ctx.games.envelope(m.id, ctx.a.id);
+      expect(env.realtime?.you?.senses).toBeNull();
+      expect(env.realtime?.you?.doctrine).toBeDefined();
+    } finally {
+      console.error = original;
+    }
+    expect(errors).toHaveLength(1);
+  });
+
+  test('after close, no new match starts and a finishing match sets no retain timer', async () => {
+    const ctx = await setup();
+    const m = await ctx.games.createMatch('critical-mass', [ctx.a, ctx.b]);
+    ctx.games.close();
+    await expect(ctx.games.createMatch('lightline', [ctx.c, await ctx.agent('lld')])).rejects.toMatchObject({ status: 503, code: 'SHUTTING_DOWN' });
+    const timers = ctx.clock.pending();
+    await ctx.games.resign(m.id, ctx.a); // finish() runs after close
+    expect(ctx.clock.pending()).toBe(timers);
   });
 
   test('test speed options shorten the countdown and the tick', async () => {

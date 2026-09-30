@@ -57,6 +57,7 @@ interface LiveMatch {
   outcome: Outcome | null;
   endReason: string | null;
   timer: unknown;
+  failures: number;
   waiters: Set<() => void>;
   rng: Rng;
   desk: DoctrineDesk | null;
@@ -64,6 +65,9 @@ interface LiveMatch {
 
 const resultFor = (o: Outcome, seat: SeatId): 'win' | 'loss' | 'draw' =>
   o.winners.length === 0 ? 'draw' : o.winners.includes(seat) ? 'win' : 'loss';
+
+/** A real-time match whose ticks fail this many times in a row is abandoned. */
+const MAX_TICK_FAILURES = 20;
 
 export class GameManager {
   private matches = new Map<string, LiveMatch>();
@@ -161,6 +165,7 @@ export class GameManager {
   }
 
   async createMatch(gameId: string, players: IdentityPublic[], opts: { tableId?: string } = {}): Promise<MatchSummary> {
+    if (this.closed) throw new AppError(503, 'SHUTTING_DOWN', 'The server is shutting down; try again in a moment.');
     const module = this.module(gameId);
     const { minPlayers, maxPlayers, seats: seatNames, name } = module.meta;
     if (players.length < minPlayers || players.length > maxPlayers) {
@@ -192,6 +197,7 @@ export class GameManager {
       outcome: null,
       endReason: null,
       timer: null,
+      failures: 0,
       waiters: new Set(),
       rng: createRng(seed ^ 0x5eed),
       desk: rt ? new DoctrineDesk(seatNames.slice(0, players.length), rt.defaultDoctrine, floorTicks(this.opts.doctrineFloorMs, 1000 / rt.tickHz)) : null,
@@ -273,6 +279,7 @@ export class GameManager {
   private startTurn(m: LiveMatch): void {
     // A real-time match's timer is its tick loop; there are no turns to start (or clear).
     if (!m.module.turn) return;
+    if (this.closed) return;
     this.clock.clearTimeout(m.timer);
     m.timer = null;
     m.deadline = null;
@@ -396,7 +403,7 @@ export class GameManager {
   /**
    * One tick: waiting doctrine changes take over, every seat still in decides by its doctrine (or
    * the game's default action), the game steps, and everyone hears. A tick that throws is logged
-   * and skipped; the next one still comes.
+   * and skipped; the next one still comes, unless 20 in a row have failed, and then the match is abandoned.
    */
   private tick(id: string): void {
     if (this.closed) return;
@@ -422,8 +429,14 @@ export class GameManager {
       this.announceRound(m, before, next);
       // advance installs the state (and, at the end, marks the match over) before its first await.
       this.advance(m, next).catch((e) => console.error(`[games] tick ${m.id} could not record its end`, e));
+      m.failures = 0;
     } catch (e) {
-      console.error(`[games] a tick of ${m.id} failed`, e);
+      m.failures += 1;
+      console.error(`[games] a tick of ${m.id} failed (${m.failures} in a row)`, e);
+      if (m.failures >= MAX_TICK_FAILURES) {
+        this.abandon(m, 'tick-failed').catch((e2) => console.error(`[games] could not abandon ${m.id}`, e2));
+        return;
+      }
     }
     if (m.status === 'live') this.scheduleTick(m);
   }
@@ -462,7 +475,7 @@ export class GameManager {
     for (const s of m.seats) this.release(m, s.identity.id);
     this.changed(m);
     this.bus.emit('match.finished', { matchId: m.id, tableId: m.tableId });
-    m.timer = this.clock.setTimeout(() => this.matches.delete(m.id), this.opts.retainMs);
+    if (!this.closed) m.timer = this.clock.setTimeout(() => this.matches.delete(m.id), this.opts.retainMs);
     try {
       await this.db.transaction(async (tx) => {
         await tx
@@ -485,6 +498,31 @@ export class GameManager {
       this.comms.deliver(s.identity.id, { type: 'match.over', matchId: m.id, outcome, result: resultFor(outcome, s.seat) });
     }
     await this.comms.postSystem(this.chatOf(m), this.verdict(m, outcome));
+  }
+
+  /**
+   * A match that can't go on (its ticks keep failing): nobody wins or loses, the seats go free, and
+   * the table hears. Recorded the way a restart records one, as abandoned.
+   */
+  private async abandon(m: LiveMatch, reason: string): Promise<void> {
+    this.clock.clearTimeout(m.timer);
+    m.status = 'abandoned';
+    m.endReason = reason;
+    m.deadline = null;
+    m.revision += 1;
+    for (const s of m.seats) this.release(m, s.identity.id);
+    this.changed(m);
+    this.bus.emit('match.finished', { matchId: m.id, tableId: m.tableId });
+    m.timer = this.closed ? null : this.clock.setTimeout(() => this.matches.delete(m.id), this.opts.retainMs);
+    try {
+      await this.db.transaction(async (tx) => {
+        await tx.update(matches).set({ status: 'abandoned', endReason: reason, endedAt: new Date(this.clock.now()) }).where(eq(matches.id, m.id));
+        await tx.update(matchPlayers).set({ result: 'abandoned' }).where(eq(matchPlayers.matchId, m.id));
+      });
+    } catch (e) {
+      console.error(`[games] could not record ${m.id} as abandoned`, e);
+    }
+    await this.comms.postSystem(this.chatOf(m), 'The match broke down and was abandoned. Nobody wins or loses.');
   }
 
   private verdict(m: LiveMatch, o: Outcome): string {
@@ -527,12 +565,20 @@ export class GameManager {
     const turn = m.module.turn;
     const legal = you && m.status === 'live' && turn && turn.toMove(m.state).includes(you) ? turn.legal(m.state, you) : [];
     const rt = m.module.realtime;
+    const senses = (seat: SeatId) => {
+      try {
+        return rt!.senses(m.state, seat);
+      } catch (e) {
+        console.error(`[games] senses for ${m.id}/${seat} failed`, e);
+        return null;
+      }
+    };
     const realtime =
       m.desk && rt
         ? {
             tick: m.desk.tick,
             fired: { ...m.desk.fired },
-            ...(you ? { you: { senses: rt.senses(m.state, you), doctrine: m.desk.doctrineOf(you), pending: m.desk.pendingOf(you) } } : {}),
+            ...(you ? { you: { senses: senses(you), doctrine: m.desk.doctrineOf(you), pending: m.desk.pendingOf(you) } } : {}),
           }
         : undefined;
     return { match: this.toSummary(m), you, view: m.module.view(m.state, you), legal, ...(realtime ? { realtime } : {}) };

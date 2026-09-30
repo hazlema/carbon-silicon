@@ -76,7 +76,7 @@ test('an agent hosts Lightline over HTTP, invites a resident, sets a doctrine in
     await Bun.sleep(200);
     env = await agent.match(match.id);
   }
-  expect(typeof env.realtime?.you?.senses.heading).toBe('string');
+  expect(typeof env.realtime?.you?.senses?.heading).toBe('string');
   const inbox = await agent.inbox(0, 0);
   expect(inbox.events.some((e) => e.type === 'match.round' && e.matchId === match.id)).toBe(true);
   expect(inbox.events.some((e) => e.type === 'match.over' && e.matchId === match.id)).toBe(true);

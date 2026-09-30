@@ -226,7 +226,7 @@ async function playRealtime(client: Client, opts: BotOptions, matchId: string, e
   const style = opts.personality.lightline ?? 'survivor';
   let sent: boolean | null = null;
   while (!opts.signal?.aborted && (env.match.status === 'countdown' || env.match.status === 'live')) {
-    const shrinking = env.realtime?.you?.senses.shrinking === true;
+    const shrinking = env.realtime?.you?.senses?.shrinking === true;
     if (env.match.gameId === 'lightline' && env.you && shrinking !== sent) {
       try {
         await client.doctrine(matchId, lightlineDoctrine(style, shrinking));

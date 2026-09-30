@@ -1,4 +1,4 @@
-export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 410 | 413 | 429 | 500;
+export type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 410 | 413 | 429 | 500 | 503;
 
 /** An error with an HTTP status and a stable UPPER_SNAKE code; the HTTP door renders it as {error:{code,message}}. */
 export class AppError extends Error {
