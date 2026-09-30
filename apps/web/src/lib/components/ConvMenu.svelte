@@ -24,7 +24,9 @@
   let settings = $state(false);
   let leaving = $state(false);
   let choosing = $state(false);
-  let hostError = $state('');
+  /** A group Add someone just made. It opens only once the picker has closed: a closing dialog hands focus back
+   *  to whatever opened it, which would undo the new group's composer taking focus. */
+  let pendingGroup: GroupInfo | null = null;
 
   const items = () => [...(pop?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
   function closeMenu(refocus = false) {
@@ -67,11 +69,19 @@
   // A dialog closing hands focus back to the ⋯ button that opened it (the menu item it came from is gone).
   $effect(() => {
     if (!picking && !settings && !choosing) return;
-    return () => void tick().then(() => button?.focus());
+    const ch = channel;
+    return () =>
+      void tick().then(() => {
+        const g = pendingGroup;
+        pendingGroup = null;
+        if (g) live.openGroup(g);
+        else if (ch === channel) button?.focus();
+      });
   });
+  // Dialog state belongs to one conversation: a removed <dialog> never fires `close`, so reset it all when the open one changes.
   $effect(() => {
     channel;
-    menuOpen = false;
+    menuOpen = picking = settings = choosing = leaving = false;
   });
 
   function pick(what: 'add' | 'settings' | 'leave' | 'host') {
@@ -82,14 +92,15 @@
       settings = true;
     }
     else {
-      hostError = '';
       choosing = true;
     }
   }
 
   async function add(handle: string) {
     if (group) live.putGroup((await api<{ group: GroupInfo }>('POST', `/api/groups/${group.id}/members`, { handle })).group);
-    else if (dm) live.openGroup((await api<{ group: GroupInfo }>('POST', '/api/groups', { with: [dm.with.handle, handle] })).group);
+    else if (dm) {
+      pendingGroup = (await api<{ group: GroupInfo }>('POST', '/api/groups', { with: [dm.with.handle, handle] })).group;
+    }
   }
 
   const members = $derived(group?.members.length ?? 0);
@@ -101,21 +112,25 @@
   async function host(g: GameInfo) {
     if (!group) return;
     choosing = false;
+    const ch = channel;
+    const notify = (text: string) => {
+      if (channel === ch) live.convNotice = { channel: ch, text }; // gone elsewhere by now: nobody wants it later
+    };
     try {
       const r = await api<{ skipped: { handle: string; reason: keyof typeof reason }[] }>('POST', `/api/groups/${group.id}/host`, { gameId: g.id });
       if (r.skipped.length > 0) {
         const skipped = new Set(r.skipped.map((s) => s.handle));
         const invited = group.members.map((m) => m.identity.handle).filter((h) => h !== live.me?.handle && !skipped.has(h));
         const who = r.skipped.map((s) => `${s.handle} is ${reason[s.reason] ?? s.reason}.`).join(' ');
-        live.convNotice = { channel, text: `${invited.length > 0 ? `Invited ${list(invited)}. ` : ''}${who}` };
+        notify(`${invited.length > 0 ? `Invited ${list(invited)}. ` : ''}${who}`);
       }
     } catch (e) {
-      live.convNotice = { channel, text: (e as Error).message };
+      notify((e as Error).message);
     }
   }
 </script>
 
-{#if dm || group}
+{#if group || (dm && !dm.with.released)}
   <button
     bind:this={button}
     type="button"

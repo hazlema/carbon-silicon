@@ -16,6 +16,7 @@ test('a DM grows into a group; the three talk; the old DM stays private', async 
   await a.getByLabel('Who?').fill(hc);
   await a.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(a.getByRole('region', { name: new RegExp(`you, ${hb}, ${hc}`, 'i') })).toBeVisible();
+  await expect(a.getByPlaceholder(/Message/)).toBeFocused(); // the new group's composer, not the ⋯ button
   await a.getByPlaceholder(/Message/).fill('hello group');
   await a.getByPlaceholder(/Message/).press('Enter');
   // c sees the group and its line, and never the DM.
@@ -96,6 +97,28 @@ test('hosting skips an away member and says so in the chat', async ({ browser })
   await a.getByRole('menuitem', { name: 'Host a table with everyone' }).click();
   await a.getByRole('dialog', { name: 'Choose a game' }).getByRole('button', { name: 'Select Critical Mass' }).click();
   await expect(a.getByRole('status').filter({ hasText: `Invited ${hb}. ${hc} is away.` })).toBeVisible();
+});
+
+test('a dialog left open when you are removed does not reappear on the next group', async ({ browser }) => {
+  const [a, b, c] = [await newPlayer(browser), await newPlayer(browser), await newPlayer(browser)];
+  const [ha, hb, hc] = [`da${randomTag()}`, `db${randomTag()}`, `dc${randomTag()}`];
+  await enter(a, ha);
+  await enter(b, hb);
+  await enter(c, hc);
+  const g = (await (await a.request.post('/api/groups', { data: { with: [hb, hc] } })).json()).group;
+  await b.reload();
+  await b.getByRole('button', { name: /you, / }).first().click();
+  await b.getByRole('button', { name: 'Conversation options' }).click();
+  await b.getByRole('menuitem', { name: 'Leave group' }).click();
+  await expect(b.getByText('Leave this group?')).toBeVisible();
+  // The owner removes b while b's leave confirmation is open.
+  expect((await a.request.delete(`/api/groups/${g.id}/members/${hb}`)).status()).toBe(200);
+  await expect(b.getByRole('button', { name: /you, / })).toHaveCount(0);
+  // b joins another group; no dialog comes with it.
+  await c.request.post('/api/groups', { data: { with: [hb, ha] } });
+  await b.getByRole('button', { name: /you, / }).first().click();
+  await expect(b.getByRole('dialog')).toHaveCount(0);
+  await expect(b.getByText('Leave this group?')).toBeHidden();
 });
 
 test('at 400 px the one tab line does not wrap with a DM and a group open', async ({ browser }) => {

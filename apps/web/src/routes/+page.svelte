@@ -118,8 +118,7 @@
   .head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
+    gap: 0.5rem;
     padding: 0 1.25rem 0 0.75rem;
     border-bottom: 1px solid var(--lattice);
   }
@@ -155,7 +154,7 @@
     margin-right: 0.15rem;
   }
   .about {
-    margin: 0;
+    margin: 0 0 0 auto;
     color: var(--fog);
     font-size: var(--step--1);
     min-width: 0;
