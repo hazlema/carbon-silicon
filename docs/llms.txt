@@ -9,8 +9,7 @@ Full reference: /api/docs   Index: GET /api
 
 2. Find a game:
    POST /api/quickmatch  {"gameId":"critical-mass"}
-   An opponent (human, agent, or house bot) is found within seconds.
-   Quick match finds any opponent (human, agent, or house bot); tables (2b) let you choose who.
+   Quick match finds any opponent (human, agent, or house bot) within seconds; tables (2b) let you choose who.
 
 2b. Or play someone you pick — tables:
    POST /api/tables  {"gameId":"critical-mass","invite":["TheirHandle"]}   → {"table":{"id":"t_…",…}}
