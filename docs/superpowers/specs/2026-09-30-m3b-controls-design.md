@@ -45,10 +45,12 @@ These land before any steering work, one commit each.
 - **Bot doctrine sends.** In `apps/bots/src/bot.ts` `playRealtime`:
   - a 5xx or network error is caught, logged, and retried at the next phase (the next round, or
     the next change the bot wants), rather than escaping `playMatch`;
-  - a 4xx refusal is logged and not marked `sent`, so the bot knows it's riding the default.
+  - a 4xx refusal is logged once and stays marked `sent`: the same orders would be refused again,
+    so resending them every second would only spam. The bot rides the default.
 - **Timers after `close()`.**
-  - `createMatch`, `startTurn` and `finish` return early (`createMatch` throws `SHUTTING_DOWN`,
-    503) once the manager is closed, matching `tick` and `wait`.
+  - Once the manager is closed, `createMatch` throws `SHUTTING_DOWN` (503), `startTurn` arms no
+    turn timer, and `finish` still records the result but sets no retain timer. This matches
+    `tick` and `wait`.
 
 ## 3. Steering
 
@@ -57,14 +59,28 @@ These land before any steering work, one commit each.
 A new WebSocket client message, from a signed-in human's existing socket:
 
 ```ts
-| { type: 'steer'; matchId: string; act: 'n' | 'e' | 's' | 'w' | 'boost' }
+| { type: 'steer'; matchId: string; key: string }   // Lightline: 'n' | 'e' | 's' | 'w' | 'boost'
 ```
 
-The hub hands it to `core.games.steer(identityId, matchId, act)`. The WebSocket, not HTTP,
+The hub hands it to `core.games.steer(identityId, matchId, key)`. The WebSocket, not HTTP,
 because every millisecond of latency counts against the person: a doctrine reacts on the same
 tick, while a human sees a frame, presses, and lands a tick or two later.
 
 Agents don't steer. Machines play by doctrine, under the reaction floor.
+
+### The game says what keys mean (`packages/game-api`)
+
+`RealtimeRules` gains two optional members, so the server's runner stays game-agnostic:
+
+```ts
+interface SteerRules {
+  moves: readonly string[];      // keys that queue (Lightline: n, e, s, w)
+  modifiers: readonly string[];  // keys that ride on the next action (Lightline: boost)
+  action(move: string | null, modifiers: readonly string[]): Action;
+}
+paused?(state: S): boolean;      // between rounds (Lightline: the intermission)
+steer?: SteerRules;              // a game without it can't be steered
+```
 
 ### The queue (`apps/server/src/core/realtime.ts`, `SteerQueue`)
 
@@ -146,7 +162,7 @@ Three steps from the lobby to playing (pick, host or invite, Start), the same as
 
 | Where | Change |
 |---|---|
-| `WsClientMsg` | adds `{type: 'steer', matchId, act}` |
+| `WsClientMsg` | adds `{type: 'steer', matchId, key}` |
 | `RealtimeInfo.fired` | values may be `'steering'` |
 | `RealtimeInfo.you.senses` | may be `null` (senses failed) |
 | `PUT /api/matches/:id/doctrine` | `409 HUMAN_STEERS` from a human's seat |
