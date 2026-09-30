@@ -306,4 +306,37 @@ describe('reports and moderation in a group', () => {
     const removed = await core.moderation.deleteMessage({ kind: 'identity', identity: mod }, line.id, 'reported');
     expect(removed.removed).not.toBeNull();
   });
+
+  test('list still returns the other groups when one ends mid-call', async () => {
+    const [ann, ben] = [await person('ann'), await person('ben')];
+    const doomed = await core.groups.create(ann, [ben.handle]);
+    const kept = await core.groups.create(ann, [ben.handle]);
+    // While ann's list is being built, everyone leaves the doomed group: it ends under her.
+    const history = core.comms.history.bind(core.comms);
+    let ended = false;
+    core.comms.history = (async (channel: string, ...rest: unknown[]) => {
+      if (channel === groupChannel(doomed.id) && !ended) {
+        ended = true;
+        await core.groups.remove(ben, doomed.id, ben.handle);
+        await core.groups.remove(ann, doomed.id, ann.handle);
+      }
+      return (history as (...a: unknown[]) => unknown)(channel, ...rest);
+    }) as typeof core.comms.history;
+    try {
+      const listed = await core.groups.list(ann);
+      expect(listed.map((g) => g.id)).toEqual([kept.id]);
+      expect(ended).toBe(true);
+    } finally {
+      core.comms.history = history;
+    }
+  });
+
+  test('a muted author stays out of the unread count', async () => {
+    const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
+    const g = await core.groups.create(ann, [ben.handle, cal.handle]);
+    await core.relations.set(ann, ben.handle, 'ignore');
+    await say(ben, g.id, 'noise');
+    await say(cal, g.id, 'signal');
+    expect((await core.groups.get(ann, g.id)).unread).toBe(1);
+  });
 });

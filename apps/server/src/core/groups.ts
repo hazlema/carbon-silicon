@@ -4,7 +4,7 @@ import { groupChannel, type ChatMessage, type GroupInfo, type IdentityPublic } f
 import type { DB } from '../db';
 import { chatGroups, groupBans, groupMembers, identities, messages } from '../db/schema';
 import type { Clock } from '../lib/clock';
-import { badRequest, conflict, forbidden, notFound } from '../lib/errors';
+import { badRequest, conflict, forbidden, notFound, type AppError } from '../lib/errors';
 import { newId } from '../lib/ids';
 import type { CommunicationManager } from './communication';
 import { toPublic, type IdentityManager } from './identity';
@@ -176,7 +176,15 @@ export class GroupManager {
       .innerJoin(chatGroups, eq(groupMembers.groupId, chatGroups.id))
       .where(and(eq(groupMembers.identityId, me.id), isNull(chatGroups.endedAt)));
     const out: GroupInfo[] = [];
-    for (const { group, member } of rows) out.push(await this.info(me, group, member));
+    for (const { group, member } of rows) {
+      try {
+        out.push(await this.info(me, group, member));
+      } catch (e) {
+        // A group that ended while we were building the list is simply no longer yours.
+        if ((e as AppError).code === 'NO_GROUP') continue;
+        throw e;
+      }
+    }
     return out.sort((a, b) => (b.last?.id ?? 0) - (a.last?.id ?? 0));
   }
 
@@ -305,7 +313,7 @@ export class GroupManager {
           .orderBy(asc(groupBans.bannedAt))
       : [];
     const last = (await this.deps.comms.history(channel, { viewer: me, limit: 1 }))[0] ?? null;
-    const { hidden } = await this.view(me, group.id);
+    const hidden = await this.deps.relations.mutedBy(me.id);
     const [{ n }] = await this.db
       .select({ n: count() })
       .from(messages)

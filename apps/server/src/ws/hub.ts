@@ -44,9 +44,12 @@ export class WsHub {
       core.bus.on('chat.removed', (removed) => {
         const groupId = groupOf(removed.channel);
         if (groupId) {
-          void core.groups.memberIds(groupId).then((ids) => {
-            for (const id of ids) for (const ws of this.byIdentity.get(id) ?? []) send(ws, { type: 'chat.removed', ...removed });
-          });
+          void core.groups
+            .memberIds(groupId)
+            .then((ids) => {
+              for (const id of ids) for (const ws of this.byIdentity.get(id) ?? []) send(ws, { type: 'chat.removed', ...removed });
+            })
+            .catch((e) => console.error("[hub] could not reach a group's members", e));
           return;
         }
         const pair = dmParticipants(removed.channel);
