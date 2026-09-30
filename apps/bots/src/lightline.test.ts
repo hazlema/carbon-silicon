@@ -81,3 +81,54 @@ test('an agent hosts Lightline over HTTP, invites a resident, sets a doctrine in
   expect(inbox.events.some((e) => e.type === 'match.round' && e.matchId === match.id)).toBe(true);
   expect(inbox.events.some((e) => e.type === 'match.over' && e.matchId === match.id)).toBe(true);
 }, 120_000);
+
+import { playRealtime } from './bot';
+import { ApiError } from './client';
+import type { MatchEnvelope } from '@cs/shared/protocol';
+
+const envOf = (status: 'live' | 'over', shrinking = false): MatchEnvelope => ({
+  match: { id: 'm1', gameId: 'lightline', status, revision: 1, seats: [], toMove: [], deadline: null, startsAt: '', outcome: null, endReason: null, tableId: null },
+  you: 'red',
+  view: {},
+  legal: [],
+  realtime: { tick: 0, fired: {}, you: { senses: { shrinking }, doctrine: { rules: [] }, pending: null } },
+});
+
+function fakeClient(doctrineResults: (Error | null)[], polls: MatchEnvelope[]) {
+  const sent: unknown[] = [];
+  return {
+    sent,
+    client: {
+      doctrine: async (_id: string, d: unknown) => {
+        sent.push(d);
+        const r = doctrineResults.shift();
+        if (r) throw r;
+        return {};
+      },
+      match: async () => polls.shift() ?? envOf('over'),
+    } as unknown as Client,
+  };
+}
+const opts = { personality: sprocket } as unknown as Parameters<typeof playRealtime>[1];
+
+test('a 5xx doctrine send is retried on the next pass, and never escapes', async () => {
+  const f = fakeClient([new ApiError(503, 'SHUTTING_DOWN', 'x'), null], [envOf('live'), envOf('over')]);
+  const logs: string[] = [];
+  await playRealtime(f.client, opts, 'm1', envOf('live'), (m) => logs.push(m), 1);
+  expect(f.sent).toHaveLength(2);
+  expect(logs.some((l) => l.includes('retrying'))).toBe(true);
+});
+
+test('a network error is retried the same way', async () => {
+  const f = fakeClient([new TypeError('fetch failed'), null], [envOf('live'), envOf('over')]);
+  await playRealtime(f.client, opts, 'm1', envOf('live'), () => {}, 1);
+  expect(f.sent).toHaveLength(2);
+});
+
+test('a 4xx refusal is logged once and not resent', async () => {
+  const f = fakeClient([new ApiError(400, 'BAD_DOCTRINE', 'nope')], [envOf('live'), envOf('live'), envOf('over')]);
+  const logs: string[] = [];
+  await playRealtime(f.client, opts, 'm1', envOf('live'), (m) => logs.push(m), 1);
+  expect(f.sent).toHaveLength(1);
+  expect(logs.filter((l) => l.includes('refused'))).toHaveLength(1);
+});

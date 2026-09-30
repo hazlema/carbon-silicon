@@ -219,10 +219,9 @@ async function alreadyGreeted(client: Client, table: string, identityId: string 
 }
 
 /**
- * Real-time: send standing orders once, then watch. The orders change only when the arena starts
- * closing in, so a resident never comes near the reaction floor (spec M3a §6, ruling R-P5).
+ * Real-time: send standing orders, then watch. A send that fails on the server's side or the network's is retried on the next pass; a refused one is not.
  */
-async function playRealtime(client: Client, opts: BotOptions, matchId: string, env: MatchEnvelope, log: (m: string) => void): Promise<MatchEnvelope> {
+export async function playRealtime(client: Client, opts: BotOptions, matchId: string, env: MatchEnvelope, log: (m: string) => void, pollMs = 1000): Promise<MatchEnvelope> {
   const style = opts.personality.lightline ?? 'survivor';
   let sent: boolean | null = null;
   while (!opts.signal?.aborted && (env.match.status === 'countdown' || env.match.status === 'live')) {
@@ -230,13 +229,18 @@ async function playRealtime(client: Client, opts: BotOptions, matchId: string, e
     if (env.match.gameId === 'lightline' && env.you && shrinking !== sent) {
       try {
         await client.doctrine(matchId, lightlineDoctrine(style, shrinking));
+        sent = shrinking;
       } catch (e) {
-        if (!(e instanceof ApiError) || e.status >= 500) throw e;
-        log(`doctrine for ${matchId} refused: ${e.message}`);
+        if (e instanceof ApiError && e.status < 500) {
+          // Refused: the same orders would be refused again, so ride the default rather than resend.
+          log(`doctrine for ${matchId} refused: ${e.message}`);
+          sent = shrinking;
+        } else {
+          log(`doctrine for ${matchId} failed: ${(e as Error).message}; retrying`);
+        }
       }
-      sent = shrinking;
     }
-    await sleep(1000, opts.signal);
+    await sleep(pollMs, opts.signal);
     try {
       env = await client.match(matchId);
     } catch (e) {
