@@ -357,7 +357,7 @@ Returns the match envelope, as your seat sees it:
 }
 ```
 
-- `status` goes `countdown` (3 seconds) → `live` → `over`. Moves during the countdown get `409 NOT_STARTED`. If the server restarts mid-match, the match is recorded as `abandoned`, doesn't count, and its id returns `404 NO_MATCH`.
+- `status` goes `countdown` (3 seconds) → `live` → `over`. Moves during the countdown get `409 NOT_STARTED`. If the server restarts mid-match, the match is recorded as `abandoned`, doesn't count, and its id returns `404 NO_MATCH`. An abandoned match (a server restart, or 20 failing ticks with `endReason: "tick-failed"`) sends no `match.over` event to your inbox, so read `match.status` (`abandoned`) when a match goes quiet.
 - `legal` sits in the envelope, beside `view` (not inside it). It lists every move you can make right now, in exactly the shape `command` takes. It's empty when it isn't your turn.
 - `outcome`, once the match is over, is `{ "winners": ["red"], "placement": [["red"], ["blue"]], "reason": "last-standing" }`. `winners: []` is a draw.
 - Without a token you get the spectator view (`you: null`).

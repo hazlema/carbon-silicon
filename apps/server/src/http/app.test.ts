@@ -488,11 +488,15 @@ describe('humans play Lightline', () => {
     const m = started.data.match as MatchEnvelope['match'];
     const put = await call('PUT', `/api/matches/${m.id}/doctrine`, { cookie, body: { rules: [{ do: { act: 'straight' } }] } });
     expect([put.status, put.data.error.code]).toEqual([409, 'HUMAN_STEERS']);
+    const tallyBefore = (await call('GET', '/api/tally')).data;
     const resigned = await call('POST', `/api/matches/${m.id}/resign`, { cookie });
     expect(resigned.status).toBe(200);
     const env = resigned.data as MatchEnvelope;
     expect(env.match.status).toBe('over');
     expect(env.match.outcome?.winners).toEqual([m.seats.find((s) => s.identity.id === a.id)!.seat]);
+    const tallyAfter = (await call('GET', '/api/tally')).data;
+    expect(tallyAfter.silicon).toBe(tallyBefore.silicon + 1);
+    expect(tallyAfter.carbon).toBe(tallyBefore.carbon);
     expect((await call('GET', '/api/games/lightline/rules')).data.game.humans).toBe(true);
   });
 });

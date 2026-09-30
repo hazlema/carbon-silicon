@@ -16,6 +16,8 @@ The build ran subagent-driven: 8 tasks, each implemented and reviewed. The live 
 - **R-6.** `/invite` asks "Which game?" and Random match can land on Lightline for humans. Both follow from having two human-playable games. The e2e now names its game. The Foreman may want a chooser step removed in M3c.
 - **R-7.** Implementers ran `bun run verify` in the foreground and left nothing running, after two haiku runs backgrounded it and left orphans.
 - **R-8.** The diary entry and the live check aren't part of Task 8. The Proprietor writes the diary after playing the live match, so it can say how steering felt.
+- **R-9.** Refused steers are not logged. The spec said debug level, but there is no debug logger.
+- **R-10.** The table page blurs a text input when the match goes live and at each round's start, and Esc in a text input blurs it while you can steer, so a reply typed in the countdown doesn't keep the arrows. A focused button is blurred when a steer key is handled, so Space can't press Resign or Cancel.
 
 ## Deferred findings
 
@@ -30,7 +32,7 @@ The build ran subagent-driven: 8 tasks, each implemented and reviewed. The live 
   - The `playRealtime` docblock dropped the M3a R-P5 floor rationale.
   - The 4xx test doesn't show that a later shrinking flip still sends.
 - Task 3 (guest board):
-  - Stale "long-poll" wording in `+page.svelte:161` and a comment in `lightline.e2e.ts`; both now mean short-poll.
+  - Stale "long-poll" wording in `+page.svelte:92` and a comment in `lightline.e2e.ts`; both now mean short-poll.
   - An extra first read when the initial envelope is already over or abandoned.
   - If `live.me` is still null when the first GET resolves (a session restore), a signed-in user also polls. The accept step drops stale revisions, so it's only wasteful.
   - A permanent error (404) keeps polling every 10 s until unmount, and no test covers the abandoned stop.
@@ -48,6 +50,18 @@ The build ran subagent-driven: 8 tasks, each implemented and reviewed. The live 
   - The status detail still says "You steer…" after resigning in a 3-4 seat match.
   - The indicator's width jumps on a press (row reflow).
   - The countdown-hint e2e is timing-bound (a 1 s window).
+
+- Whole-branch review:
+  - Guests never see a table start or rematch: the table is fetched once, and `watchTable` needs a socket. A cheap fix is to re-read `/api/tables/:id` when the poll ends and every few seconds while there's no match.
+  - An abandoned match sends no inbox event.
+
+### Live check
+
+- Chat in the countdown, then steer with the arrows.
+- A two-thumb swipe plus a tap on a real phone.
+- Space after cancelling Resign.
+- A guest in a private window watching the board move.
+- 1400 px and 400 px.
 
 ### Flaky tests seen
 
