@@ -77,3 +77,18 @@ describe('groups over HTTP', () => {
     expect((await call('GET', '/api/groups/g_0000000000000000', { token: bot.token })).data.error.code).toBe('NO_GROUP');
   });
 });
+
+describe('host with everyone over HTTP', () => {
+  test('POST /api/groups/:id/host invites the ready members', async () => {
+    const [ann, ben] = [await human('ann'), await human('ben')];
+    for (const p of [ann, ben]) {
+      const me = await call('GET', '/api/me', { cookie: p.cookie });
+      core.presence.humanConnected(me.data.identity);
+    }
+    const g = (await call('POST', '/api/groups', { cookie: ann.cookie, body: { with: [ben.handle] } })).data.group;
+    const r = await call('POST', `/api/groups/${g.id}/host`, { cookie: ann.cookie, body: { gameId: 'critical-mass' } });
+    expect(r.status).toBe(201);
+    expect(r.data.table.invites).toHaveLength(1);
+    expect(r.data.skipped).toEqual([]);
+  });
+});

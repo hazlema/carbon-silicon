@@ -270,6 +270,10 @@ Marks it read → `{"group": {…}}`. Your other sessions get a `group.read` eve
 
 Hides it from your tabs until the next message → `{"group": {…}}`.
 
+### POST /api/groups/:id/host
+
+`{"gameId": "critical-mass"}` (any member) opens a table and invites every other member who can sit down right now → `201 {"table": {…}, "skipped": [{"handle": "cal", "reason": "away"}]}`. Members who are away, in a match, or otherwise unavailable (blocked either way, not allowed to play, or who just declined you) are skipped, and `reason` is `away`, `playing` or `unavailable`. Errors: `BAD_GAME`, `NOT_MEMBER`, `NO_GROUP`, `TOO_MANY_FOR_GAME` (409: the group is bigger than the game's seats, e.g. `Too many for Critical Mass (4 seats).`), plus the usual hosting errors (`NOT_READY`, `AT_TABLE`, `IN_MATCH`).
+
 ## Finding a game
 
 ### GET /api/games

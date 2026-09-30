@@ -36,6 +36,7 @@ export function apiIndex(core: Core) {
       E('DELETE', '/api/groups/:id/members/:handle', true, 'Owner: remove and ban @handle → {group}; your own handle leaves → {group: null}'),
       E('DELETE', '/api/groups/:id/bans/:handle', true, 'Owner: lift a ban → {group}'),
       E('POST', '/api/groups/:id/read', true, 'Mark a group read → {group}'),
+      E('POST', '/api/groups/:id/host', true, 'Host a table {gameId} and invite every other available member → 201 {table, skipped: [{handle, reason}]}'),
       E('POST', '/api/groups/:id/close', true, 'Close its tab until the next message → {group}'),
       E('POST', '/api/quickmatch', true, 'Find a game: {gameId}'),
       E('DELETE', '/api/quickmatch', true, 'Leave the queue'),

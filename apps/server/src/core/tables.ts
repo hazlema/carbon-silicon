@@ -231,6 +231,48 @@ export class TableManager {
     return this.info(t, identity.id);
   }
 
+  /**
+   * Host a table and invite `people` in one go (a group's "host with everyone"). Whoever can't take
+   * a seat right now is skipped and named instead of failing the lot.
+   */
+  async hostWith(
+    identity: IdentityPublic,
+    gameId: string,
+    people: IdentityPublic[],
+  ): Promise<{ table: TableInfo; skipped: { handle: string; reason: 'away' | 'playing' | 'unavailable' }[] }> {
+    const first = await this.host(identity, gameId);
+    const t = this.require(first.id);
+    const skipped: { handle: string; reason: 'away' | 'playing' | 'unavailable' }[] = [];
+    const handles: string[] = [];
+    const now = this.deps.clock.now();
+    for (const who of people) {
+      let reason: 'away' | 'playing' | 'unavailable' | null = null;
+      if (this.deps.games.activeMatchOf(who.id)) reason = 'playing';
+      else if (!this.deps.presence.isReady(who.id)) reason = 'away';
+      else if (!this.available(who) || (this.declined.get(`${identity.id}:${who.id}`) ?? 0) > now) reason = 'unavailable';
+      else if ((await this.deps.relations.blocks(who.id, identity.id)) || (await this.deps.relations.blocks(identity.id, who.id))) reason = 'unavailable';
+      else {
+        try {
+          this.deps.games.assertPlayable(who, gameId);
+        } catch (e) {
+          if (!(e instanceof AppError)) throw e;
+          reason = 'unavailable';
+        }
+      }
+      if (reason) skipped.push({ handle: who.handle, reason });
+      else handles.push(who.handle);
+    }
+    if (handles.length > 0) {
+      try {
+        await this.invite(identity, t.id, handles);
+      } catch (e) {
+        this.close(t, 'cancelled');
+        throw e;
+      }
+    }
+    return { table: this.info(t, identity.id), skipped };
+  }
+
   async invite(identity: IdentityPublic, tableId: string, rawHandles: unknown): Promise<TableInfo> {
     const t = this.asHost(identity, tableId);
     this.assertForming(t);

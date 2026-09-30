@@ -1,6 +1,6 @@
 import { and, asc, count, eq, gt, inArray, isNull, max, ne, notInArray, or } from 'drizzle-orm';
 import { containsProfanity, containsSlur } from '@cs/shared/filter';
-import { groupChannel, type ChatMessage, type GroupInfo, type IdentityPublic } from '@cs/shared/protocol';
+import { groupChannel, type ChatMessage, type GroupInfo, type IdentityPublic, type TableInfo } from '@cs/shared/protocol';
 import type { DB } from '../db';
 import { chatGroups, groupBans, groupMembers, identities, messages } from '../db/schema';
 import type { Clock } from '../lib/clock';
@@ -9,6 +9,8 @@ import { newId } from '../lib/ids';
 import type { CommunicationManager } from './communication';
 import { toPublic, type IdentityManager } from './identity';
 import type { RelationManager } from './relations';
+import type { GameManager } from './games';
+import type { TableManager } from './tables';
 
 export const GROUP_MAX_DEFAULT = 8;
 export const GROUP_MAX_MIN = 2;
@@ -46,6 +48,15 @@ export class GroupManager {
     private deps: { comms: CommunicationManager; identities: IdentityManager; relations: RelationManager },
     private opts: { maxMembers: number },
   ) {}
+
+  private tables: TableManager | null = null;
+  private games: GameManager | null = null;
+
+  /** Wired once the table manager exists (it is built after the groups). */
+  setTables(tables: TableManager, games: GameManager): void {
+    this.tables = tables;
+    this.games = games;
+  }
 
   get maxMembers(): number {
     return this.opts.maxMembers;
@@ -127,6 +138,26 @@ export class GroupManager {
     await this.deps.comms.postSystem(groupChannel(groupId), `@${me.handle} added @${other.handle}.`);
     this.notify(await this.memberIds(groupId), me.id, groupId);
     return this.get(me, groupId);
+  }
+
+  /** Open a table for `gameId` and invite every other member who can take a seat; the rest come back named. */
+  async host(
+    me: IdentityPublic,
+    groupId: string,
+    gameId: unknown,
+  ): Promise<{ table: TableInfo; skipped: { handle: string; reason: 'away' | 'playing' | 'unavailable' }[] }> {
+    await this.requireMember(me, groupId);
+    if (typeof gameId !== 'string') throw badRequest('BAD_GAME', 'Send {"gameId": "critical-mass"}.');
+    const meta = this.games!.module(gameId).meta;
+    const ids = await this.memberIds(groupId);
+    if (ids.length > meta.maxPlayers) throw conflict('TOO_MANY_FOR_GAME', `Too many for ${meta.name} (${meta.maxPlayers} seats).`);
+    const others: IdentityPublic[] = [];
+    for (const id of ids) {
+      if (id === me.id) continue;
+      const who = await this.deps.identities.get(id);
+      if (who) others.push(who);
+    }
+    return this.tables!.hostWith(me, gameId, others);
   }
 
   async rename(me: IdentityPublic, groupId: string, raw: unknown): Promise<GroupInfo> {

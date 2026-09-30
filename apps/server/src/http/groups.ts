@@ -28,5 +28,10 @@ export function groupRoutes(core: Core): Hono<AppEnv> {
   app.delete('/groups/:id/bans/:handle', async (c) => c.json({ group: await g.unban(me(c), c.req.param('id'), c.req.param('handle')) }));
   app.post('/groups/:id/read', async (c) => c.json({ group: await g.read(me(c), c.req.param('id')) }));
   app.post('/groups/:id/close', async (c) => c.json({ group: await g.close(me(c), c.req.param('id')) }));
+  app.post('/groups/:id/host', async (c) => {
+    const who = me(c);
+    const b = await body(c);
+    return c.json(await g.host(who, c.req.param('id'), b.gameId), 201);
+  });
   return app;
 }

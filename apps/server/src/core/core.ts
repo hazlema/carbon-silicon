@@ -92,6 +92,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const groups = new GroupManager(database.db, clock, { comms, identities, relations }, { maxMembers: opts.groupMaxMembers ?? GROUP_MAX_DEFAULT });
   comms.setGroupHooks({ check: (a, g) => groups.check(a, g), view: (v, g) => groups.view(v, g), stored: (m, g) => groups.stored(m, g) });
   const tables = new TableManager({ games, presence, comms, identities, relations, guard, bus, clock });
+  groups.setTables(tables, games);
   const invites = new InviteManager(games, presence, bus, clock, guard, tables, { houseFallbackMs: opts.houseFallbackMs ?? 8000 });
   tables.setQueueLeaver((identityId) => invites.leave(identityId));
   const leaderboard = new LeaderboardManager(database.db);

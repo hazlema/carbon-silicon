@@ -35,6 +35,15 @@ async function messageOf(p: Promise<unknown>): Promise<string> {
   throw new Error('expected a rejection');
 }
 
+async function errorOf(p: Promise<unknown>): Promise<AppError> {
+  try {
+    await p;
+  } catch (e) {
+    return e as AppError;
+  }
+  throw new Error('expected a rejection');
+}
+
 /** A line in a group, past the two-second flood limit. */
 async function say(who: IdentityPublic, groupId: string, text: string) {
   clock.advance(2100);
@@ -360,5 +369,25 @@ describe('reports and moderation in a group', () => {
     await say(ben, g.id, 'noise');
     await say(cal, g.id, 'signal');
     expect((await core.groups.get(ann, g.id)).unread).toBe(1);
+  });
+});
+
+describe('host a table with everyone', () => {
+  test('invites every available member; the away and the busy are skipped and named', async () => {
+    const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
+    for (const p of [ann, ben]) core.presence.humanConnected(p); // ready
+    const g = await core.groups.create(ann, [ben.handle, cal.handle]); // cal never connected: away
+    const r = await core.groups.host(ann, g.id, 'critical-mass');
+    expect(r.table.invites.map((i) => i.to.id)).toEqual([ben.id]);
+    expect(r.skipped).toEqual([{ handle: cal.handle, reason: 'away' }]);
+  });
+
+  test('too many for the game is refused with the seat count', async () => {
+    const people = [];
+    for (let i = 0; i < 5; i++) people.push(await person('big'));
+    const g = await core.groups.create(people[0], people.slice(1).map((p) => p.handle));
+    core.presence.humanConnected(people[0]);
+    const e = await errorOf(core.groups.host(people[0], g.id, 'critical-mass'));
+    expect([e.status, e.code, e.message]).toEqual([409, 'TOO_MANY_FOR_GAME', 'Too many for Critical Mass (4 seats).']);
   });
 });
