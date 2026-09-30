@@ -41,11 +41,17 @@ test('the owner renames and removes; the removed one cannot be added back; Visib
   await dlg.getByRole('button', { name: 'Save' }).click();
   await expect(a.getByText('named this group "P0wn th3 mach1n3s"')).toBeVisible();
   await expect(dlg.getByRole('radio', { name: 'Public' })).toBeDisabled();
+  await expect(dlg.getByRole('heading', { name: /Members/ })).toContainText('3 of 8');
+  await expect(dlg.getByLabel('Name')).toHaveAttribute('maxlength', '32');
   await dlg.getByRole('button', { name: `Remove @${hc}` }).click();
   await dlg.getByRole('button', { name: 'Yes, remove' }).click();
   await expect(dlg.getByRole('button', { name: `Un-ban @${hc}` })).toBeVisible();
   const again = await b.request.post(`/api/groups/${g.id}/members`, { data: { handle: hc } });
   expect((await again.json()).error.code).toBe('GROUP_BANNED');
+  // Add someone… is in the settings too.
+  await dlg.getByRole('button', { name: 'Add someone…' }).click();
+  await expect(a.getByRole('dialog', { name: 'Add someone' })).toBeVisible();
+  await a.getByRole('button', { name: 'Cancel' }).click();
   // Esc closes the dialog and focus goes back to the ⋯ button.
   await a.keyboard.press('Escape');
   await expect(dlg).toBeHidden();

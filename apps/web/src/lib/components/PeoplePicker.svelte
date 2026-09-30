@@ -13,7 +13,10 @@
   let error = $state('');
   let busy = $state(false);
   const suggestions = $derived(
-    live.presence.map((p) => p.identity.handle).filter((h) => h !== live.me?.handle && !exclude.includes(h)),
+    live.presence
+      .filter((p) => !(p.identity.isHouse && p.identity.role === 'mod')) // the Bouncer reads reports, not chats
+      .map((p) => p.identity.handle)
+      .filter((h) => h !== live.me?.handle && !exclude.includes(h)),
   );
 
   $effect(() => {

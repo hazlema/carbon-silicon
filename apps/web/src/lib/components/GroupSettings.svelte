@@ -2,6 +2,7 @@
   import type { GroupInfo } from '@cs/shared/protocol';
   import { api } from '$lib/api';
   import { live } from '$lib/live.svelte';
+  import PeoplePicker from './PeoplePicker.svelte';
 
   /** A group's settings (spec M2d §2): its name, who is in it, and for the owner, who is out. */
   let { open = $bindable(false), group, leaving = false }: { open: boolean; group: GroupInfo; leaving?: boolean } = $props();
@@ -11,10 +12,12 @@
   let nameError = $state('');
   let error = $state('');
   let busy = $state(false);
+  let picking = $state(false);
   /** The one thing being confirmed: removing a handle, or leaving. */
   let confirm = $state<{ kind: 'remove'; handle: string } | { kind: 'leave' } | null>(null);
   const meId = $derived(live.me?.id ?? '');
   const isOwner = $derived(group.ownerId === meId);
+  const full = $derived(group.members.length >= group.maxMembers);
 
   $effect(() => {
     if (!dialog) return;
@@ -47,6 +50,9 @@
     }
   }
   const base = $derived(`/api/groups/${group.id}`);
+  async function add(handle: string) {
+    live.putGroup((await api<{ group: GroupInfo }>('POST', `${base}/members`, { handle })).group);
+  }
   const save = (e: SubmitEvent) => {
     e.preventDefault();
     return run('name', () => api('PATCH', base, { name }));
@@ -71,7 +77,7 @@
     <form onsubmit={save}>
       <label for="settings-name">Name</label>
       <div class="row">
-        <input id="settings-name" bind:value={name} maxlength="40" autocomplete="off" placeholder="Name this group" />
+        <input id="settings-name" bind:value={name} maxlength="32" autocomplete="off" placeholder="Name this group" />
         <button class="btn primary" type="submit" disabled={busy}>Save</button>
       </div>
       {#if nameError}<p class="error" role="alert">{nameError}</p>{/if}
@@ -85,7 +91,7 @@
     </fieldset>
 
     <section aria-labelledby="settings-members">
-      <h3 id="settings-members">Members</h3>
+      <h3 id="settings-members">Members <span class="count">{group.members.length} of {group.maxMembers}</span></h3>
       <ul>
         {#each group.members as m (m.identity.id)}
           <li>
@@ -111,6 +117,9 @@
           </li>
         {/each}
       </ul>
+      <button class="btn add" type="button" disabled={full} onclick={() => (picking = true)}
+        >Add someone…{#if full}<span class="count"> Full ({group.members.length} of {group.maxMembers})</span>{/if}</button
+      >
     </section>
 
     {#if isOwner && group.bans.length > 0}
@@ -144,6 +153,8 @@
     </footer>
   </div>
 </dialog>
+
+<PeoplePicker bind:open={picking} exclude={group.members.map((m) => m.identity.handle)} onsubmit={add} />
 
 <style>
   .settings {
@@ -255,6 +266,13 @@
   .crown {
     margin-right: 0.3rem;
     color: var(--carbon);
+  }
+  .count {
+    color: var(--dust);
+    font-weight: 400;
+  }
+  .add {
+    margin-top: 0.6rem;
   }
   .you {
     color: var(--dust);

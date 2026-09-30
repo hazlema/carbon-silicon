@@ -83,6 +83,7 @@
         <span class="about">Report about <strong>{who(r)}</strong>{#if r.target?.ownerHandle}<span class="owner"> · assistant of @{r.target.ownerHandle}</span>{/if} in <span class="chan">{channelLabel(r.snapshot.channel)}</span></span>
         <span class="when">{relativeTime(r.createdAt)}</span>
       </header>
+      {#if r.members && r.members.length > 0}<p class="members">members: {r.members.map((h) => `@${h}`).join(', ')}</p>{/if}
       <ol class="context">
         {#each contextLines(r) as line (line.messageId)}
           <li class:reported={line.reported}>
@@ -223,6 +224,7 @@
   .text {
     overflow-wrap: anywhere;
   }
+  .members,
   .meta,
   .resolved {
     margin: 0;

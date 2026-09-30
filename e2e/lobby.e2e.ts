@@ -39,3 +39,10 @@ test('the chat header is one line: #lobby and your conversations, no #critical-m
   await expect(nav.getByRole('button', { name: /critical-mass/ })).toHaveCount(0);
   await expect(nav.getByRole('button', { name: /diary/ })).toHaveCount(0);
 });
+
+test('a diary entry reaches #lobby as a system line, since #diary is not a tab', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await enter(page, `dry${randomTag()}`);
+  // The server announces every entry #diary hasn't seen when it boots; the e2e diary is the real one.
+  await expect(page.getByRole('log').getByText(/New diary entry: ".+" \/diary\//).first()).toBeVisible();
+});
