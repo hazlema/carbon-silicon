@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, lt, notInArray, or } from 'drizzle-orm';
 import { censorText, containsSlur } from '@cs/shared/filter';
 import {
   DIARY_CHANNEL,
@@ -247,7 +247,14 @@ export class CommunicationManager {
     const groupId = groupOf(channel);
     const view = groupId ? await this.groupHooks.view(opts.viewer, groupId) : null;
     const limit = Math.min(200, Math.max(1, opts.limit ?? 50));
-    const inChannel = view ? and(eq(messages.channel, channel), gt(messages.id, view.after)) : eq(messages.channel, channel);
+    // Lines by people the viewer ignores or blocks are left out in SQL, so a page is full of visible lines.
+    const inChannel = view
+      ? and(
+          eq(messages.channel, channel),
+          gt(messages.id, view.after),
+          view.hidden.length > 0 ? or(isNull(messages.authorId), notInArray(messages.authorId, view.hidden)) : undefined,
+        )
+      : eq(messages.channel, channel);
     const where =
       opts.since !== undefined
         ? and(inChannel, gt(messages.id, opts.since))
@@ -259,8 +266,7 @@ export class CommunicationManager {
       .orderBy(opts.since !== undefined ? asc(messages.id) : desc(messages.id))
       .limit(limit);
     const ordered = opts.since !== undefined ? rows : rows.reverse();
-    const hidden = new Set(view?.hidden ?? []);
-    return ordered.filter(({ m }) => !(m.authorId && hidden.has(m.authorId))).map((row) => toMessage(row, opts.viewer));
+    return ordered.map((row) => toMessage(row, opts.viewer));
   }
 
   async message(messageId: number, viewer?: IdentityPublic | null): Promise<ChatMessage | null> {

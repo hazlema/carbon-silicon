@@ -70,6 +70,11 @@ export class RelationManager {
     return byTarget;
   }
 
+  /** Everyone `ownerId` ignores or blocks. */
+  async mutedBy(ownerId: string): Promise<string[]> {
+    return [...(await this.lookup(ownerId)).keys()];
+  }
+
   /** Does `ownerId` ignore or block `authorId`? */
   async mutes(ownerId: string, authorId: string): Promise<boolean> {
     return (await this.lookup(ownerId)).has(authorId);

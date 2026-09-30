@@ -31,6 +31,11 @@ export function clampGroupMax(raw: string | undefined, warn: (m: string) => void
 
 type Group = typeof chatGroups.$inferSelect;
 type Member = typeof groupMembers.$inferSelect;
+/** "@b", "@b and @c", "@b, @c and @d". */
+function names(people: IdentityPublic[]): string {
+  const tags = people.map((p) => `@${p.handle}`);
+  return tags.length < 2 ? tags.join('') : `${tags.slice(0, -1).join(', ')} and ${tags[tags.length - 1]}`;
+}
 const bare = (h: string) => h.trim().replace(/^@/, '');
 
 /** Group chats (spec M2d §2): membership, the owner, bans, and each member's read state. */
@@ -55,10 +60,7 @@ export class GroupManager {
   async view(viewer: IdentityPublic | null | undefined, groupId: string): Promise<{ after: number; hidden: string[] }> {
     if (!viewer) throw forbidden('NOT_MEMBER', "You're not in this group.");
     const { member } = await this.requireMember(viewer, groupId);
-    const others = (await this.memberIds(groupId)).filter((id) => id !== viewer.id);
-    const hidden: string[] = [];
-    for (const id of others) if (await this.deps.relations.mutes(viewer.id, id)) hidden.push(id);
-    return { after: member.firstMessageId, hidden };
+    return { after: member.firstMessageId, hidden: await this.deps.relations.mutedBy(viewer.id) };
   }
 
   /** CommunicationManager hook, after a line is stored: who should see it now (for now, every member). */
@@ -76,7 +78,7 @@ export class GroupManager {
       const other = await this.target(me, handle);
       if (!people.some((p) => p.id === other.id)) people.push(other);
     }
-    if (people.length + 1 > this.opts.maxMembers) throw conflict('GROUP_FULL', `A group holds at most ${this.opts.maxMembers} people.`);
+    if (people.length + 1 > this.opts.maxMembers) throw conflict('GROUP_FULL', `This group is full (${this.opts.maxMembers} people).`);
     const id = newId('g');
     const first = await this.newestMessageId();
     await this.db.insert(chatGroups).values({ id, ownerId: me.id });
@@ -84,7 +86,7 @@ export class GroupManager {
     await this.db
       .insert(groupMembers)
       .values([me, ...people].map((p) => ({ groupId: id, identityId: p.id, joinedAt: at, firstMessageId: first })));
-    await this.deps.comms.postSystem(groupChannel(id), `@${me.handle} started this group with ${people.map((p) => `@${p.handle}`).join(', ')}.`);
+    await this.deps.comms.postSystem(groupChannel(id), `@${me.handle} started a group with ${names(people)}.`);
     this.notify(await this.memberIds(id), me.id, id);
     return this.get(me, id);
   }
@@ -92,7 +94,7 @@ export class GroupManager {
   async add(me: IdentityPublic, groupId: string, handle: string): Promise<GroupInfo> {
     const { group } = await this.requireMember(me, groupId);
     const [{ n }] = await this.db.select({ n: count() }).from(groupMembers).where(eq(groupMembers.groupId, groupId));
-    if (Number(n) >= this.opts.maxMembers) throw conflict('GROUP_FULL', `A group holds at most ${this.opts.maxMembers} people.`);
+    if (Number(n) >= this.opts.maxMembers) throw conflict('GROUP_FULL', `This group is full (${this.opts.maxMembers} people).`);
     const other = await this.target(me, handle, group);
     await this.db
       .insert(groupMembers)
@@ -105,8 +107,8 @@ export class GroupManager {
   async rename(me: IdentityPublic, groupId: string, raw: unknown): Promise<GroupInfo> {
     await this.requireMember(me, groupId);
     const name = typeof raw === 'string' ? raw.trim() : '';
-    if (name.length < 1 || name.length > MAX_NAME) throw badRequest('BAD_NAME', `A group's name is 1–${MAX_NAME} characters.`);
-    if (containsSlur(name) || containsProfanity(name)) throw badRequest('NAME_FILTERED', 'Pick a name fit for the lobby.');
+    if (name.length < 1 || name.length > MAX_NAME) throw badRequest('BAD_NAME', `A group name is 1–${MAX_NAME} characters.`);
+    if (containsSlur(name) || containsProfanity(name)) throw badRequest('NAME_FILTERED', 'Pick a different name for the group.');
     await this.db.update(chatGroups).set({ name }).where(eq(chatGroups.id, groupId));
     await this.deps.comms.postSystem(groupChannel(groupId), `@${me.handle} named this group "${name}".`);
     this.notify(await this.memberIds(groupId), me.id, groupId);
@@ -121,7 +123,7 @@ export class GroupManager {
       await this.leave(group, me, true);
       return null;
     }
-    if (group.ownerId !== me.id) throw forbidden('NOT_OWNER', 'Only the owner can remove people.');
+    if (group.ownerId !== me.id) throw forbidden('NOT_OWNER', "Only the group's owner can do that.");
     const other = await this.deps.identities.getByHandle(handle);
     const [row] = other ? await this.db.select().from(groupMembers).where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.identityId, other.id))) : [];
     if (!other || !row) throw forbidden('NOT_MEMBER', `@${handle} isn't in this group.`);
@@ -135,7 +137,7 @@ export class GroupManager {
 
   async unban(me: IdentityPublic, groupId: string, rawHandle: string): Promise<GroupInfo> {
     const { group } = await this.requireMember(me, groupId);
-    if (group.ownerId !== me.id) throw forbidden('NOT_OWNER', 'Only the owner can lift a ban.');
+    if (group.ownerId !== me.id) throw forbidden('NOT_OWNER', "Only the group's owner can do that.");
     const other = await this.deps.identities.getByHandle(bare(rawHandle));
     if (other) await this.db.delete(groupBans).where(and(eq(groupBans.groupId, groupId), eq(groupBans.identityId, other.id)));
     this.deps.comms.deliver(me.id, { type: 'group.changed', groupId });
@@ -234,12 +236,12 @@ export class GroupManager {
     const other = await this.deps.identities.getByHandle(handle);
     if (!other || other.released) throw notFound('NO_USER', `Nobody here goes by @${handle}.`);
     if (other.id === me.id) throw badRequest('SELF', "You're already in it.");
-    if (other.role === 'mod') throw conflict('HOUSE_AGENT', `@${other.handle} keeps to the lobby.`);
+    if (other.isHouse && other.role === 'mod') throw conflict('HOUSE_AGENT', 'The Bouncer reads reports, not chats.');
     if (group) {
       const [member] = await this.db.select().from(groupMembers).where(and(eq(groupMembers.groupId, group.id), eq(groupMembers.identityId, other.id)));
       if (member) throw conflict('ALREADY_MEMBER', `@${other.handle} is already in this group.`);
       const [ban] = await this.db.select().from(groupBans).where(and(eq(groupBans.groupId, group.id), eq(groupBans.identityId, other.id)));
-      if (ban) throw forbidden('GROUP_BANNED', `@${other.handle} was removed from this group. The owner can lift that.`);
+      if (ban) throw forbidden('GROUP_BANNED', `@${other.handle} was removed from this group.`);
     }
     const { relations } = this.deps;
     if (await relations.blocks(other.id, me.id)) throw forbidden('BLOCKED', `@${other.handle} isn't taking messages from you.`);

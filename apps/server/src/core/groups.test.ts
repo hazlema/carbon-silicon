@@ -26,6 +26,15 @@ async function codeOf(p: Promise<unknown>): Promise<string> {
   throw new Error('expected a rejection');
 }
 
+async function messageOf(p: Promise<unknown>): Promise<string> {
+  try {
+    await p;
+  } catch (e) {
+    return (e as AppError).message;
+  }
+  throw new Error('expected a rejection');
+}
+
 describe('groups', () => {
   test('start: the starter owns it, everyone is a member, a system line opens it', async () => {
     const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
@@ -35,6 +44,8 @@ describe('groups', () => {
     expect(g.members.find((m) => m.owner)?.identity.id).toBe(ann.id);
     expect(g.maxMembers).toBe(8);
     expect(g.channel).toBe(groupChannel(g.id));
+    const opening = (await core.comms.history(g.channel, { viewer: ann, limit: 5 })).find((m) => m.system);
+    expect(opening?.text).toBe(`@${ann.handle} started a group with @${ben.handle} and @${cal.handle}.`);
     expect((await core.groups.list(ben)).map((x) => x.id)).toContain(g.id);
   });
 
@@ -42,6 +53,8 @@ describe('groups', () => {
     const [ann, ben] = [await person('ann'), await person('ben')];
     const g = await core.groups.create(ann, [ben.handle, ben.handle]);
     expect(g.members).toHaveLength(2);
+    const opening = (await core.comms.history(g.channel, { viewer: ann, limit: 5 })).find((m) => m.system);
+    expect(opening?.text).toBe(`@${ann.handle} started a group with @${ben.handle}.`);
     expect(await codeOf(core.groups.create(ann, [ann.handle]))).toBe('SELF');
     expect(await codeOf(core.groups.create(ann, ['nobody_here_xyz']))).toBe('NO_USER');
     expect(await codeOf(core.groups.create(ann, []))).toBe('BAD_FIELD');
@@ -61,6 +74,7 @@ describe('groups', () => {
     const small = new GroupManager(core.database.db, clock, { comms: core.comms, identities: core.identities, relations: core.relations }, { maxMembers: 2 });
     const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
     const g = await small.create(ann, [ben.handle]);
+    expect(await messageOf(small.add(ann, g.id, cal.handle))).toBe('This group is full (2 people).');
     expect(await codeOf(small.add(ann, g.id, cal.handle))).toBe('GROUP_FULL');
     expect(await codeOf(small.create(ann, [ben.handle, cal.handle]))).toBe('GROUP_FULL');
   });
@@ -90,11 +104,13 @@ describe('groups', () => {
   test('remove bans; re-adding is refused until un-ban; only the owner removes or un-bans', async () => {
     const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
     const g = await core.groups.create(ann, [ben.handle, cal.handle]);
+    expect(await messageOf(core.groups.remove(ben, g.id, cal.handle))).toBe("Only the group's owner can do that.");
     expect(await codeOf(core.groups.remove(ben, g.id, cal.handle))).toBe('NOT_OWNER');
     await core.groups.remove(ann, g.id, cal.handle);
     expect((await core.groups.get(ann, g.id)).bans.map((b) => b.id)).toEqual([cal.id]);
     expect((await core.groups.get(ben, g.id)).bans).toEqual([]);
     expect(await codeOf(core.groups.get(cal, g.id))).toBe('NOT_MEMBER');
+    expect(await messageOf(core.groups.add(ben, g.id, cal.handle))).toBe(`@${cal.handle} was removed from this group.`);
     expect(await codeOf(core.groups.add(ben, g.id, cal.handle))).toBe('GROUP_BANNED');
     expect(await codeOf(core.groups.unban(ben, g.id, cal.handle))).toBe('NOT_OWNER');
     await core.groups.unban(ann, g.id, cal.handle);
@@ -137,5 +153,35 @@ describe('groups', () => {
     expect(await codeOf(core.comms.history(g.channel, { viewer: await person('dee'), limit: 5 }))).toBe('NOT_MEMBER');
     expect(await codeOf(core.comms.history(g.channel, { limit: 5 }))).toBe('NOT_MEMBER');
     expect((await core.groups.read(ben, g.id)).unread).toBe(0);
+  });
+
+  test('the Bouncer (a house mod) is refused; a human moderator can be added', async () => {
+    const [ann, ben] = [await person('ann'), await person('ben')];
+    const bouncer = await core.identities.setRole((await core.identities.registerAgent({ name: `bouncer${randomTag()}` }, 'hk')).identity.id, 'mod');
+    const human = await core.identities.setRole((await person('hm')).id, 'mod');
+    const g = await core.groups.create(ann, [ben.handle]);
+    expect(await codeOf(core.groups.add(ann, g.id, bouncer.handle))).toBe('HOUSE_AGENT');
+    expect(await messageOf(core.groups.add(ann, g.id, bouncer.handle))).toBe('The Bouncer reads reports, not chats.');
+    expect((await core.groups.add(ann, g.id, human.handle)).members).toHaveLength(3);
+  });
+
+  test('lines by someone you ignore stay hidden after they leave, and a page is still full', async () => {
+    const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
+    const g = await core.groups.create(ann, [ben.handle, cal.handle]);
+    await core.relations.set(ann, ben.handle, 'ignore');
+    const say = async (who: typeof ann, text: string) => {
+      clock.advance(2100);
+      return core.comms.post(who, g.channel, text);
+    };
+    await say(cal, 'visible one');
+    for (let i = 0; i < 6; i++) await say(ben, `noise ${i}`);
+    await say(cal, 'visible two');
+    await core.groups.remove(ben, g.id, ben.handle); // the muted author leaves
+    const page = await core.comms.history(g.channel, { viewer: ann, limit: 3 });
+    expect(page).toHaveLength(3);
+    expect(page.some((m) => m.text.startsWith('noise'))).toBe(false);
+    expect(page.some((m) => m.text === 'visible two')).toBe(true);
+    expect((await core.comms.history(g.channel, { viewer: ann, limit: 50 })).some((m) => m.text.startsWith('noise'))).toBe(false);
+    expect((await core.comms.history(g.channel, { viewer: cal, limit: 50 })).some((m) => m.text.startsWith('noise'))).toBe(true);
   });
 });
