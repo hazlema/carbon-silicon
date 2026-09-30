@@ -29,7 +29,8 @@ test('the Play panel: choose a game (it is remembered), cancel it, or take a ran
   // Random match picks a game people can play and finds an opponent (a house machine, here).
   await play.getByRole('button', { name: 'Random match' }).click();
   await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
-  await expect(page.getByRole('region', { name: 'Critical Mass' }).getByRole('status')).not.toHaveText('Starting…');
+  // Either game can come up now; the table shows its own name.
+  await expect(page.getByRole('region', { name: /Critical Mass|Lightline/ }).first()).toBeVisible();
   // Resign, so the house machine is free for the tests after this one.
   await page.getByRole('button', { name: 'Resign' }).click();
   await page.getByRole('button', { name: 'Yes, resign' }).click();

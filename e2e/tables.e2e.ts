@@ -35,7 +35,7 @@ test('/invite from the lobby chat reaches someone on their profile page, and acc
   await guest.goto(`/u/${guestHandle}`);
   // /invite needs the game catalog; Random match turns on once it has arrived.
   await expect(host.getByRole('region', { name: 'Play' }).getByRole('button', { name: 'Random match' })).toBeEnabled();
-  await host.getByLabel('Message #lobby').fill(`/invite @${guestHandle}`);
+  await host.getByLabel('Message #lobby').fill(`/invite @${guestHandle} critical-mass`);
   await host.getByRole('button', { name: 'Send' }).click();
   const card = guest.getByRole('group', { name: /Invite from/ });
   await expect(card).toBeVisible();
