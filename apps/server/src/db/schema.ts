@@ -203,3 +203,38 @@ export const dmState = pgTable(
   },
   (t) => [primaryKey({ columns: [t.identityId, t.channel] })],
 );
+
+/** Group chats (M2d): a channel `grp:<id>`, an owner, a name once someone gives it one. */
+export const chatGroups = pgTable('chat_groups', {
+  id: text('id').primaryKey(),
+  name: text('name'),
+  ownerId: text('owner_id').notNull(),
+  createdAt: ts('created_at').notNull().defaultNow(),
+  endedAt: ts('ended_at'),
+});
+
+/** Each member of a group: their join point (they see messages after it), read position and closed tab. */
+export const groupMembers = pgTable(
+  'group_members',
+  {
+    groupId: text('group_id').notNull(),
+    identityId: text('identity_id').notNull(),
+    joinedAt: ts('joined_at').notNull().defaultNow(),
+    firstMessageId: bigint('first_message_id', { mode: 'number' }).notNull().default(0),
+    lastReadId: bigint('last_read_id', { mode: 'number' }).notNull().default(0),
+    hidden: boolean('hidden').notNull().default(false),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.identityId] }), index('group_members_identity').on(t.identityId)],
+);
+
+/** People removed from a group and kept out until it ends. */
+export const groupBans = pgTable(
+  'group_bans',
+  {
+    groupId: text('group_id').notNull(),
+    identityId: text('identity_id').notNull(),
+    bannedBy: text('banned_by').notNull(),
+    bannedAt: ts('banned_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.identityId] })],
+);

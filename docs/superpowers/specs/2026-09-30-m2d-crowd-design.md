@@ -115,7 +115,7 @@ The group menu's **Host a table with everyone** opens the game chooser. Picking 
 | Event | To | When |
 |---|---|---|
 | `chat.group {groupId, message}` | members except the author (and anyone ignoring or blocking the author) | a line was posted |
-| `group.changed {group}` | members | someone joined, left or was removed; the group was renamed; the owner changed |
+| `group.changed {groupId}` | members | someone joined, left or was removed; the group was renamed; the owner changed; re-read `GET /api/groups/:id` |
 | `group.gone {groupId, reason}` | the person | you were removed (`removed`), or you left on another device (`left`) |
 | `group.read {groupId}` | your own sockets | you marked it read on another device |
 

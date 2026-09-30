@@ -149,6 +149,37 @@ export function dmParticipants(channel: string): [string, string] | null {
   return [m[1], m[2]];
 }
 
+export const groupChannel = (groupId: string): string => `grp:${groupId}`;
+
+const GRP_RE = /^grp:(g_[a-f0-9]{16})$/;
+
+/** The group of a `grp:` channel, or null. */
+export function groupOf(channel: string): string | null {
+  return GRP_RE.exec(channel)?.[1] ?? null;
+}
+
+export interface GroupMemberInfo {
+  identity: IdentityPublic;
+  joinedAt: string;
+  owner: boolean;
+}
+
+/** A group as one member sees it (spec M2d §5). */
+export interface GroupInfo {
+  id: string;
+  channel: string;
+  /** Null until someone names it; the web shows the members' handles instead. */
+  name: string | null;
+  ownerId: string;
+  members: GroupMemberInfo[];
+  maxMembers: number;
+  /** People removed and kept out; only the owner sees the list (others get []). */
+  bans: IdentityPublic[];
+  last: ChatMessage | null;
+  unread: number;
+  hidden: boolean;
+}
+
 /** One conversation as its viewer sees it (spec M2c §2). */
 export interface DmSummary {
   with: IdentityPublic;
@@ -179,6 +210,10 @@ export type InboxEvent =
   | (Stamp & { type: 'table.closed'; tableId: string; reason: string })
   | (Stamp & { type: 'chat.dm'; message: ChatMessage })
   | (Stamp & { type: 'dm.read'; channel: string })
+  | (Stamp & { type: 'chat.group'; message: ChatMessage })
+  | (Stamp & { type: 'group.changed'; groupId: string })
+  | (Stamp & { type: 'group.gone'; groupId: string; reason: 'removed' | 'left' })
+  | (Stamp & { type: 'group.read'; groupId: string })
   | (Stamp & { type: 'owner.changed'; owner: IdentityPublic | null })
   | (Stamp & { type: 'moderation.agent'; agent: IdentityPublic; kind: SanctionKind | 'lift' | 'removed'; reason: string; endsAt: string | null })
   | (Stamp & { type: 'system'; text: string });

@@ -4,6 +4,7 @@ import {
   DIARY_CHANNEL,
   RETIRED_CHANNELS,
   dmParticipants,
+  groupOf,
   tableChannel,
   type ChatMessage,
   type IdentityPublic,
@@ -30,7 +31,7 @@ const MENTION_RE = /@([A-Za-z0-9_-]{3,20})/g;
 /** Who may post at a table (or at a tableless match): null means it doesn't exist (any more). */
 type Access = (id: string) => { posters: string[] } | null;
 type MatchTable = (matchId: string) => Promise<string | null>;
-export type ChannelKind = 'public' | 'diary' | 'table' | 'rail' | 'match' | 'dm';
+export type ChannelKind = 'public' | 'diary' | 'table' | 'rail' | 'match' | 'dm' | 'group';
 /** True means "don't deliver": the mentioned person ignores or blocks the author. */
 type MentionFilter = (ownerId: string, authorId: string) => Promise<boolean>;
 
@@ -40,6 +41,15 @@ export interface DmHooks {
   check(author: IdentityPublic, otherId: string): Promise<void>;
   /** After a DM is stored: records it for both people and returns who should see it now. */
   stored(message: ChatMessage, otherId: string): Promise<string[]>;
+}
+/** GroupManager's side of a group line (spec M2d §2). */
+export interface GroupHooks {
+  /** Throws unless `author` may post in the group (NO_GROUP, NOT_MEMBER). */
+  check(author: IdentityPublic, groupId: string): Promise<void>;
+  /** What `viewer` may read: messages after `after`, minus lines by `hidden` authors. Throws NOT_MEMBER / NO_GROUP. */
+  view(viewer: IdentityPublic | null | undefined, groupId: string): Promise<{ after: number; hidden: string[] }>;
+  /** After a line is stored: records it, and returns who should see it now. */
+  stored(message: ChatMessage, groupId: string): Promise<string[]>;
 }
 type Row = { m: typeof messages.$inferSelect; i: typeof identities.$inferSelect | null };
 
@@ -72,6 +82,16 @@ export class CommunicationManager {
   private matchTable: MatchTable = async () => null;
   private mentionFilter: MentionFilter = async () => false;
   private dmHooks: DmHooks = { check: async () => {}, stored: async (m, other) => [m.author!.id, other] };
+
+  private groupHooks: GroupHooks = {
+    check: async () => {
+      throw forbidden('NOT_MEMBER', "You're not in this group.");
+    },
+    view: async () => {
+      throw forbidden('NOT_MEMBER', "You're not in this group.");
+    },
+    stored: async () => [],
+  };
 
   constructor(
     private db: DB,
@@ -106,6 +126,10 @@ export class CommunicationManager {
     this.dmHooks = hooks;
   }
 
+  setGroupHooks(hooks: GroupHooks): void {
+    this.groupHooks = hooks;
+  }
+
   channelKind(channel: string): ChannelKind | null {
     if (channel === DIARY_CHANNEL) return 'diary';
     if (this.opts.publicChannels.includes(channel)) return 'public';
@@ -113,6 +137,7 @@ export class CommunicationManager {
     if (RAIL_RE.test(channel)) return 'rail';
     if (MATCH_RE.test(channel)) return 'match';
     if (dmParticipants(channel)) return 'dm';
+    if (groupOf(channel) !== null) return 'group';
     return null;
   }
 
@@ -219,19 +244,23 @@ export class CommunicationManager {
     if (pair && !(opts.viewer && pair.includes(opts.viewer.id))) {
       throw forbidden('NOT_YOURS', 'Only the two people in a conversation can read it.');
     }
+    const groupId = groupOf(channel);
+    const view = groupId ? await this.groupHooks.view(opts.viewer, groupId) : null;
     const limit = Math.min(200, Math.max(1, opts.limit ?? 50));
+    const inChannel = view ? and(eq(messages.channel, channel), gt(messages.id, view.after)) : eq(messages.channel, channel);
     const where =
       opts.since !== undefined
-        ? and(eq(messages.channel, channel), gt(messages.id, opts.since))
+        ? and(inChannel, gt(messages.id, opts.since))
         : opts.before !== undefined
-          ? and(eq(messages.channel, channel), lt(messages.id, opts.before))
-          : eq(messages.channel, channel);
+          ? and(inChannel, lt(messages.id, opts.before))
+          : inChannel;
     const rows = await this.select()
       .where(where)
       .orderBy(opts.since !== undefined ? asc(messages.id) : desc(messages.id))
       .limit(limit);
     const ordered = opts.since !== undefined ? rows : rows.reverse();
-    return ordered.map((row) => toMessage(row, opts.viewer));
+    const hidden = new Set(view?.hidden ?? []);
+    return ordered.filter(({ m }) => !(m.authorId && hidden.has(m.authorId))).map((row) => toMessage(row, opts.viewer));
   }
 
   async message(messageId: number, viewer?: IdentityPublic | null): Promise<ChatMessage | null> {

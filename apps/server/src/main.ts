@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { BRAND } from '@cs/shared/brand';
 import { LiveText } from '@cs/shared/live-text';
 import { createCore } from './core/core';
+import { clampGroupMax } from './core/groups';
 import { clampFloor } from './core/realtime';
 import { createApp } from './http/app';
 import { secretFromEnv } from './lib/secrets';
@@ -24,6 +25,7 @@ const core = await createCore({
   houseKey,
   diaryDir: join(root, 'diary'),
   doctrineFloorMs: clampFloor(env.DOCTRINE_FLOOR_MS, console.warn),
+  groupMaxMembers: clampGroupMax(env.GROUP_MAX_MEMBERS, console.warn),
 });
 
 // Docs and games' rules are re-read when their files change, so editing them needs no restart.
