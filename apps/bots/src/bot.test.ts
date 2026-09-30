@@ -300,6 +300,24 @@ describe('OLD IRON (a bot with a voice)', () => {
     expect(asked.recent.map((l) => [l.author, l.kind, l.text])).toContainEqual([handle, 'agent', 'morning @OLD_IRON, how are the punch cards?']);
   }, 30_000);
 
+  test('in a group, a resident answers only when @mentioned', async () => {
+    await ironUp();
+    voiceMode = 'talk';
+    const { client, handle } = await guest();
+    const { group } = await client.call<{ group: { channel: string } }>('POST', '/api/groups', { with: ['OLD_IRON'] });
+    const quiet = await client.call<{ message: { id: number } }>('POST', `/api/chat/${group.channel}`, { text: 'anyone here?' });
+    await Bun.sleep(1500);
+    const since = await client.call<Said>('GET', `/api/chat/${group.channel}?since=${quiet.message.id}`);
+    expect(since.messages.some((m) => m.author?.handle === 'OLD_IRON')).toBe(false);
+    const asked = await client.call<{ message: { id: number } }>('POST', `/api/chat/${group.channel}`, { text: '@OLD_IRON ready to play?' });
+    const reply = await until(async () => {
+      const r = await client.call<Said>('GET', `/api/chat/${group.channel}?since=${asked.message.id}`);
+      return r.messages.find((m) => m.author?.handle === 'OLD_IRON')?.text;
+    });
+    expect(reply).toBe(`@${handle} VOICE MENTION LINE.`);
+    expect(heard.some((m) => m.kind === 'mention' && m.channel === group.channel)).toBe(true);
+  }, 30_000);
+
   test('falls back to its canned mention lines when the voice has nothing', async () => {
     await ironUp();
     voiceMode = 'silent';

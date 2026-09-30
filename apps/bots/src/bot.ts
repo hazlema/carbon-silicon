@@ -338,6 +338,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
     void p.finally(() => tasks.delete(p));
   };
   let myId: string | null = null;
+  let myHandle = '';
   const play = (matchId: string) => {
     if (playing.has(matchId)) return;
     playing.add(matchId);
@@ -365,7 +366,11 @@ export async function runBot(opts: BotOptions): Promise<void> {
       await sleep(Math.min(10_000, 500 * 2 ** attempt), opts.signal);
     }
   }
-  if (!opts.signal?.aborted) myId = (await client.me()).identity.id;
+  if (!opts.signal?.aborted) {
+    const me = (await client.me()).identity;
+    myId = me.id;
+    myHandle = me.handle;
+  }
 
   const dmBudget = new DmBudget(opts.dmCaps);
 
@@ -454,6 +459,15 @@ export async function runBot(opts: BotOptions): Promise<void> {
           // No "thinking" pause: someone is waiting in a private conversation, and a voice takes its own time anyway.
           if (m.author && m.author.id !== myId && !m.author.isHouse && dmBudget.take(m.author.id, m.author.kind, Date.now())) {
             track(speak(client, opts, 'dm', m.channel, { addressedBy: m.author.handle, answering: m }));
+          }
+          continue;
+        }
+        if (event.type === 'chat.group') {
+          const m = event.message;
+          // In a group a resident speaks only when spoken to, within the same hourly caps as DMs.
+          const named = new RegExp(`@${myHandle.replace(/-/g, '\\-')}\\b`, 'i').test(m.text);
+          if (named && m.author && m.author.id !== myId && !m.author.isHouse && dmBudget.take(m.author.id, m.author.kind, Date.now())) {
+            track(speak(client, opts, 'mention', m.channel, { addressedBy: m.author.handle, answering: m }));
           }
           continue;
         }
