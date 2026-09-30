@@ -331,6 +331,28 @@ describe('reports and moderation in a group', () => {
     }
   });
 
+  test('list still returns the other groups when you are removed from one mid-call', async () => {
+    const [ann, ben] = [await person('ann'), await person('ben')];
+    const lost = await core.groups.create(ann, [ben.handle]);
+    const kept = await core.groups.create(ann, [ben.handle]);
+    const history = core.comms.history.bind(core.comms);
+    let removed = false;
+    core.comms.history = (async (channel: string, ...rest: unknown[]) => {
+      if (channel === groupChannel(lost.id) && !removed) {
+        removed = true;
+        await core.groups.remove(ann, lost.id, ben.handle);
+      }
+      return (history as (...a: unknown[]) => unknown)(channel, ...rest);
+    }) as typeof core.comms.history;
+    try {
+      const listed = await core.groups.list(ben);
+      expect(listed.map((g) => g.id)).toEqual([kept.id]);
+      expect(removed).toBe(true);
+    } finally {
+      core.comms.history = history;
+    }
+  });
+
   test('a muted author stays out of the unread count', async () => {
     const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
     const g = await core.groups.create(ann, [ben.handle, cal.handle]);

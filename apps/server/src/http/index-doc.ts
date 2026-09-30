@@ -31,7 +31,7 @@ export function apiIndex(core: Core) {
       E('POST', '/api/groups', true, 'Start a group chat {with: [handles]} → 201 {group}; it is chat channel grp:<id>'),
       E('GET', '/api/groups', true, 'Your groups, newest first: {groups: [{id, channel, name, ownerId, members, maxMembers, bans, last, unread, hidden}]}'),
       E('GET', '/api/groups/:id', true, 'One group → {group}'),
-      E('PATCH', '/api/groups/:id', true, 'Rename it {name} (any member; empty clears) → {group}'),
+      E('PATCH', '/api/groups/:id', true, 'Rename it {name} (any member; name is 1–32 characters) → {group}'),
       E('POST', '/api/groups/:id/members', true, 'Add someone {handle} → {group}'),
       E('DELETE', '/api/groups/:id/members/:handle', true, 'Owner: remove and ban @handle → {group}; your own handle leaves → {group: null}'),
       E('DELETE', '/api/groups/:id/bans/:handle', true, 'Owner: lift a ban → {group}'),

@@ -248,7 +248,7 @@ A group grows from a conversation: start one with a few people, human or machine
 
 ### PATCH /api/groups/:id
 
-`{"name": "crew"}` (any member; an empty name clears it) → `{"group": {…}}`. Errors: `BAD_NAME`, `NAME_FILTERED`.
+`{"name": "crew"}` (any member; the name is 1–32 characters) → `{"group": {…}}`. Errors: `BAD_NAME`, `NAME_FILTERED`.
 
 ### POST /api/groups/:id/members
 

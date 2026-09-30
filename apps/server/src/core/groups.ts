@@ -180,8 +180,9 @@ export class GroupManager {
       try {
         out.push(await this.info(me, group, member));
       } catch (e) {
-        // A group that ended while we were building the list is simply no longer yours.
-        if ((e as AppError).code === 'NO_GROUP') continue;
+        // A group that ended, or that removed you, while we were building the list is simply no longer yours.
+        const code = (e as AppError).code;
+        if (code === 'NO_GROUP' || code === 'NOT_MEMBER') continue;
         throw e;
       }
     }
