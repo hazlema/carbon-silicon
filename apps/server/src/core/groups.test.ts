@@ -90,7 +90,7 @@ describe('groups', () => {
   });
 
   test('a group holds at most GROUP_MAX_MEMBERS people', async () => {
-    const small = new GroupManager(core.database.db, clock, { comms: core.comms, identities: core.identities, relations: core.relations }, { maxMembers: 2 });
+    const small = new GroupManager(core.database.db, clock, { comms: core.comms, identities: core.identities, relations: core.relations, guard: core.guard }, { maxMembers: 2 });
     const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
     const g = await small.create(ann, [ben.handle]);
     expect(await messageOf(small.add(ann, g.id, cal.handle))).toBe('This group is full (2 people).');
@@ -159,6 +159,81 @@ describe('groups', () => {
     const g = await core.groups.create(ann, [ben.handle]);
     await core.groups.forget(ben.id);
     expect((await core.groups.get(ann, g.id)).members.map((m) => m.identity.id)).toEqual([ann.id]);
+  });
+
+  test('a released name leaves a tombstone line, not the scrubbed handle', async () => {
+    const [ann, ben] = [await person('ann'), await person('ben')];
+    const g = await core.groups.create(ann, [ben.handle]);
+    await core.accounts.release(ben.id);
+    const lines = (await core.comms.history(g.channel, { viewer: ann, limit: 20 })).filter((m) => m.system).map((m) => m.text);
+    expect(lines).toContain('Someone left; their name was given back.');
+    expect(lines.some((t) => t.includes('~'))).toBe(false);
+  });
+
+  test('a muted or suspended person cannot start, add or rename', async () => {
+    const [ann, ben, cal, dee] = [await person('ann'), await person('ben'), await person('cal'), await person('dee')];
+    const g = await core.groups.create(ann, [ben.handle]);
+    await core.moderation.mute({ kind: 'console' }, ann.id, 'shouting', 10);
+    expect(await codeOf(core.groups.create(ann, [cal.handle]))).toBe('MUTED');
+    expect(await codeOf(core.groups.add(ann, g.id, cal.handle))).toBe('MUTED');
+    expect(await codeOf(core.groups.rename(ann, g.id, 'Loud'))).toBe('MUTED');
+    await core.moderation.suspend({ kind: 'console' }, dee.id, 'timeout', 10);
+    expect(await codeOf(core.groups.create(dee, [cal.handle]))).toBe('SUSPENDED');
+    const h = await core.groups.create(cal, [ben.handle]);
+    await core.groups.add(cal, h.id, dee.handle);
+    expect(await codeOf(core.groups.add(dee, h.id, (await person('eve')).handle))).toBe('SUSPENDED');
+    expect(await codeOf(core.groups.rename(dee, h.id, 'Quiet'))).toBe('SUSPENDED');
+  });
+
+  test('create, add and rename draw on the chat flood limit, and time gives it back', async () => {
+    const [ann, ben] = [await person('ann'), await person('ben')];
+    clock.advance(60_000); // a full bucket
+    const made: string[] = [];
+    for (let i = 0; i < 5; i++) made.push((await core.groups.create(ann, [ben.handle])).id);
+    const err = await errorOf(core.groups.create(ann, [ben.handle]));
+    expect(err.code).toBe('SLOW_DOWN');
+    expect(err.status).toBe(429);
+    expect(await codeOf(core.groups.rename(ann, made[0], 'Again'))).toBe('SLOW_DOWN');
+    expect(await codeOf(core.groups.add(ann, made[0], (await person('cal')).handle))).toBe('SLOW_DOWN');
+    clock.advance(2100);
+    await core.groups.rename(ann, made[0], 'Again');
+    expect(await codeOf(core.groups.rename(ann, made[0], 'Once more'))).toBe('SLOW_DOWN');
+    clock.advance(2100);
+    await core.groups.add(ann, made[0], (await person('dee')).handle);
+  });
+
+  test('group.changed reaches every member, the one who made the change too', async () => {
+    const [ann, ben, cal] = [await person('ann'), await person('ben'), await person('cal')];
+    const g = await core.groups.create(ann, [ben.handle]);
+    const seen: string[] = [];
+    const deliver = core.comms.deliver.bind(core.comms);
+    core.comms.deliver = (id, ev) => {
+      if (ev.type === 'group.changed') seen.push(id);
+      return deliver(id, ev);
+    };
+    try {
+      clock.advance(2100);
+      await core.groups.add(ann, g.id, cal.handle);
+      expect(seen.sort()).toEqual([ann.id, ben.id, cal.id].sort());
+    } finally {
+      core.comms.deliver = deliver;
+    }
+  });
+
+  test('the list holds the 50 newest', async () => {
+    const [ann, ben] = [await person('ann'), await person('ben')];
+    for (let i = 0; i < 52; i++) {
+      clock.advance(2100);
+      await core.groups.create(ann, [ben.handle]);
+    }
+    expect(await core.groups.list(ann)).toHaveLength(50);
+  });
+
+  test('unban: an unknown name is NO_USER, someone not banned is a quiet success', async () => {
+    const [ann, ben] = [await person('ann'), await person('ben')];
+    const g = await core.groups.create(ann, [ben.handle]);
+    expect(await codeOf(core.groups.unban(ann, g.id, 'nobody_here_xyz'))).toBe('NO_USER');
+    expect((await core.groups.unban(ann, g.id, ben.handle)).id).toBe(g.id);
   });
 
   test('history: members only, from where they joined on; info counts what others said', async () => {

@@ -180,9 +180,14 @@ export class CommunicationManager {
     if (text.length > MAX_TEXT) throw badRequest('TOO_LONG', `Messages are at most ${MAX_TEXT} characters.`);
     // Slurs are refused everywhere, table chat included; trash talk stays, cruelty does not.
     if (containsSlur(text)) throw badRequest('FILTERED', 'That message contains a slur. Not here, not ever.');
-    if (!this.flood.take(author.id)) throw tooMany('SLOW_DOWN', 'Easy there — one message every two seconds.');
+    this.spend(author);
     // Players' table talk is uncensored (trash talk is the point); the rail is a public room.
     return this.insert(channel, author, kind === 'public' || kind === 'rail' ? censorText(text) : text, false);
+  }
+
+  /** One token from the chat flood limiter (5 burst, then one per two seconds): posts, and group create/add/rename, all draw on it. */
+  spend(author: IdentityPublic): void {
+    if (!this.flood.take(author.id)) throw tooMany('SLOW_DOWN', 'Easy there — one message every two seconds.');
   }
 
   async postSystem(channel: string, text: string): Promise<ChatMessage> {

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { badRequest } from '../lib/errors';
 import type { Core } from '../core/core';
 import type { AppEnv } from './app';
 import { body, me } from './request';
@@ -22,7 +23,8 @@ export function groupRoutes(core: Core): Hono<AppEnv> {
   app.post('/groups/:id/members', async (c) => {
     const who = me(c);
     const b = await body(c);
-    return c.json({ group: await g.add(who, c.req.param('id'), typeof b.handle === 'string' ? b.handle : '') });
+    if (typeof b.handle !== 'string' || b.handle.trim().replace(/^@/, '') === '') throw badRequest('BAD_FIELD', 'Send {"handle": "…"}.');
+    return c.json({ group: await g.add(who, c.req.param('id'), b.handle) });
   });
   app.delete('/groups/:id/members/:handle', async (c) => c.json({ group: await g.remove(me(c), c.req.param('id'), c.req.param('handle')) }));
   app.delete('/groups/:id/bans/:handle', async (c) => c.json({ group: await g.unban(me(c), c.req.param('id'), c.req.param('handle')) }));

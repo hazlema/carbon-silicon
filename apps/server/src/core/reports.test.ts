@@ -40,6 +40,22 @@ async function codeOf(p: Promise<unknown>): Promise<string> {
   throw new Error('expected a rejection');
 }
 
+describe('reporting a group line', () => {
+  test('the stored evidence lists the members as they were', async () => {
+    const [ann, bob, cal] = [await person('ann'), await person('bob'), await person('cal')];
+    const g = await core.groups.create(ann, [bob.handle, cal.handle]);
+    clock.advance(2100);
+    const line = await core.comms.post(bob, g.channel, 'rude thing');
+    const report = await core.reports.create(ann, line.id, null);
+    expect(report.snapshot.channel).toBe(g.channel);
+    expect(report.members?.sort()).toEqual([ann.handle, bob.handle, cal.handle].sort());
+    await core.groups.remove(ann, g.id, cal.handle);
+    expect((await core.reports.get(report.id)).members).toHaveLength(3);
+    const lobby = await core.comms.post(bob, 'lobby', 'hello');
+    expect((await core.reports.create(ann, lobby.id, null)).members).toBeUndefined();
+  });
+});
+
 describe('ignore and block', () => {
   test("ignoring someone stops their @mentions reaching your inbox; clearing restores them", async () => {
     const ann = await person('ann');

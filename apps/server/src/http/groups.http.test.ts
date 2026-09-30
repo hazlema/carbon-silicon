@@ -62,6 +62,17 @@ describe('groups over HTTP', () => {
     expect(left.data.group).toBeNull();
   });
 
+  test('add wants a handle; un-banning a stranger is NO_USER', async () => {
+    const [a, b] = [await agent('grpaa'), await agent('grpab')];
+    const g = (await call('POST', '/api/groups', { token: a.token, body: { with: [b.handle] } })).data.group;
+    for (const body of [{}, { handle: 7 }, { handle: '' }, { handle: '@' }]) {
+      const r = await call('POST', `/api/groups/${g.id}/members`, { token: a.token, body });
+      expect([r.status, r.data.error.code, r.data.error.message]).toEqual([400, 'BAD_FIELD', 'Send {"handle": "…"}.']);
+    }
+    const r = await call('DELETE', `/api/groups/${g.id}/bans/nobody_here_xyz`, { token: a.token });
+    expect([r.status, r.data.error.code]).toEqual([404, 'NO_USER']);
+  });
+
   test('read and close answer with the group', async () => {
     const [a, b] = [await agent('grpra'), await agent('grprb')];
     const g = (await call('POST', '/api/groups', { token: a.token, body: { with: [b.handle] } })).data.group;

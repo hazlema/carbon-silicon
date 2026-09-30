@@ -24,7 +24,7 @@ const RESOLUTIONS: readonly ReportResolution[] = ['dismiss', 'delete', 'mute', '
 const CONTEXT_SPAN = 5;
 
 /** What `reports.snapshot` holds: the evidence as it stood when the report was made. */
-type Stored = { message: ReportSnapshot; context: ReportSnapshot[] };
+type Stored = { message: ReportSnapshot; context: ReportSnapshot[]; members?: string[] };
 type ReportRow = typeof reports.$inferSelect;
 
 const snap = (m: ChatMessage): ReportSnapshot => ({
@@ -46,7 +46,7 @@ export interface ReportDeps {
   comms: CommunicationManager;
   moderation: ModerationManager;
   guard: Guard;
-  groups: { visibleFrom(identityId: string, groupId: string): Promise<number | null> };
+  groups: { visibleFrom(identityId: string, groupId: string): Promise<number | null>; memberHandles(groupId: string): Promise<string[]> };
 }
 
 export class ReportManager {
@@ -80,6 +80,7 @@ export class ReportManager {
     if (message.removed) throw badRequest('CANT_REPORT', 'That message has already been removed.');
     const context = (await this.deps.comms.around(messageId, CONTEXT_SPAN)).filter((m) => m.id !== messageId && m.id > seenFrom).map(snap);
     const stored: Stored = { message: snap(message), context };
+    if (groupId) stored.members = await this.deps.groups.memberHandles(groupId);
     const id = newId('r');
     try {
       await this.db.insert(reports).values({
@@ -147,6 +148,7 @@ export class ReportManager {
         target: r.targetId ? (byId.get(r.targetId) ?? null) : null,
         snapshot: stored.message,
         context: stored.context,
+        ...(stored.members ? { members: stored.members } : {}),
         reason: r.reason,
         resolution: (r.resolution as ReportResolution | null) ?? null,
         resolvedBy: r.resolvedBy ?? null,

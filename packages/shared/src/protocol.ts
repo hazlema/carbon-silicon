@@ -357,6 +357,8 @@ export interface ReportInfo {
   snapshot: ReportSnapshot;
   /** Up to 5 lines before and after the reported one, same channel, oldest first. */
   context: ReportSnapshot[];
+  /** For a group chat: the handles of its members when the report was made. */
+  members?: string[];
   reason: string | null;
   resolution: ReportResolution | null;
   resolvedBy: string | null;

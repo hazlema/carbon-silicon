@@ -89,7 +89,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const relations = new RelationManager(database.db, identities);
   const dms = new DmManager(database.db, { comms, identities, relations });
   comms.setDmHooks({ check: (author, otherId) => dms.check(author, otherId), stored: (message, otherId) => dms.stored(message, otherId) });
-  const groups = new GroupManager(database.db, clock, { comms, identities, relations }, { maxMembers: opts.groupMaxMembers ?? GROUP_MAX_DEFAULT });
+  const groups = new GroupManager(database.db, clock, { comms, identities, relations, guard }, { maxMembers: opts.groupMaxMembers ?? GROUP_MAX_DEFAULT });
   comms.setGroupHooks({ check: (a, g) => groups.check(a, g), view: (v, g) => groups.view(v, g), stored: (m, g) => groups.stored(m, g) });
   const tables = new TableManager({ games, presence, comms, identities, relations, guard, bus, clock });
   groups.setTables(tables, games);

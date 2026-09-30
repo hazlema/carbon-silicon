@@ -7,6 +7,7 @@ import type { Clock } from '../lib/clock';
 import { badRequest, conflict, forbidden, notFound, type AppError } from '../lib/errors';
 import { newId } from '../lib/ids';
 import type { CommunicationManager } from './communication';
+import type { Guard } from './guard';
 import { toPublic, type IdentityManager } from './identity';
 import type { RelationManager } from './relations';
 import type { GameManager } from './games';
@@ -17,6 +18,7 @@ export const GROUP_MAX_MIN = 2;
 export const GROUP_MAX_MAX = 50;
 const MAX_UNREAD = 99;
 const MAX_NAME = 32;
+const MAX_LISTED = 50;
 
 /** GROUP_MAX_MEMBERS from the environment: 8 by default, held to 2–50. */
 export function clampGroupMax(raw: string | undefined, warn: (m: string) => void): number {
@@ -45,7 +47,7 @@ export class GroupManager {
   constructor(
     private db: DB,
     private clock: Clock,
-    private deps: { comms: CommunicationManager; identities: IdentityManager; relations: RelationManager },
+    private deps: { comms: CommunicationManager; identities: IdentityManager; relations: RelationManager; guard: Guard },
     private opts: { maxMembers: number },
   ) {}
 
@@ -104,7 +106,13 @@ export class GroupManager {
     return row ? row.first : null;
   }
 
+  /** Sanctions apply as everywhere, and a change that speaks for the group costs a chat token. */
+  private gate(me: IdentityPublic): void {
+    this.deps.guard.assert(me, 'chat');
+  }
+
   async create(me: IdentityPublic, withHandles: unknown): Promise<GroupInfo> {
+    this.gate(me);
     if (!Array.isArray(withHandles) || withHandles.length === 0 || withHandles.some((h) => typeof h !== 'string')) {
       throw badRequest('BAD_FIELD', 'Send {"with": ["handle", …]}.');
     }
@@ -115,6 +123,7 @@ export class GroupManager {
       if (!people.some((p) => p.id === other.id)) people.push(other);
     }
     if (people.length + 1 > this.opts.maxMembers) throw conflict('GROUP_FULL', `This group is full (${this.opts.maxMembers} people).`);
+    this.deps.comms.spend(me);
     const id = newId('g');
     const first = await this.newestMessageId();
     await this.db.insert(chatGroups).values({ id, ownerId: me.id });
@@ -123,20 +132,22 @@ export class GroupManager {
       .insert(groupMembers)
       .values([me, ...people].map((p) => ({ groupId: id, identityId: p.id, joinedAt: at, firstMessageId: first })));
     await this.deps.comms.postSystem(groupChannel(id), `@${me.handle} started a group with ${names(people)}.`);
-    this.notify(await this.memberIds(id), me.id, id);
+    this.notify(await this.memberIds(id), id);
     return this.get(me, id);
   }
 
   async add(me: IdentityPublic, groupId: string, handle: string): Promise<GroupInfo> {
+    this.gate(me);
     const { group } = await this.requireMember(me, groupId);
     const [{ n }] = await this.db.select({ n: count() }).from(groupMembers).where(eq(groupMembers.groupId, groupId));
     if (Number(n) >= this.opts.maxMembers) throw conflict('GROUP_FULL', `This group is full (${this.opts.maxMembers} people).`);
     const other = await this.target(me, handle, group);
+    this.deps.comms.spend(me);
     await this.db
       .insert(groupMembers)
       .values({ groupId, identityId: other.id, joinedAt: new Date(this.clock.now()), firstMessageId: await this.newestMessageId() });
     await this.deps.comms.postSystem(groupChannel(groupId), `@${me.handle} added @${other.handle}.`);
-    this.notify(await this.memberIds(groupId), me.id, groupId);
+    this.notify(await this.memberIds(groupId), groupId);
     return this.get(me, groupId);
   }
 
@@ -161,13 +172,15 @@ export class GroupManager {
   }
 
   async rename(me: IdentityPublic, groupId: string, raw: unknown): Promise<GroupInfo> {
+    this.gate(me);
     await this.requireMember(me, groupId);
     const name = typeof raw === 'string' ? raw.trim() : '';
     if (name.length < 1 || name.length > MAX_NAME) throw badRequest('BAD_NAME', `A group name is 1–${MAX_NAME} characters.`);
     if (containsSlur(name) || containsProfanity(name)) throw badRequest('NAME_FILTERED', 'Pick a different name for the group.');
+    this.deps.comms.spend(me);
     await this.db.update(chatGroups).set({ name }).where(eq(chatGroups.id, groupId));
     await this.deps.comms.postSystem(groupChannel(groupId), `@${me.handle} named this group "${name}".`);
-    this.notify(await this.memberIds(groupId), me.id, groupId);
+    this.notify(await this.memberIds(groupId), groupId);
     return this.get(me, groupId);
   }
 
@@ -187,7 +200,7 @@ export class GroupManager {
     await this.db.insert(groupBans).values({ groupId, identityId: other.id, bannedBy: me.id, bannedAt: new Date(this.clock.now()) });
     await this.deps.comms.postSystem(groupChannel(groupId), `@${other.handle} was removed.`);
     this.deps.comms.deliver(other.id, { type: 'group.gone', groupId, reason: 'removed' });
-    this.notify(await this.memberIds(groupId), me.id, groupId);
+    this.notify(await this.memberIds(groupId), groupId);
     return this.get(me, groupId);
   }
 
@@ -195,7 +208,8 @@ export class GroupManager {
     const { group } = await this.requireMember(me, groupId);
     if (group.ownerId !== me.id) throw forbidden('NOT_OWNER', "Only the group's owner can do that.");
     const other = await this.deps.identities.getByHandle(bare(rawHandle));
-    if (other) await this.db.delete(groupBans).where(and(eq(groupBans.groupId, groupId), eq(groupBans.identityId, other.id)));
+    if (!other || other.released) throw notFound('NO_USER', `Nobody here goes by @${bare(rawHandle)}.`);
+    await this.db.delete(groupBans).where(and(eq(groupBans.groupId, groupId), eq(groupBans.identityId, other.id)));
     this.deps.comms.deliver(me.id, { type: 'group.changed', groupId });
     return this.get(me, groupId);
   }
@@ -217,7 +231,7 @@ export class GroupManager {
         throw e;
       }
     }
-    return out.sort((a, b) => (b.last?.id ?? 0) - (a.last?.id ?? 0));
+    return out.sort((a, b) => (b.last?.id ?? 0) - (a.last?.id ?? 0)).slice(0, MAX_LISTED);
   }
 
   async get(me: IdentityPublic, groupId: string): Promise<GroupInfo> {
@@ -252,6 +266,17 @@ export class GroupManager {
     return rows.map((r) => r.id);
   }
 
+  /** The handles of a live group's members, oldest member first (a report keeps them as evidence). */
+  async memberHandles(groupId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ handle: identities.handle })
+      .from(groupMembers)
+      .innerJoin(identities, eq(groupMembers.identityId, identities.id))
+      .where(eq(groupMembers.groupId, groupId))
+      .orderBy(asc(groupMembers.joinedAt), asc(groupMembers.identityId));
+    return rows.map((r) => r.handle);
+  }
+
   /** Release hook: a released name leaves every group it was in (the lines stay). */
   async forget(identityId: string): Promise<void> {
     const person = await this.deps.identities.get(identityId);
@@ -270,7 +295,7 @@ export class GroupManager {
   private async leave(group: Group, me: IdentityPublic, tellThem: boolean): Promise<void> {
     const groupId = group.id;
     await this.db.delete(groupMembers).where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.identityId, me.id)));
-    await this.deps.comms.postSystem(groupChannel(groupId), `@${me.handle} left.`);
+    await this.deps.comms.postSystem(groupChannel(groupId), me.released ? 'Someone left; their name was given back.' : `@${me.handle} left.`);
     if (tellThem) this.deps.comms.deliver(me.id, { type: 'group.gone', groupId, reason: 'left' });
     const rest = await this.db
       .select({ identityId: groupMembers.identityId, joinedAt: groupMembers.joinedAt })
@@ -287,12 +312,12 @@ export class GroupManager {
       await this.db.update(chatGroups).set({ ownerId: rest[0].identityId }).where(eq(chatGroups.id, groupId));
       if (next) await this.deps.comms.postSystem(groupChannel(groupId), `@${next.handle} is the owner now.`);
     }
-    this.notify(rest.map((r) => r.identityId), me.id, groupId);
+    this.notify(rest.map((r) => r.identityId), groupId);
   }
 
-  /** `group.changed` to every member but the one who made the change. */
-  private notify(memberIds: string[], exceptId: string, groupId: string): void {
-    for (const id of memberIds) if (id !== exceptId) this.deps.comms.deliver(id, { type: 'group.changed', groupId });
+  /** `group.changed` to every member, the one who made the change included (their other devices refresh too). */
+  private notify(memberIds: string[], groupId: string): void {
+    for (const id of memberIds) this.deps.comms.deliver(id, { type: 'group.changed', groupId });
   }
 
   /** The person `handle` names, if `me` may put them in a group (spec M2d §2). */
