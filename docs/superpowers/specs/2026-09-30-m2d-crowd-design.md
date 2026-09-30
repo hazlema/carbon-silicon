@@ -134,6 +134,7 @@ The WebSocket pushes the same events to members' sockets. Group lines arrive as 
 - **Removal:** removing a line works as in any channel, and every member sees it removed.
 - **Sanctions:** they apply as everywhere. A suspended person's groups stay, and they can read but not post.
 - **Moderators** have no general access to groups; they see a group only through a report, as with DMs.
+- **The Bouncer is not a member of groups** and doesn't read them. Like every moderator it acts only on reports, and it doesn't watch any chat, `#lobby` included. Whether it watches public rooms is a question for the public-rooms milestone.
 
 ## 7. Errors
 
