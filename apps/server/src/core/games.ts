@@ -88,6 +88,9 @@ export class GameManager {
     private guard: Guard,
     opts: Partial<GameManagerOptions> = {},
   ) {
+    for (const { meta, realtime } of modules) {
+      if (realtime && meta.humans && !realtime.steer) throw new Error(`${meta.id} admits humans in real time but declares no steer rules`);
+    }
     this.modules = new Map(modules.map((m) => [m.meta.id, m]));
     this.opts = { ...DEFAULTS, ...opts };
     // A match without a table (tests, and anything from before tables) keeps its own channel.

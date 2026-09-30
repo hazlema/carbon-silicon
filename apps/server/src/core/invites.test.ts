@@ -6,6 +6,7 @@ import { PUBLIC_CHANNELS } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
 import { FakeClock } from '../lib/clock';
 import { forbidden, type AppError } from '../lib/errors';
+import { botline } from '../lib/test-games';
 import { randomTag, waitFor } from '../lib/testing';
 import { EventBus } from './bus';
 import { CommunicationManager } from './communication';
@@ -26,7 +27,7 @@ async function setup(guard = new Guard()) {
   const ids = new IdentityManager(database.db, clock, { houseKey: 'hk' });
   const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS, guard: new Guard() });
   const presence = new PresenceManager(bus, clock);
-  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame, lightlineGame], new Guard());
+  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame, lightlineGame, botline], new Guard());
   const relations = new RelationManager(database.db, ids);
   const tables = new TableManager({ games, presence, comms, identities: ids, relations, guard: new Guard(), bus, clock });
   const invites = new InviteManager(games, presence, bus, clock, guard, tables, { houseFallbackMs: 8000 });
@@ -175,7 +176,7 @@ describe('quick match', () => {
 
 test('quick match refuses a human for a machines-only game and leaves the queue alone', async () => {
   const ctx = await setup();
-  const e = await errorOf(ctx.invites.quickMatch(ctx.ann, 'lightline'));
+  const e = await errorOf(ctx.invites.quickMatch(ctx.ann, 'botline'));
   expect([e.status, e.code]).toEqual([403, 'MACHINES_ONLY']);
   expect(ctx.invites.queuedFor(ctx.ann.id)).toBeNull();
 });

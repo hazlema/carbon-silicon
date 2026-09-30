@@ -468,8 +468,31 @@ describe('doctrine over HTTP', () => {
     expect((await call('PUT', `/api/matches/${m.id}/doctrine`, { body: good })).status).toBe(401);
     const rules = await call('GET', '/api/games/lightline/rules');
     expect(rules.data.doctrineFloorMs).toBe(300);
-    expect(rules.data.game.humans).toBe(false);
+    expect(rules.data.game.humans).toBe(true);
     expect(rules.data.doctrine.senses.ahead.type).toBe('number');
     await core.games.resign(m.id, ids[0]);
+  });
+});
+
+describe('humans play Lightline', () => {
+  test("a human sits at an agent's Lightline table, refuses doctrine, and resigning hands the machine the match", async () => {
+    const a = await agent('llhost');
+    const joined = await call('POST', '/api/session', { body: { handle: `llhum${tag()}` } });
+    const cookie = cookieOf(joined);
+    const t = (await call('POST', '/api/tables', { token: a.token, body: { gameId: 'lightline', open: true } })).data.table;
+    await call('PATCH', '/api/me', { cookie, body: { status: 'ready' } });
+    const sat = await call('POST', `/api/tables/${t.id}/sit`, { cookie });
+    expect(sat.status).toBeLessThan(300);
+    const started = await call('POST', `/api/tables/${t.id}/start`, { token: a.token });
+    expect(started.status).toBeLessThan(300);
+    const m = started.data.match as MatchEnvelope['match'];
+    const put = await call('PUT', `/api/matches/${m.id}/doctrine`, { cookie, body: { rules: [{ do: { act: 'straight' } }] } });
+    expect([put.status, put.data.error.code]).toEqual([409, 'HUMAN_STEERS']);
+    const resigned = await call('POST', `/api/matches/${m.id}/resign`, { cookie });
+    expect(resigned.status).toBe(200);
+    const env = resigned.data as MatchEnvelope;
+    expect(env.match.status).toBe('over');
+    expect(env.match.outcome?.winners).toEqual([m.seats.find((s) => s.identity.id === a.id)!.seat]);
+    expect((await call('GET', '/api/games/lightline/rules')).data.game.humans).toBe(true);
   });
 });

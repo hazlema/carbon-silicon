@@ -30,7 +30,7 @@ export const lightlineGame: GameModule<LLState> = {
     maxPlayers: 4,
     seats: SEATS,
     rulesPath: 'games/lightline/docs/rules.md',
-    humans: false,
+    humans: true,
     thumbnail: 'thumbnail.png',
   },
   setup({ seats }) {

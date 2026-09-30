@@ -38,19 +38,20 @@ test('an exhibition of Lightline plays on the board for anyone to watch, fired r
   }
 });
 
-test('the lobby tells a human that Lightline is machines only', async ({ browser }) => {
+test('a human can pick Lightline in the chooser', async ({ browser }) => {
   const page = await newPlayer(browser);
   await page.goto('/');
   await page.getByLabel('Your handle').fill(`llh${randomTag()}`);
   await page.getByRole('button', { name: 'Enter the parlor' }).click();
   await page.getByRole('button', { name: 'Select game' }).click();
   const chooser = page.getByRole('dialog', { name: 'Choose a game' });
-  await expect(chooser.getByText('Machines only for now. You can watch any table playing it.')).toBeVisible();
-  await expect(chooser.getByRole('button', { name: 'Select Lightline' })).toBeDisabled();
-  await expect(chooser.getByRole('button', { name: 'Select Critical Mass' })).toBeEnabled();
+  await expect(chooser.getByText('Machines only for now', { exact: false })).toHaveCount(0);
+  await expect(chooser.getByRole('button', { name: 'Select Lightline' })).toBeEnabled();
+  await chooser.getByRole('button', { name: 'Select Lightline' }).click();
+  await expect(page.getByRole('region', { name: 'Play' }).getByRole('heading', { name: 'Lightline' })).toBeVisible();
 });
 
-test("a human can't sit at an open Lightline table: the Sit button is off and says why", async ({ browser, request }) => {
+test('a human can sit at an open Lightline table', async ({ browser, request }) => {
   const reg = await request.post('/api/agents', { headers: { 'x-forwarded-for': randomIp() }, data: { name: `llt${randomTag()}` } });
   expect(reg.status()).toBe(201);
   const { token } = await reg.json();
@@ -64,8 +65,11 @@ test("a human can't sit at an open Lightline table: the Sit button is off and sa
     await enter(page, `lls${randomTag()}`);
     const row = page.getByRole('region', { name: 'Tables' }).getByRole('listitem').filter({ hasText: table.host.handle });
     const sit = row.getByRole('button', { name: 'Sit' });
-    await expect(sit).toBeDisabled();
-    await expect(sit).toHaveAttribute('title', 'Lightline is machines only for now. Watch any table playing it.');
+    await expect(sit).toBeEnabled();
+    await sit.click();
+    // Seated: the row leaves the open list and the Play panel shows the gathering, with Leave.
+    await expect(row).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Leave' })).toBeVisible();
   } finally {
     await request.delete(`/api/tables/${table.id}`, { headers: auth });
   }

@@ -6,6 +6,7 @@ import { PUBLIC_CHANNELS, tableChannel, type IdentityPublic, type InboxEvent } f
 import { openDatabase } from '../db';
 import { FakeClock } from '../lib/clock';
 import type { AppError } from '../lib/errors';
+import { botline } from '../lib/test-games';
 import { randomTag, waitFor } from '../lib/testing';
 import { EventBus } from './bus';
 import { CommunicationManager } from './communication';
@@ -26,7 +27,7 @@ async function setup(guard = new Guard()) {
   const comms = new CommunicationManager(database.db, bus, clock, identities, { publicChannels: PUBLIC_CHANNELS, guard });
   // humanIdleMs is well past the table's idleMs so a host's auto-AFK never races the table's own idle close.
   const presence = new PresenceManager(bus, clock, { agentTimeoutMs: 90_000, humanGraceMs: 15_000, humanIdleMs: 3_600_000 });
-  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame, lightlineGame], guard, { countdownMs: 0 });
+  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame, lightlineGame, botline], guard, { countdownMs: 0 });
   const relations = new RelationManager(database.db, identities);
   const tables = new TableManager({ games, presence, comms, identities, relations, guard, bus, clock }, { shuffle: (xs) => [...xs] });
   const tag = randomTag();
@@ -560,14 +561,14 @@ describe('starting', () => {
   });
 });
 
-describe('machines only (Lightline)', () => {
+describe('machines only (a machines-only game)', () => {
   test('a human cannot host, sit, be invited, accept, or play vs house; nothing is left behind', async () => {
     const ctx = await setup();
-    const host = await errorOf(() => ctx.tables.host(ctx.ann, 'lightline'));
-    expect([host.status, host.code, host.message]).toEqual([403, 'MACHINES_ONLY', 'Lightline is for machines for now; humans can watch.']);
-    expect((await errorOf(() => ctx.tables.vsHouse(ctx.ann, 'lightline'))).code).toBe('MACHINES_ONLY');
+    const host = await errorOf(() => ctx.tables.host(ctx.ann, 'botline'));
+    expect([host.status, host.code, host.message]).toEqual([403, 'MACHINES_ONLY', 'Botline is for machines for now; humans can watch.']);
+    expect((await errorOf(() => ctx.tables.vsHouse(ctx.ann, 'botline'))).code).toBe('MACHINES_ONLY');
     expect(ctx.tables.list()).toHaveLength(0);
-    const t = await ctx.tables.host(ctx.agent, 'lightline', { open: true });
+    const t = await ctx.tables.host(ctx.agent, 'botline', { open: true });
     expect((await errorOf(() => ctx.tables.sit(ctx.ann, t.id))).code).toBe('MACHINES_ONLY');
     expect((await errorOf(() => ctx.tables.invite(ctx.agent, t.id, [ctx.ann.handle]))).code).toBe('MACHINES_ONLY');
     const after = ctx.tables.get(t.id, ctx.agent.id);
@@ -577,7 +578,7 @@ describe('machines only (Lightline)', () => {
 
   test('vs house is refused before any bot is picked, even when no house bot is free', async () => {
     const ctx = await setup();
-    const e = await errorOf(() => ctx.tables.vsHouse(ctx.ann, 'lightline', 'nobody'));
+    const e = await errorOf(() => ctx.tables.vsHouse(ctx.ann, 'botline', 'nobody'));
     expect([e.status, e.code]).toEqual([403, 'MACHINES_ONLY']);
     expect(ctx.tables.list()).toHaveLength(0);
   });

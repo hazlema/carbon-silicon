@@ -8,6 +8,7 @@ import { openDatabase } from '../db';
 import { FakeClock } from '../lib/clock';
 import type { AppError } from '../lib/errors';
 import { randomTag, waitFor } from '../lib/testing';
+import { botline } from '../lib/test-games';
 import { EventBus } from './bus';
 import { CommunicationManager } from './communication';
 import { GameManager, type GameManagerOptions } from './games';
@@ -271,23 +272,27 @@ describe('the real-time runner', () => {
 
   test('the catalog says who may play', async () => {
     const ctx = await setup();
-    expect(ctx.games.catalog().map((g) => [g.id, g.humans])).toEqual([['critical-mass', true], ['lightline', false]]);
+    expect(ctx.games.catalog().map((g) => [g.id, g.humans])).toEqual([['critical-mass', true], ['lightline', true]]);
+  });
+
+  test('a game that admits humans in real time but declares no steer rules is refused at construction', async () => {
+    const bad: GameModule<any> = { ...lightlineGame, realtime: { ...lightlineGame.realtime!, steer: undefined } };
+    await expect(setup({}, bad)).rejects.toThrow('lightline admits humans in real time but declares no steer rules');
   });
 
   test('createMatch refuses a human seat in a machines-only game', async () => {
-    const ctx = await setup();
-    await expect(ctx.games.createMatch('lightline', [ctx.a, ctx.human])).rejects.toMatchObject({ code: 'MACHINES_ONLY' });
+    const ctx = await setup({}, botline);
+    await expect(ctx.games.createMatch('botline', [ctx.a, ctx.human])).rejects.toMatchObject({ code: 'MACHINES_ONLY' });
     expect(ctx.games.activeMatchOf(ctx.a.id)).toBeNull();
   });
 });
 
 describe('humans steer', () => {
-  const open: GameModule<any> = { ...lightlineGame, meta: { ...lightlineGame.meta, humans: true } };
   const headingOf = (ctx: Ctx, id: string, seat: string) =>
     (ctx.games.envelope(id, null).view as LLView).cycles.find((c) => c.seat === seat)!.heading;
 
   test("a seated human's key turns the cycle on the next tick; no key rides straight; fired says steering", async () => {
-    const ctx = await setup({}, open);
+    const ctx = await setup();
     const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
     ctx.clock.advance(10_000);
     expect(headingOf(ctx, m.id, 'red')).toBe('e');
@@ -302,7 +307,7 @@ describe('humans steer', () => {
   });
 
   test('a reversal rides straight and the turn queued behind it still lands', async () => {
-    const ctx = await setup({}, open);
+    const ctx = await setup();
     const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
     ctx.clock.advance(10_000);
     ctx.games.steer(ctx.human.id, m.id, 'w'); // heading east: a reversal, ignored
@@ -314,7 +319,7 @@ describe('humans steer', () => {
   });
 
   test('presses in the countdown are dropped, not saved for the first tick', async () => {
-    const ctx = await setup({}, open);
+    const ctx = await setup();
     const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
     expect(ctx.games.steer(ctx.human.id, m.id, 'n')).toBe(false);
     ctx.clock.advance(10_100);
@@ -322,7 +327,7 @@ describe('humans steer', () => {
   });
 
   test('a watcher, a machine, a turn-based match and an unknown key change nothing', async () => {
-    const ctx = await setup({}, open);
+    const ctx = await setup();
     const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
     ctx.clock.advance(10_000);
     expect(ctx.games.steer(ctx.b.id, m.id, 'n')).toBe(false);
@@ -330,18 +335,19 @@ describe('humans steer', () => {
     expect(ctx.games.steer(ctx.human.id, m.id, 'up')).toBe(false);
     expect(ctx.games.steer(ctx.human.id, 'm_nope', 'n')).toBe(false);
     const cm = await ctx.games.createMatch('critical-mass', [ctx.b, ctx.c]);
+    ctx.clock.advance(3000); // past the countdown, so this exercises the no-queue path
     expect(ctx.games.steer(ctx.b.id, cm.id, 'n')).toBe(false);
   });
 
   test("a human's seat refuses doctrine: HUMAN_STEERS", async () => {
-    const ctx = await setup({}, open);
+    const ctx = await setup();
     const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
     const e = errorOf(() => ctx.games.setDoctrine(m.id, ctx.human, straight));
     expect([e.status, e.code, e.message]).toEqual([409, 'HUMAN_STEERS', 'You steer with the keys; doctrine is for machines.']);
   });
 
   test('presses between rounds are dropped', async () => {
-    const ctx = await setup({}, open);
+    const ctx = await setup();
     const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
     ctx.clock.advance(10_000);
     // Ride straight into the east wall: red crashes, and the round ends into intermission.
@@ -349,6 +355,38 @@ describe('humans steer', () => {
       if (i >= 600) throw new Error('the round never ended');
       ctx.clock.advance(100);
     }
+    expect((ctx.games.envelope(m.id, null).view as LLView).phase).toBe('intermission');
     expect(ctx.games.steer(ctx.human.id, m.id, 'n')).toBe(false);
+  });
+
+  test('a move still queued when the round ends does not carry into the next round', async () => {
+    const playTicksOf = async () => {
+      const probe = await setup();
+      const pm = await probe.games.createMatch('lightline', [probe.human, probe.a]);
+      probe.clock.advance(10_000);
+      let n = 0;
+      while ((probe.games.envelope(pm.id, null).view as LLView).phase === 'play') {
+        if (++n > 600) throw new Error('the round never ended');
+        probe.clock.advance(100);
+      }
+      return n; // the tick that ended the round is the n-th
+    };
+    const n = await playTicksOf();
+    const ctx = await setup();
+    const m = await ctx.games.createMatch('lightline', [ctx.human, ctx.a]);
+    ctx.clock.advance(10_000);
+    for (let i = 0; i < n - 1; i++) ctx.clock.advance(100);
+    expect((ctx.games.envelope(m.id, null).view as LLView).phase).toBe('play');
+    // Two moves: the ending tick takes 'e' (straight on, into the wall); 'n' is left queued.
+    for (const key of ['e', 'n']) expect(ctx.games.steer(ctx.human.id, m.id, key)).toBe(true);
+    ctx.clock.advance(100);
+    expect((ctx.games.envelope(m.id, null).view as LLView).phase).toBe('intermission');
+    for (let i = 0; (ctx.games.envelope(m.id, null).view as LLView).phase === 'intermission'; i++) {
+      if (i >= 100) throw new Error('the intermission never ended');
+      ctx.clock.advance(100);
+    }
+    ctx.clock.advance(100); // round 2's first tick
+    expect((ctx.games.envelope(m.id, null).view as LLView).round).toBe(2);
+    expect(headingOf(ctx, m.id, 'red')).toBe('e');
   });
 });
