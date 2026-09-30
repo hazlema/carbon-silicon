@@ -1,4 +1,4 @@
-import { evaluate, type Action, type Doctrine, type SeatId } from '@cs/game-api';
+import { evaluate, type Action, type Doctrine, type SeatId, type SteerRules } from '@cs/game-api';
 import type { FiredRule } from '@cs/shared/protocol';
 
 export type { FiredRule };
@@ -99,5 +99,43 @@ export class DoctrineDesk {
 
   endTick(): void {
     this.tick += 1;
+  }
+}
+
+/** The most moves a person may have waiting: enough for a quick double turn, not a macro. */
+export const STEER_QUEUE_MAX = 2;
+
+/**
+ * A person's keys in one real-time match. Moves queue (a third replaces the last, and a repeat of
+ * the last is dropped), modifiers ride on the next action, and each tick takes one. Humans have no
+ * reaction floor: their own reflexes are the floor.
+ */
+export class SteerQueue {
+  private moves: string[] = [];
+  private mods = new Set<string>();
+
+  constructor(private rules: SteerRules) {}
+
+  press(key: string): boolean {
+    if (this.rules.modifiers.includes(key)) {
+      this.mods.add(key);
+      return true;
+    }
+    if (!this.rules.moves.includes(key)) return false;
+    if (this.moves.at(-1) === key) return true;
+    if (this.moves.length >= STEER_QUEUE_MAX) this.moves[this.moves.length - 1] = key;
+    else this.moves.push(key);
+    return true;
+  }
+
+  take(): Action {
+    const action = this.rules.action(this.moves.shift() ?? null, [...this.mods]);
+    this.mods.clear();
+    return action;
+  }
+
+  clear(): void {
+    this.moves = [];
+    this.mods.clear();
   }
 }

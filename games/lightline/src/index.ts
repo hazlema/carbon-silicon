@@ -60,6 +60,12 @@ export const lightlineGame: GameModule<LLState> = {
     defaultAction: { act: 'straight' },
     senses,
     step: (s, actions) => step(s, actions),
+    paused: (s) => s.phase === 'intermission',
+    steer: {
+      moves: ['n', 'e', 's', 'w'],
+      modifiers: ['boost'],
+      action: (move, mods) => ({ ...(move ? { act: 'head', dir: move } : { act: 'straight' }), ...(mods.includes('boost') ? { boost: true } : {}) }),
+    },
     roundEvent,
   },
 };

@@ -123,3 +123,12 @@ describe('rounds', () => {
     expect(JSON.stringify(script(two()))).toBe(JSON.stringify(script(two())));
   });
 });
+
+test('Lightline is paused between rounds only, and its steer keys make valid doctrine actions', () => {
+  const rt = game.realtime!;
+  const s = game.setup({ seats: ['red', 'blue'], seed: 1 });
+  expect(rt.paused!(s)).toBe(false);
+  expect(rt.paused!({ ...s, phase: 'intermission' })).toBe(true);
+  expect(rt.steer!.action('w', ['boost'])).toEqual({ act: 'head', dir: 'w', boost: true });
+  expect(rt.steer!.action(null, [])).toEqual({ act: 'straight' });
+});

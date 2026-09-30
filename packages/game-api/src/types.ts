@@ -92,6 +92,15 @@ export interface RoundEvent {
   score: Record<SeatId, number>;
 }
 
+export interface SteerRules {
+  /** Keys that queue, at most two waiting (Lightline: n, e, s, w). */
+  moves: readonly string[];
+  /** Keys that ride on the next action taken instead of queueing (Lightline: boost). */
+  modifiers: readonly string[];
+  /** One tick's action: the queued move (null when none) with the modifiers pressed since the last. */
+  action(move: string | null, modifiers: readonly string[]): Action;
+}
+
 export interface RealtimeRules<S> {
   tickHz: number;
   /** Real-time countdowns are longer, so a machine can think before the first tick. */
@@ -102,5 +111,9 @@ export interface RealtimeRules<S> {
   defaultAction: Action;
   senses(state: S, seat: SeatId): Record<string, number | string | boolean>;
   step(state: S, actions: Record<SeatId, Action>, rng: Rng): S;
+  /** Between rounds: nothing moves, and a person's presses are dropped. */
+  paused?(state: S): boolean;
+  /** How a person's keys become actions; a game without it can't be steered. */
+  steer?: SteerRules;
   roundEvent?(before: S, after: S): RoundEvent | null;
 }

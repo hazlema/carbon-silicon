@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Doctrine } from '@cs/game-api';
-import { clampFloor, DoctrineDesk, floorTicks } from './realtime';
+import { lightlineGame } from '@cs/lightline';
+import { clampFloor, DoctrineDesk, floorTicks, SteerQueue } from './realtime';
 
 const d = (label: string): Doctrine => ({ rules: [{ label, do: { act: 'straight' } }] });
 const FALLBACK = d('fallback');
@@ -76,5 +77,45 @@ describe('DoctrineDesk', () => {
     desk.set('red', { rules: [{ when: { sense: 'x', op: 'gt', value: 1 }, do: { act: 'straight' } }] });
     expect(desk.decide('red', { x: 0 })).toBeNull();
     expect(desk.fired.red).toBeNull();
+  });
+});
+
+describe('SteerQueue', () => {
+  const rules = lightlineGame.realtime!.steer!;
+  test('an empty queue rides straight', () => {
+    expect(new SteerQueue(rules).take()).toEqual({ act: 'straight' });
+  });
+  test('holds two moves; a third replaces the last; one taken per tick', () => {
+    const q = new SteerQueue(rules);
+    q.press('n');
+    q.press('w');
+    q.press('s');
+    expect(q.take()).toEqual({ act: 'head', dir: 'n' });
+    expect(q.take()).toEqual({ act: 'head', dir: 's' });
+    expect(q.take()).toEqual({ act: 'straight' });
+  });
+  test('a press repeating the last queued move is dropped', () => {
+    const q = new SteerQueue(rules);
+    q.press('e');
+    q.press('e');
+    q.press('n');
+    expect([q.take(), q.take()]).toEqual([{ act: 'head', dir: 'e' }, { act: 'head', dir: 'n' }]);
+  });
+  test('boost rides on the next action, or on straight, once', () => {
+    const q = new SteerQueue(rules);
+    q.press('boost');
+    expect(q.take()).toEqual({ act: 'straight', boost: true });
+    q.press('n');
+    q.press('boost');
+    expect(q.take()).toEqual({ act: 'head', dir: 'n', boost: true });
+    expect(q.take()).toEqual({ act: 'straight' });
+  });
+  test('unknown keys are refused; clear drops everything', () => {
+    const q = new SteerQueue(rules);
+    expect(q.press('up')).toBe(false);
+    q.press('n');
+    q.press('boost');
+    q.clear();
+    expect(q.take()).toEqual({ act: 'straight' });
   });
 });
