@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { dmParticipants } from '@cs/shared/protocol';
+  import { dmParticipants, groupOf } from '@cs/shared/protocol';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
-  import DmTabs from '$lib/components/DmTabs.svelte';
+  import ConvTabs from '$lib/components/ConvTabs.svelte';
   import QuickMatch from '$lib/components/QuickMatch.svelte';
   import Scoreboard from '$lib/components/Scoreboard.svelte';
   import TablesList from '$lib/components/TablesList.svelte';
   import WhoList from '$lib/components/WhoList.svelte';
+  import { groupTitle } from '$lib/groups';
   import { live } from '$lib/live.svelte';
 
   const channels = [
@@ -16,25 +17,32 @@
   let focusKey = $state(0);
   /** The conversation on screen, when the chat shows a DM. */
   const dm = $derived(dmParticipants(channel) ? (live.dms.find((d) => d.channel === channel) ?? null) : null);
-  const about = $derived(dm ? 'Just the two of you' : (channels.find((c) => c.id === channel)?.about ?? ''));
-  const title = $derived(dm ? `@${dm.with.handle}` : `#${channel}`);
+  /** The group on screen, when the chat shows one. */
+  const group = $derived(groupOf(channel) ? (live.groups.find((g) => g.channel === channel) ?? null) : null);
+  const about = $derived(
+    group ? `${group.members.length} people` : dm ? 'Just the two of you' : (channels.find((c) => c.id === channel)?.about ?? ''),
+  );
+  const title = $derived(group ? groupTitle(group, live.me!.id) : dm ? `@${dm.with.handle}` : `#${channel}`);
 
   // Message @x or /msg: show that conversation and put the cursor in its composer.
   $effect(() => {
-    const r = live.dmRequest;
+    const r = live.convRequest;
     if (!r) return;
     channel = r.channel;
     tab = 'chat';
     focusKey += 1;
-    live.dmRequest = null;
+    live.convRequest = null;
   });
   // Looking at a conversation reads it, including a line that arrives while it's open.
   $effect(() => {
     if (dm && dm.unread > 0 && tab === 'chat') void live.readDm(dm.channel);
   });
-  // A DM tab whose conversation left the list (closed elsewhere, the name released): back to the lobby.
   $effect(() => {
-    if (dmParticipants(channel) && !dm) channel = 'lobby';
+    if (group && group.unread > 0 && tab === 'chat') void live.readGroup(group.channel);
+  });
+  // A DM or group tab whose conversation left the list (closed elsewhere, the name released, you left): back to the lobby.
+  $effect(() => {
+    if ((dmParticipants(channel) && !dm) || (groupOf(channel) && !group)) channel = 'lobby';
   });
 </script>
 
@@ -49,7 +57,7 @@
       {channel}
       {title}
       {focusKey}
-      placeholder={dm ? `Message @${dm.with.handle}` : `Say something in #${channel}`}
+      placeholder={group || dm ? `Message ${title}` : `Say something in #${channel}`}
       readOnly={!!dm?.with.released}
       readOnlyNote={dm ? 'This name was given back; nobody will read this.' : undefined}
     >
@@ -62,7 +70,7 @@
                   <span class="hash" aria-hidden="true">#</span>{c.id}
                 </button>
               {/each}
-              <DmTabs active={dm ? channel : null} onpick={(c) => (channel = c ?? 'lobby')} />
+              <ConvTabs active={dm || group ? channel : null} onpick={(c) => (channel = c ?? 'lobby')} />
             </nav>
             <p class="about">{about}</p>
           </div>

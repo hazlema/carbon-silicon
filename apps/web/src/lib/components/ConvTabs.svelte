@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { dmTabs } from '$lib/dms';
+  import { convTabs, convUnread, groupTitle, type Conv } from '$lib/groups';
   import { live } from '$lib/live.svelte';
   import { portal } from '$lib/portal';
 
@@ -9,15 +9,16 @@
    *  the open tab closed. */
   let { active, onpick }: { active: string | null; onpick: (channel: string | null) => void } = $props();
 
-  const row = $derived(dmTabs(live.dms, active));
+  const row = $derived(convTabs(live.dms, live.groups, active));
+  const titleOf = (c: Conv) => (c.kind === 'dm' ? `@${c.dm.with.handle}` : groupTitle(c.group, live.me?.id ?? ''));
   let moreOpen = $state(false);
   let moreButton: HTMLButtonElement | undefined = $state();
   let pop: HTMLDivElement | undefined = $state();
   let pos = $state<{ left: number; top: number } | null>(null);
 
-  function close(channel: string) {
-    void live.closeDm(channel);
-    if (active === channel) onpick(null);
+  function close(c: Conv) {
+    void (c.kind === 'dm' ? live.closeDm(c.channel) : live.closeGroup(c.channel));
+    if (active === c.channel) onpick(null);
   }
   function closeMore(refocus = false) {
     moreOpen = false;
@@ -65,27 +66,35 @@
   });
 </script>
 
-{#snippet label(handle: string, color: string, unread: number, showDot: boolean)}
-  <span class="at" style:color>@{handle}</span>{#if showDot && unread > 0}<span class="dot" role="img" aria-label="{unread} unread"></span>{/if}
+{#snippet label(c: Conv, showDot: boolean)}
+  {@const unread = convUnread(c)}
+  {#if c.kind === 'dm'}<span class="at" style:color={c.dm.with.color}>@{c.dm.with.handle}</span>{:else}<span class="grp" aria-hidden="true">⁂</span><span class="at"
+      >{groupTitle(c.group, live.me?.id ?? '')}</span
+    >{/if}{#if showDot && unread > 0}<span class="dot" role="img" aria-label="{unread} unread"></span>{/if}
 {/snippet}
 
 {#if row.shown.length > 0}
   <div class="dmrow" aria-label="Conversations" role="group">
-    {#each row.shown as d (d.channel)}
+    {#each row.shown as c (c.channel)}
       <span class="dm">
         <button
           type="button"
           class="pick"
-          title="@{d.with.handle}"
-          aria-current={active === d.channel ? 'true' : undefined}
-          onclick={() => onpick(d.channel)}>{@render label(d.with.handle, d.with.color, d.unread, active !== d.channel)}</button
+          title={titleOf(c)}
+          aria-current={active === c.channel ? 'true' : undefined}
+          onclick={() => onpick(c.channel)}>{@render label(c, active !== c.channel)}</button
         >
-        <button type="button" class="x" aria-label="Close the conversation with @{d.with.handle}" onclick={() => close(d.channel)}>×</button>
+        <button
+          type="button"
+          class="x"
+          aria-label={c.kind === 'dm' ? `Close the conversation with @${c.dm.with.handle}` : `Close the group ${titleOf(c)}`}
+          onclick={() => close(c)}>×</button
+        >
       </span>
     {/each}
     {#if row.more.length > 0}
       <button bind:this={moreButton} type="button" class="pick more" aria-haspopup="menu" aria-expanded={moreOpen} onclick={toggleMore}
-        >More<span aria-hidden="true"> ▾</span>{#if row.more.some((d) => d.unread > 0)}<span class="dot" role="img" aria-label="unread in More"></span>{/if}</button
+        >More<span aria-hidden="true"> ▾</span>{#if row.more.some((c) => convUnread(c) > 0)}<span class="dot" role="img" aria-label="unread in More"></span>{/if}</button
       >
       {#if moreOpen}
         <div
@@ -98,15 +107,15 @@
           onkeydown={onMenuKey}
           style={pos ? `left: ${pos.left}px; top: ${pos.top}px` : 'visibility: hidden'}
         >
-          {#each row.more as d (d.channel)}
+          {#each row.more as c (c.channel)}
             <button
               role="menuitem"
               type="button"
-              title="@{d.with.handle}"
+              title={titleOf(c)}
               onclick={() => {
                 closeMore();
-                onpick(d.channel);
-              }}>{@render label(d.with.handle, d.with.color, d.unread, true)}</button
+                onpick(c.channel);
+              }}>{@render label(c, true)}</button
             >
           {/each}
         </div>
@@ -132,6 +141,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     vertical-align: bottom;
+  }
+  .grp {
+    margin-right: 0.3rem;
+    color: var(--dust);
   }
   .pick {
     padding: 0.45rem 0.2rem 0.5rem 0.25rem;

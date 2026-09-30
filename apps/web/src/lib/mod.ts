@@ -98,5 +98,6 @@ export function channelLabel(channel: string): string {
   if (/^(match|table):/.test(channel)) return 'a table';
   if (channel.startsWith('rail:')) return 'a rail';
   if (channel.startsWith('dm:')) return 'a direct message';
+  if (channel.startsWith('grp:')) return 'a group chat';
   return `#${channel}`;
 }

@@ -3,11 +3,12 @@
   import { tick, untrack } from 'svelte';
   import type { CMView } from '@cs/critical-mass';
   import type { LLView } from '@cs/lightline';
-  import { dmParticipants, railChannel, tableChannel, type MatchEnvelope, type SeatInfo, type TableInfo } from '@cs/shared/protocol';
+  import { dmParticipants, groupOf, railChannel, tableChannel, type MatchEnvelope, type SeatInfo, type TableInfo } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
   import Avatar from '$lib/components/Avatar.svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
-  import DmTabs from '$lib/components/DmTabs.svelte';
+  import ConvTabs from '$lib/components/ConvTabs.svelte';
+  import { groupTitle } from '$lib/groups';
   import GatheringCard from '$lib/components/GatheringCard.svelte';
   import IdentityChip from '$lib/components/IdentityChip.svelte';
   import Board from '$lib/games/critical-mass/Board.svelte';
@@ -124,19 +125,22 @@
     if (tab === 'rail') railUnread = 0;
   });
   const dmTab = $derived(dmParticipants(tab) ? (live.dms.find((d) => d.channel === tab) ?? null) : null);
+  const groupTab = $derived(groupOf(tab) ? (live.groups.find((g) => g.channel === tab) ?? null) : null);
+  const convTitle = $derived(groupTab ? groupTitle(groupTab, live.me!.id) : `@${dmTab?.with.handle ?? ''}`);
   $effect(() => {
-    const r = live.dmRequest;
+    const r = live.convRequest;
     if (!r) return;
     tab = r.channel;
     focusKey += 1;
-    live.dmRequest = null;
+    live.convRequest = null;
   });
   // A conversation that left the list (closed elsewhere, the name released): back to where you were.
   $effect(() => {
-    if (dmParticipants(tab) && !dmTab) tab = isPlayer ? 'table' : 'rail';
+    if ((dmParticipants(tab) && !dmTab) || (groupOf(tab) && !groupTab)) tab = isPlayer ? 'table' : 'rail';
   });
   $effect(() => {
     if (dmTab && dmTab.unread > 0) void live.readDm(dmTab.channel);
+    if (groupTab && groupTab.unread > 0) void live.readGroup(groupTab.channel);
   });
 
   const match = $derived(env?.match);
@@ -418,10 +422,10 @@
     <div class="talk">
       <ChatPanel
         channel={tab === 'table' ? tableChannel(table.id) : tab === 'rail' ? railChannel(table.id) : tab}
-        title={tab === 'table' ? 'Table talk' : tab === 'rail' ? 'The rail' : `@${dmTab?.with.handle ?? ''}`}
+        title={tab === 'table' ? 'Table talk' : tab === 'rail' ? 'The rail' : convTitle}
         readOnly={(tab === 'table' && !isPlayer) || !!dmTab?.with.released}
         readOnlyNote={dmTab ? 'This name was given back; nobody will read this.' : 'Only the players can talk at this table.'}
-        placeholder={tab === 'table' ? 'Talk trash, play fair' : tab === 'rail' ? 'Cheer, heckle, speculate' : `Message @${dmTab?.with.handle ?? ''}`}
+        placeholder={tab === 'table' ? 'Talk trash, play fair' : tab === 'rail' ? 'Cheer, heckle, speculate' : `Message ${convTitle}`}
         {focusKey}
       >
         {#snippet header()}
@@ -431,7 +435,7 @@
               <button role="tab" type="button" aria-selected={tab === 'rail'} onclick={() => (tab = 'rail')}
                 >{railUnread > 0 ? `Rail (${railUnread})` : 'Rail'}</button
               >
-              <DmTabs active={dmTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} />
+              <ConvTabs active={dmTab || groupTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} />
             </div>
           </div>
         {/snippet}

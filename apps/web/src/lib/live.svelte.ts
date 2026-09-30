@@ -2,6 +2,7 @@ import type {
   ChatMessage,
   DmSummary,
   GameInfo,
+  GroupInfo,
   IdentityPublic,
   InboxEvent,
   InviteOffer,
@@ -15,11 +16,12 @@ import type {
   WsClientMsg,
   WsServerMsg,
 } from '@cs/shared/protocol';
-import { dmChannel, dmParticipants } from '@cs/shared/protocol';
+import { dmChannel, dmParticipants, groupOf } from '@cs/shared/protocol';
 import { updated } from '$app/state';
 import { api, ApiError } from './api';
 import type { SteerKey } from './games/lightline/controls';
 import { unreadTotal, withMessage } from './dms';
+import { withGroupMessage } from './groups';
 import type { AgentNoticeEvent } from './owners';
 
 type Listener<T> = (value: T) => void;
@@ -50,11 +52,19 @@ class Live {
   games = $state<GameInfo[]>([]);
   /** Your DM conversations (spec M2c §5). */
   dms = $state<DmSummary[]>([]);
-  /** Unread DMs across your conversations, for the Lobby link. */
-  dmUnread: number = $derived(unreadTotal(this.dms));
-  /** A conversation someone asked to open (Message @x, /msg). The page with a chat switches to it
-   *  and clears this; `n` makes asking twice for the same one count. */
-  dmRequest = $state<{ channel: string; n: number } | null>(null);
+  /** Your group chats (spec M2d §5). */
+  groups = $state<GroupInfo[]>([]);
+  /** Unread lines across your open conversations (DMs and groups), for the Lobby link. */
+  dmUnread: number = $derived(unreadTotal(this.dms) + this.groups.reduce((n, g) => n + (g.hidden ? 0 : g.unread), 0));
+  /** A conversation someone asked to open (Message @x, /msg, a group). The page with a chat switches
+   *  to it and clears this; `n` makes asking twice for the same one count. */
+  convRequest = $state<{ channel: string; n: number } | null>(null);
+  get dmRequest() {
+    return this.convRequest;
+  }
+  set dmRequest(v: { channel: string; n: number } | null) {
+    this.convRequest = v;
+  }
   /** What moderators did to your agents, until you dismiss it (at most the last 5). */
   agentNotices = $state<AgentNoticeEvent[]>([]);
 
@@ -246,7 +256,77 @@ class Live {
   }
 
   #requestDm(channel: string): void {
-    this.dmRequest = { channel, n: (this.dmRequest?.n ?? 0) + 1 };
+    this.convRequest = { channel, n: (this.convRequest?.n ?? 0) + 1 };
+  }
+
+  #groupsLoading: Promise<void> | null = null;
+  #groupsDirty = false;
+
+  /** Replaces the list with the server's, with the same one-more-round guard as `loadDms`. */
+  loadGroups(): Promise<void> {
+    if (this.#groupsLoading) {
+      this.#groupsDirty = true;
+      return this.#groupsLoading;
+    }
+    const run = (async () => {
+      try {
+        do {
+          this.#groupsDirty = false;
+          this.groups = (await api<{ groups: GroupInfo[] }>('GET', '/api/groups')).groups;
+        } while (this.#groupsDirty);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        this.#groupsLoading = null;
+      }
+    })();
+    this.#groupsLoading = run;
+    return run;
+  }
+
+  #upsertGroup(g: GroupInfo): void {
+    this.groups = this.groups.some((x) => x.id === g.id) ? this.groups.map((x) => (x.id === g.id ? g : x)) : [g, ...this.groups];
+  }
+
+  /** Shows a group's tab (new, or closed) and asks the page to switch to it. */
+  openGroup(g: GroupInfo): void {
+    this.#upsertGroup({ ...g, hidden: false });
+    this.#requestDm(g.channel);
+  }
+
+  /** You're looking at it: the dot goes here, and (through the server's group.read) on your other devices. */
+  async readGroup(channel: string): Promise<void> {
+    const g = this.groups.find((x) => x.channel === channel);
+    if (!g || g.unread === 0) return;
+    this.groups = this.groups.map((x) => (x.channel === channel ? { ...x, unread: 0 } : x));
+    await api('POST', `/api/groups/${g.id}/read`).catch((e) => console.error(e));
+  }
+
+  /** Closes a tab until the next line from a person. */
+  async closeGroup(channel: string): Promise<void> {
+    const g = this.groups.find((x) => x.channel === channel);
+    if (!g) return;
+    this.groups = this.groups.map((x) => (x.channel === channel ? { ...x, hidden: true } : x));
+    await api('POST', `/api/groups/${g.id}/close`).catch((e) => console.error(e));
+  }
+
+  #groupMessage(m: ChatMessage): void {
+    const meId = this.me?.id;
+    if (!meId) return;
+    if (!this.groups.some((g) => g.channel === m.channel)) {
+      void this.loadGroups(); // a group this page hasn't heard of yet
+      return;
+    }
+    if (this.#groupsLoading) this.#groupsDirty = true;
+    this.groups = withGroupMessage(this.groups, m, meId);
+  }
+
+  async #reloadGroup(groupId: string): Promise<void> {
+    try {
+      this.#upsertGroup((await api<{ group: GroupInfo }>('GET', `/api/groups/${groupId}`)).group);
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   #dmMessage(m: ChatMessage): void {
@@ -283,7 +363,8 @@ class Live {
       // caught up here rather than waiting on the next push.
       void this.refreshMe().catch((e) => console.error(e));
       void this.loadDms();
-      for (const channel of this.#chat.keys()) if (!dmParticipants(channel)) this.#send({ type: 'subscribe', channel });
+      void this.loadGroups();
+      for (const channel of this.#chat.keys()) if (!dmParticipants(channel) && !groupOf(channel)) this.#send({ type: 'subscribe', channel });
       for (const matchId of this.#matches.keys()) this.#send({ type: 'watch', matchId });
       for (const tableId of this.#tableWatch.keys()) this.#send({ type: 'watchTable', tableId });
     };
@@ -334,6 +415,7 @@ class Live {
       }
       case 'chat':
         if (dmParticipants(msg.message.channel)) this.#dmMessage(msg.message);
+        else if (groupOf(msg.message.channel)) this.#groupMessage(msg.message);
         for (const fn of this.#chat.get(msg.message.channel) ?? []) fn(msg.message);
         break;
       case 'chat.removed':
@@ -350,6 +432,15 @@ class Live {
         if (msg.event.type === 'dm.read') {
           const read = msg.event.channel;
           this.dms = this.dms.map((d) => (d.channel === read ? { ...d, unread: 0 } : d));
+        }
+        if (msg.event.type === 'group.changed') void this.#reloadGroup(msg.event.groupId);
+        if (msg.event.type === 'group.gone') {
+          const gone = msg.event.groupId;
+          this.groups = this.groups.filter((g) => g.id !== gone);
+        }
+        if (msg.event.type === 'group.read') {
+          const read = msg.event.groupId;
+          this.groups = this.groups.map((g) => (g.id === read ? { ...g, unread: 0 } : g));
         }
         if (msg.event.type === 'moderation.agent') this.agentNotices = [...this.agentNotices, msg.event].slice(-5);
         this.#tableEvent(msg.event);
@@ -405,14 +496,14 @@ class Live {
     if (!set) {
       set = new Set();
       this.#chat.set(channel, set);
-      if (!dmParticipants(channel)) this.#send({ type: 'subscribe', channel });
+      if (!dmParticipants(channel) && !groupOf(channel)) this.#send({ type: 'subscribe', channel });
     }
     set.add(fn);
     return () => {
       set.delete(fn);
       if (set.size === 0) {
         this.#chat.delete(channel);
-        if (!dmParticipants(channel)) this.#send({ type: 'unsubscribe', channel });
+        if (!dmParticipants(channel) && !groupOf(channel)) this.#send({ type: 'unsubscribe', channel });
       }
     };
   }
