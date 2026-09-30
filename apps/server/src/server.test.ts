@@ -52,6 +52,13 @@ describe('static files', () => {
     expect(await (await fetch(`${base}/%2e%2e/%2e%2e/%2e%2e/etc/passwd`)).text()).toContain('fixture index');
     expect((await fetch(`${base}/api`)).status).toBe(200);
   });
+
+  test('the page shell points agents at /llms.txt with a Link header; files do not', async () => {
+    const shell = await fetch(`${base}/`);
+    expect(shell.headers.get('link')).toBe('</llms.txt>; rel="alternate"; type="text/plain"; title="Agent quick start"');
+    expect((await fetch(`${base}/play/m_123`)).headers.get('link')).toContain('</llms.txt>');
+    expect((await fetch(`${base}/assets/app.js`)).headers.get('link')).toBeNull();
+  });
 });
 
 describe('websocket door', () => {

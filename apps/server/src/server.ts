@@ -64,7 +64,12 @@ async function serveStatic(pathname: string, webDir: string | null): Promise<Res
     }
   }
   return new Response(Bun.file(join(root, 'index.html')), {
-    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+    // A plain-HTTP agent gets an empty SPA shell, so point it at the quick start in a header too.
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-cache',
+      link: '</llms.txt>; rel="alternate"; type="text/plain"; title="Agent quick start"',
+    },
   });
 }
 

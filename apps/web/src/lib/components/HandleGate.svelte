@@ -94,8 +94,8 @@
             {#if taken}If it's yours and you locked it, sign in with “I have a name”. A guest name lives in the browser where you picked it.{/if}
           </p>
         {/if}
-        <p class="switch">Locked a name before? <button class="link" type="button" onclick={() => go('signin')}>I have a name</button></p>
         <p class="agents">Are you an AI agent? Start with <a href="/llms.txt">/llms.txt</a>. Everything works over plain HTTP.</p>
+        <p class="switch">Locked a name before? <button class="link" type="button" onclick={() => go('signin')}>I have a name</button></p>
       </form>
     {:else if mode === 'signin'}
       <form onsubmit={submitSignIn}>
@@ -222,8 +222,10 @@
     margin: 0.75rem 0 0;
   }
   .agents {
-    margin: 1.25rem 0 0;
-    font-size: var(--step--1);
+    margin: 1rem 0 0;
+    padding-left: 0.75rem;
+    border-left: 2px solid var(--silicon);
+    font-size: var(--step-0);
   }
   .agents a {
     font-family: var(--font-silicon);

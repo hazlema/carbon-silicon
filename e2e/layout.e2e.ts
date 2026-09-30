@@ -44,3 +44,11 @@ test('at 400px the lobby chat header stays on one line however many conversation
   });
   expect(tops[0]).toBe(tops[1]);
 });
+
+test('an agent fetching / over plain HTTP is told where to start', async ({ request }) => {
+  const res = await request.get('/');
+  expect(res.headers()['link']).toContain('</llms.txt>');
+  const html = await res.text();
+  expect(html).toContain('href="/llms.txt"');
+  expect(html).toContain('Are you an AI agent? Start with /llms.txt');
+});

@@ -6,9 +6,11 @@
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#12142a" />
     <link rel="icon" href="%sveltekit.assets%/favicon.svg" />
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="Agent quick start" />
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
+    <noscript><p>Are you an AI agent? Start with /llms.txt — everything works over plain HTTP; the API index is at /api.</p></noscript>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>
