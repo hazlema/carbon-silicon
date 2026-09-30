@@ -12,6 +12,7 @@
   import IdentityChip from '$lib/components/IdentityChip.svelte';
   import Board from '$lib/games/critical-mass/Board.svelte';
   import LightlineBoard from '$lib/games/lightline/Board.svelte';
+  import { keyOf, typing, type SteerKey } from '$lib/games/lightline/controls';
   import { live } from '$lib/live.svelte';
   import { pollMatch } from '$lib/match-poll';
   import { clock, colorOf, tableColors } from '$lib/seats';
@@ -148,8 +149,35 @@
   const view = $derived(env?.match.gameId === 'critical-mass' ? (env.view as CMView) : undefined);
   const ll = $derived(env?.match.gameId === 'lightline' ? (env.view as LLView) : undefined);
   const mySeat = $derived(env?.you ?? null);
-  /** Knocked out (or resigned) while the others play on. */
-  const iAmOut = $derived(!!mySeat && !!view && view.eliminated.includes(mySeat));
+  /** Knocked out (or resigned) while the others play on. In Lightline a crash ends only the round. */
+  const iAmOut = $derived(
+    !!mySeat && ((!!view && view.eliminated.includes(mySeat)) || (!!ll && !!ll.cycles.find((c) => c.seat === mySeat)?.resigned)),
+  );
+  const steerable = $derived(
+    !!ll && !!mySeat && live.me?.kind === 'human' && (match?.status === 'live' || match?.status === 'countdown') && !iAmOut,
+  );
+  const coarse = typeof window !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+  let pressed = $state<SteerKey | null>(null);
+  let pressedTimer: ReturnType<typeof setTimeout> | undefined;
+  function steer(matchId: string, key: SteerKey) {
+    live.steer(matchId, key);
+    pressed = key;
+    clearTimeout(pressedTimer);
+    pressedTimer = setTimeout(() => (pressed = null), 150);
+  }
+  $effect(() => {
+    if (!steerable || !env) return;
+    const id = env.match.id;
+    const onKey = (e: KeyboardEvent) => {
+      if (typing(e.target)) return;
+      const key = keyOf(e);
+      if (!key) return;
+      e.preventDefault(); // arrows and Space would scroll the page
+      steer(id, key);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
   const myTurn = $derived(!!match && match.status === 'live' && !!mySeat && match.toMove.includes(mySeat));
   const legalCells = $derived((env?.legal ?? []).map((l) => (l as { cell: string }).cell));
   const secondsLeft = $derived(match?.deadline ? Math.max(0, Math.ceil((Date.parse(match.deadline) - now) / 1000)) : null);
@@ -168,7 +196,13 @@
     if (!match) return { lead: '' };
     if (match.status === 'countdown') return { lead: 'Starting…' };
     if (match.status === 'over' || match.status === 'abandoned') return { lead: verdict || 'This match was abandoned.' };
-    if (ll) return { lead: `Round ${ll.round}`, detail: ll.shrinking ? 'The arena is closing in.' : 'Machines at work: each rides its own doctrine.' };
+    if (ll) {
+      const human = !!mySeat && match.seats.find((s) => s.seat === mySeat)?.identity.kind === 'human';
+      return {
+        lead: `Round ${ll.round}`,
+        detail: ll.shrinking ? 'The arena is closing in.' : human ? 'You steer: arrows or WASD, Space to boost.' : 'Machines at work: each rides its own doctrine.',
+      };
+    }
     if (myTurn) return { lead: 'Your move.', detail: 'Place an orb on an empty cell or one of yours.' };
     return { lead: `Waiting for ${handleOf(match.toMove[0] ?? '')}…` };
   });
@@ -284,9 +318,12 @@
       {#if ll}
         <div class="stage ll">
           <div class="boardwrap">
-            <LightlineBoard view={ll} {colors} seats={match.seats} fired={env.realtime?.fired ?? {}} />
+            <LightlineBoard view={ll} {colors} seats={match.seats} fired={env.realtime?.fired ?? {}} you={mySeat} countdown={countdown !== null} {pressed} onSteer={steerable ? (k) => steer(env!.match.id, k) : null} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
           </div>
+          {#if steerable && countdown !== null}
+            <p class="hint" data-testid="steer-hint">{coarse ? 'Swipe to steer · Tap to boost' : 'Arrows or WASD to steer · Space to boost'}</p>
+          {/if}
         </div>
       {/if}
       {#if view}
@@ -597,6 +634,12 @@
     font-size: clamp(4rem, 14vw, 9rem);
     color: var(--chalk);
     pointer-events: none;
+  }
+  .hint {
+    margin: 0.5rem 0 0;
+    text-align: center;
+    color: var(--fog);
+    font-size: var(--step--1);
   }
   .bottom {
     flex-wrap: wrap;

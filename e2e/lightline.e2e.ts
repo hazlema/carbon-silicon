@@ -74,3 +74,62 @@ test('a human can sit at an open Lightline table', async ({ browser, request }) 
     await request.delete(`/api/tables/${table.id}`, { headers: auth });
   }
 });
+
+test('a human hosts Lightline against Sprocket, steers with the keys, and resigns', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await enter(page, `llk${randomTag()}`);
+  const made = await page.request.post('/api/vs-house', { data: { gameId: 'lightline' } });
+  expect(made.status()).toBe(201);
+  const { table } = await made.json();
+  await expect.poll(async () => (await (await page.request.get(`/api/tables/${table.id}`)).json()).table.seated.length, { timeout: 10_000 }).toBe(2);
+  // Open the table page first and start from the API, so the 1 s countdown (and its hint) happens on screen.
+  await page.goto(`/t/${table.id}`);
+  expect((await page.request.post(`/api/tables/${table.id}/start`)).status()).toBe(200);
+  await expect(page.getByTestId('steer-hint')).toHaveText('Arrows or WASD to steer · Space to boost');
+  const matchId = (await (await page.request.get(`/api/tables/${table.id}`)).json()).table.matchId;
+  const heading = async () => {
+    const env = await (await page.request.get(`/api/matches/${matchId}`)).json();
+    return env.view.cycles.find((c: { seat: string }) => c.seat === env.you).heading;
+  };
+  await expect(page.getByTestId('ll-clock')).toContainText('round 1', { timeout: 5000 });
+  await expect.poll(async () => (await (await page.request.get(`/api/matches/${matchId}`)).json()).match.status).toBe('live');
+  await page.keyboard.press('ArrowUp');
+  await expect.poll(heading, { timeout: 2000 }).toBe('n');
+  await expect(page.getByText('steering')).toBeVisible();
+  // Typing in the table chat is not steering.
+  await page.getByPlaceholder('Talk trash, play fair').fill('');
+  await page.getByPlaceholder('Talk trash, play fair').press('KeyD');
+  await expect(page.getByPlaceholder('Talk trash, play fair')).toHaveValue('d');
+  await page.waitForTimeout(300);
+  expect(await heading()).not.toBe('e');
+  await page.getByRole('button', { name: 'Resign' }).click();
+  await page.getByRole('button', { name: 'Yes, resign' }).click();
+  await expect(page.getByRole('dialog').getByText('By forfeit: everyone else resigned.')).toBeVisible();
+});
+
+test('at 400 px a swipe on the arena turns the cycle', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await page.setViewportSize({ width: 400, height: 860 });
+  await enter(page, `lls${randomTag()}`);
+  const { table } = await (await page.request.post('/api/vs-house', { data: { gameId: 'lightline' } })).json();
+  await expect.poll(async () => (await (await page.request.get(`/api/tables/${table.id}`)).json()).table.seated.length, { timeout: 10_000 }).toBe(2);
+  await page.request.post(`/api/tables/${table.id}/start`);
+  await page.goto(`/t/${table.id}`);
+  const matchId = (await (await page.request.get(`/api/tables/${table.id}`)).json()).table.matchId;
+  await expect.poll(async () => (await (await page.request.get(`/api/matches/${matchId}`)).json()).match.status).toBe('live');
+  const box = (await page.locator('.arena canvas').boundingBox())!;
+  const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.locator('.arena canvas').dispatchEvent('pointerdown', { pointerType: 'touch', clientX: at.x, clientY: at.y, isPrimary: true });
+  await page.locator('.arena canvas').dispatchEvent('pointerup', { pointerType: 'touch', clientX: at.x, clientY: at.y + 60, isPrimary: true });
+  await expect.poll(async () => {
+    const env = await (await page.request.get(`/api/matches/${matchId}`)).json();
+    return env.view.cycles.find((c: { seat: string }) => c.seat === env.you).heading;
+  }, { timeout: 2000 }).toBe('s');
+  expect(
+    await page.evaluate(() => {
+      const g = globalThis as any;
+      return g.document.documentElement.scrollWidth <= g.window.innerWidth;
+    }),
+  ).toBe(true);
+  await page.request.post(`/api/matches/${matchId}/resign`);
+});

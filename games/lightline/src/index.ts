@@ -11,7 +11,7 @@ export const SEATS = ['red', 'blue', 'green', 'gold'];
 /** What everyone sees, spectators included: the arena, the cycles, and the score. */
 export interface LLView {
   grid: string[];
-  cycles: { seat: SeatId; x: number; y: number; heading: string; alive: boolean; boosts: number; boosting: boolean }[];
+  cycles: { seat: SeatId; x: number; y: number; heading: string; alive: boolean; boosts: number; boosting: boolean; resigned: boolean }[];
   round: number;
   roundTick: number;
   phase: LLState['phase'];
@@ -40,7 +40,7 @@ export const lightlineGame: GameModule<LLState> = {
   view(s): LLView {
     return {
       grid: Array.from({ length: H }, (_, y) => s.cells.slice(y * W, (y + 1) * W).join('')),
-      cycles: s.cycles.map(({ seat, x, y, heading, alive, boosts, boostTicks }) => ({ seat, x, y, heading, alive, boosts, boosting: boostTicks > 0 })),
+      cycles: s.cycles.map(({ seat, x, y, heading, alive, boosts, boostTicks, resigned }) => ({ seat, x, y, heading, alive, boosts, boosting: boostTicks > 0, resigned: !!resigned })),
       round: s.round,
       roundTick: s.roundTick,
       phase: s.phase,

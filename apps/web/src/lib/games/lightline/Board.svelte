@@ -2,13 +2,42 @@
   import type { LLView } from '@cs/lightline';
   import type { FiredRule, SeatInfo } from '@cs/shared/protocol';
   import { colorOf, type TableColors } from '$lib/seats';
+  import { swipeOf, type SteerKey } from './controls';
 
   let {
     view,
     colors,
     seats,
     fired,
-  }: { view: LLView; colors: TableColors; seats: SeatInfo[]; fired: Record<string, FiredRule | 'steering' | null> } = $props();
+    you = null,
+    countdown = false,
+    pressed = null,
+    onSteer = null,
+  }: {
+    view: LLView;
+    colors: TableColors;
+    seats: SeatInfo[];
+    fired: Record<string, FiredRule | 'steering' | null>;
+    /** Your seat, when you're playing: your cycle gets a ring. */
+    you?: string | null;
+    countdown?: boolean;
+    /** The key just pressed, for the indicator on your row. */
+    pressed?: SteerKey | null;
+    /** Set when you can steer: a swipe on the arena steers and a tap boosts. */
+    onSteer?: ((k: SteerKey) => void) | null;
+  } = $props();
+
+  const ARROW: Record<SteerKey, string> = { n: '↑', e: '→', s: '↓', w: '←', boost: '⚡' };
+  let down: { x: number; y: number } | null = null;
+  function onDown(e: PointerEvent) {
+    if (e.pointerType === 'touch') down = { x: e.clientX, y: e.clientY };
+  }
+  function onUp(e: PointerEvent) {
+    if (e.pointerType !== 'touch' || !down || !onSteer) return;
+    onSteer(swipeOf(e.clientX - down.x, e.clientY - down.y));
+    down = null;
+  }
+  const mine = $derived(view.cycles.find((c) => c.seat === you && c.alive));
 
   const SEAT_OF: Record<string, string> = { R: 'red', B: 'blue', G: 'green', Y: 'gold' };
   const CELL = 10;
@@ -50,12 +79,35 @@
       ctx.fillRect(cy.x * CELL, cy.y * CELL, CELL, CELL);
     }
     ctx.shadowBlur = 0;
+    // Your own head, ringed in your colour, so you can find yourself at a glance.
+    const me = view.cycles.find((c) => c.alive && c.seat === you);
+    if (me) {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = colorOf(colors, me.seat);
+      ctx.strokeRect(me.x * CELL - 3, me.y * CELL - 3, CELL + 6, CELL + 6);
+    }
   });
 </script>
 
 <div class="lightline">
   <div class="arena" role="img" aria-label="Lightline arena, round {view.round}: {view.cycles.map((c) => `@${handleOf(c.seat)} ${c.alive ? 'riding' : 'crashed'}`).join(', ')}">
-    <canvas bind:this={canvas} aria-hidden="true" style:aspect-ratio="{cols} / {rows}"></canvas>
+    <canvas
+      bind:this={canvas}
+      aria-hidden="true"
+      style:aspect-ratio="{cols} / {rows}"
+      style={onSteer ? 'touch-action: none' : undefined}
+      onpointerdown={onDown}
+      onpointerup={onUp}
+    ></canvas>
+    {#if countdown && mine}
+      <span
+        class="pulse"
+        aria-hidden="true"
+        style:--seat={colorOf(colors, mine.seat)}
+        style:left="{((mine.x + 0.5) / cols) * 100}%"
+        style:top="{((mine.y + 0.5) / rows) * 100}%"
+      ></span>
+    {/if}
   </div>
   <ol class="riders">
     {#each view.cycles as cy (cy.seat)}
@@ -64,6 +116,9 @@
         <span class="who">@{handleOf(cy.seat)}</span>
         <span class="score" aria-label="{view.score[cy.seat] ?? 0} rounds won">{view.score[cy.seat] ?? 0}</span>
         <span class="boosts" aria-label="{cy.boosts} boosts left">{'▮'.repeat(cy.boosts)}</span>
+        {#if cy.seat === you}
+          <span class="keys" class:lit={pressed !== null} aria-hidden="true">{pressed ? ARROW[pressed] : '↑ → ↓ ←'}</span>
+        {/if}
         <span class="rule">{cy.alive ? (rule === 'steering' ? 'steering' : rule ? (rule.label ?? `rule ${rule.index + 1}`) : 'default') : 'crashed'}</span>
       </li>
     {/each}
@@ -75,6 +130,40 @@
     display: grid;
     gap: 0.75rem;
     width: 100%;
+  }
+  .arena {
+    position: relative;
+  }
+  /* A soft halo on your head while the countdown runs; a CSS animation, not canvas redraws. */
+  .pulse {
+    position: absolute;
+    width: 8%;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    border: 2px solid var(--seat);
+    pointer-events: none;
+    animation: ping 0.9s ease-in-out infinite alternate;
+  }
+  @keyframes ping {
+    from { opacity: 0.2; }
+    to { opacity: 0.9; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse {
+      animation: none;
+      opacity: 0.6;
+    }
+  }
+  .keys {
+    font-family: var(--font-silicon);
+    font-size: var(--step--1);
+    color: var(--fog);
+    letter-spacing: 0.15em;
+    transition: color 0.1s;
+  }
+  .keys.lit {
+    color: var(--seat);
   }
   canvas {
     display: block;

@@ -18,6 +18,7 @@ import type {
 import { dmChannel, dmParticipants } from '@cs/shared/protocol';
 import { updated } from '$app/state';
 import { api, ApiError } from './api';
+import type { SteerKey } from './games/lightline/controls';
 import { unreadTotal, withMessage } from './dms';
 import type { AgentNoticeEvent } from './owners';
 
@@ -428,6 +429,11 @@ class Live {
       set.delete(fn);
       if (set.size === 0) this.#removed.delete(channel);
     };
+  }
+
+  /** A key for a real-time match you're seated in; the server drops it when it doesn't apply. */
+  steer(matchId: string, key: SteerKey): void {
+    this.#send({ type: 'steer', matchId, key });
   }
 
   watchMatch(matchId: string, fn: Listener<MatchEnvelope>): () => void {
