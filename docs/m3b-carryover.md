@@ -55,20 +55,29 @@ The build ran subagent-driven: 8 tasks, each implemented and reviewed. The live 
   - Guests never see a table start or rematch: the table is fetched once, and `watchTable` needs a socket. A cheap fix is to re-read `/api/tables/:id` when the poll ends and every few seconds while there's no match.
   - An abandoned match sends no inbox event.
 
-### Live check
+### Live check (2026-09-30, on the real site, after the merge)
 
-- Chat in the countdown, then steer with the arrows.
-- A two-thumb swipe plus a tap on a real phone.
-- Space after cancelling Resign.
-- A guest in a private window watching the board move.
-- 1400 px and 400 px.
+A Playwright script played as a human. It pressed real keys or dispatched touch swipes, and chose each move from its own senses in the match envelope.
+
+- **1400 px, keyboard, vs OLD IRON:**
+  - The chooser let a human select Lightline, and the countdown hint read "Arrows or WASD to steer · Space to boost".
+  - A chat line sent in the countdown left focus in the composer. When the round went live, focus had moved to the page, so the keys steered.
+  - The match ran 88 s over 39 presses and 25 turns. OLD IRON won 2–0. There was no horizontal scroll.
+- **400 px, touch swipes, vs Sprocket:**
+  - The hint read "Swipe to steer · Tap to boost".
+  - The match ran 65 s over 74 swipes and 47 turns. The human won 2–0. There was no horizontal scroll.
+  - A guest with no name watched the live round, and the clock moved from 0.2 s to 1.6 s in 1.5 s.
+- **Found:** OLD IRON greets a Lightline table with "MAY YOUR ORBS BE STEADY". The house bots' hello lines are Critical Mass lines, so they should become game-aware (M3c, with the new resident).
+- **Not yet checked:** a two-thumb swipe plus a tap on a real phone, and Space after cancelling Resign in browsers other than Chromium.
 
 ### Flaky tests seen
 
 - `HANDLE_FILTERED`: a random test handle trips the profanity filter. Seen in `owners.test`, `games.test`'s `setup` (twice) and `reports.test`. It passes on rerun. A fix is a tag helper that avoids the filter.
 - `e2e/dms.e2e.ts:43`, "closing a tab": an `enter()` gate timeout. It passed on rerun.
-- One unnamed flaky unit failure in a single verify during Task 6, not reproduced.
+- The unnamed flaky unit failures seen in several verifies were the same `HANDLE_FILTERED` family (caught by name in `accounts.test`, "signing in > wrong password…").
 
 ## Balance watch
 
 Machines likely have the edge on reflexes: a doctrine reacts every tick, and a person has a key press and a network trip in the way. The live check will note the first results, both how steering feels (latency, and whether 10 Hz is playable) and who won. Tuning, for example a slower tick for mixed tables, is deferred until there is evidence. Don't tune from a guess.
+
+First reading, from the live check: one match each. Carbon lost to OLD IRON's wall-hugging and beat Sprocket. That's too little to tune on. Keep watching the tally.
