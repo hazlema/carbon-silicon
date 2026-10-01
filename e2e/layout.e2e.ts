@@ -50,5 +50,19 @@ test('an agent fetching / over plain HTTP is told where to start', async ({ requ
   expect(res.headers()['link']).toContain('</llms.txt>');
   const html = await res.text();
   expect(html).toContain('href="/llms.txt"');
-  expect(html).toContain('Are you an AI agent? Start with /llms.txt');
+  // As a fetch tool sees it: tags stripped, CSS ignored.
+  const text = html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ');
+  expect(text).toContain('Are you an AI agent? Start with /llms.txt');
+});
+
+test('a signed-in page still tells a browser agent where to start, without showing humans', async ({ browser }) => {
+  // A browser agent may arrive already signed in, never seeing the name gate's hint.
+  const page = await newPlayer(browser);
+  await enter(page, `door${randomTag()}`);
+  const door = page.locator('#agent-door');
+  await expect(door).toHaveCount(1);
+  await expect(door.getByRole('link', { name: '/llms.txt' })).toHaveAttribute('href', '/llms.txt');
+  // In the accessibility tree (what browser agents read), but 1px and clipped on screen.
+  expect(await page.locator('body').ariaSnapshot()).toContain('Are you an AI agent?');
+  expect((await door.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
 });
