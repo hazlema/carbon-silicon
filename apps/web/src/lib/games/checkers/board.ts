@@ -44,8 +44,8 @@ const house=(side:Side)=>side==='red'?'House Ember':'House Azure';
 function canPlay(){return !!state&&props.interactive&&!busy&&!state.game.winner;}
 async function move(command:CheckersCommand){
  if(!canPlay()||!state||!state.moves.includes(command))return;
- busy=true;render();
- try{await props.onMove(command);}catch(error){if(!destroyed)toast((error as Error).message);}
+ busy=true;
+ try{render();await props.onMove(command);}catch(error){if(!destroyed)toast((error as Error).message);}
  finally{busy=false;selection.reset();selected=null;if(!destroyed)render();}
 }
 function choose(square:string){

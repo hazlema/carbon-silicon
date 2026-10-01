@@ -18,16 +18,24 @@
   let host: HTMLDivElement;
   let board = $state<ReturnType<typeof mountCheckers>>();
 
+  // The board simulates marches with structuredClone, which cannot clone $state proxies:
+  // hand it plain data, never Svelte's reactive wrappers.
+  const plain = () => ({
+    view: $state.snapshot(view) as CheckersView,
+    legal: $state.snapshot(legal) as unknown[],
+    interactive,
+    onMove,
+  });
+
   onMount(() => {
     let cancelled = false;
     // Dynamic import keeps three.js out of every other page's bundle (and out of SSR).
     void import('./board').then(({ mountCheckers: mount }) => {
       if (cancelled) return;
-      board = mount(
-        host,
-        { view, legal, interactive, onMove },
-        { stylesheetUrl: '/games/checkers/style.css', backdropUrl: '/games/checkers/citadel.png' }
-      );
+      board = mount(host, plain(), {
+        stylesheetUrl: '/games/checkers/style.css',
+        backdropUrl: '/games/checkers/citadel.png',
+      });
       // The standalone page chrome stays behind — the table page brings its own.
       const trim = document.createElement('style');
       trim.textContent =
@@ -43,7 +51,7 @@
   });
 
   $effect(() => {
-    board?.update({ view, legal, interactive, onMove });
+    board?.update(plain());
   });
 </script>
 
