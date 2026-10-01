@@ -1,7 +1,7 @@
 <script lang="ts">
   import { cellIndex, type CMBoardCell, type CMView } from '@cs/critical-mass';
   import { colorOf, type TableColors } from '$lib/seats';
-  import { boardSize, captured, cellCenter, cellOrder, changedCells, clampTilt, EMPTY, fitScale, flightPlan, ISO, orbSpots, shades, TOP, WAVE_MS, type Flight } from './iso';
+  import { boardSize, captured, cellCenter, cellOrder, changedCells, clampTilt, EMPTY, fitScale, flightPlan, ISO, orbSpots, popTimes, shades, TOP, type Flight } from './iso';
   import { createSound } from './sound';
   import { rgba } from './render';
 
@@ -109,12 +109,12 @@
     const before = prev;
     prev = board;
     if (firstPaint || before.length !== board.length) return;
-    onNewMove(before, board);
-    if (reduced) return;
     const waves = (view.lastMove?.waves ?? []).map((w) =>
       w.map((c) => cellIndex(view.cols, view.rows, c)).filter((i): i is number => i !== null),
     );
     const plan = flightPlan(waves, view.cols, view.rows);
+    onNewMove(before, board, waves.length, plan);
+    if (reduced) return;
     const last = view.lastMove ? cellIndex(view.cols, view.rows, view.lastMove.cell) : null;
     anim = { move, last, changed: new Set(changedCells(before, board)), mover: view.lastMove?.seat ?? null, ...plan };
     clearTimeout(clearFx);
@@ -127,13 +127,13 @@
   $effect(() => () => sound?.close());
 
   /** A move seen live: a clink, a pop per explosion wave, a thud if it took an opponent's cell. */
-  function onNewMove(before: Plain[], after: Plain[]) {
+  function onNewMove(before: Plain[], after: Plain[], waveCount: number, plan: { flightMs: number; total: number }) {
     if (!sound?.enabled) return;
     sound.clink();
-    const waves = view.lastMove?.waves ?? [];
-    waves.forEach((_, k) => sound.pop(k, (k * WAVE_MS) / 1000));
+    // Sound keeps the picture's (compressed) pace, and a long chain pops a capped number of times.
+    popTimes(waveCount, plan.flightMs).forEach((ms, k) => sound.pop(k, ms / 1000));
     const mover = view.lastMove?.seat;
-    if (mover && captured(before, after, mover)) sound.thud((waves.length * WAVE_MS) / 1000);
+    if (mover && captured(before, after, mover)) sound.thud(plan.total / 1000);
   }
 
   /** Orbs re-mount (and so re-animate) only in cells this move touched. */
@@ -213,7 +213,7 @@
           {/key}
         </button>
       {/each}
-      {#if anim}
+      {#if anim}{#key anim.move}
         <div class="fx" aria-hidden="true">
           {#each anim.bursts as burst, n (n)}
             {@const c = cellCenter(burst.index, view.cols, view.rows)}
@@ -228,7 +228,7 @@
             </span>
           {/each}
         </div>
-      {/if}
+      {/key}{/if}
     </div>
   </div>
   <div class="pill" role="toolbar" aria-label="Board view">
@@ -372,6 +372,9 @@
     position: absolute;
     inset: 0;
     border-radius: 50%;
+    /* Orbs stand above the floor and, at a steep tilt, are drawn over the cell behind: they take the
+       click themselves so it bubbles to their own cell. (Flight orbs sit in .fx, which stays inert.) */
+    pointer-events: auto;
     background: radial-gradient(circle at 35% 30%, var(--orb-light) 0%, var(--orb) 45%, var(--orb-dark) 100%);
     box-shadow: 0 0 12px var(--glow);
   }
@@ -478,6 +481,9 @@
     transform-style: preserve-3d;
     pointer-events: none;
   }
+  .fx .orb {
+    pointer-events: none;
+  }
   .burst {
     position: absolute;
     width: 0;
@@ -530,7 +536,8 @@
   @keyframes cm-fly {
     0% { transform: translate(0, 0); opacity: 0; }
     15% { opacity: 1; }
-    100% { transform: translate(var(--dx), var(--dy)); opacity: 1; }
+    85% { opacity: 1; }
+    100% { transform: translate(var(--dx), var(--dy)); opacity: 0; }
   }
   @media (prefers-reduced-motion: reduce) {
     .drop .orb,

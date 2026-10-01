@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { cellIndex } from '@cs/critical-mass';
 import {
   boardSize, captured, cellCenter, cellOrder, changedCells, clampTilt, CELL, EMPTY, fitScale, flightPlan,
-  GAP, MAX_FLIGHTS, mix, orbSpots, PAD, shades, WAVE_MS,
+  GAP, MAX_BURSTS, MAX_FLIGHTS, MAX_POPS, mix, popTimes, orbSpots, PAD, shades, WAVE_MS,
 } from './iso';
 
 describe('geometry', () => {
@@ -121,6 +121,20 @@ describe('flightPlan', () => {
     const waves = Array.from({ length: 80 }, () => [i('c4'), i('d5'), i('c5')]);
     const plan = flightPlan(waves, 6, 9);
     expect(plan.flights.length).toBeLessThanOrEqual(MAX_FLIGHTS);
+    expect(plan.bursts.length).toBeLessThanOrEqual(MAX_BURSTS);
     expect(plan.total).toBeLessThanOrEqual(3000);
+  });
+});
+
+describe('popTimes', () => {
+  test('one pop per wave at the plan’s spacing', () => {
+    expect(popTimes(3, 200)).toEqual([0, 200, 400]);
+    expect(popTimes(0, 200)).toEqual([]);
+  });
+  test('a long chain pops a capped number of times, spread across its whole run', () => {
+    const t = popTimes(500, 6);
+    expect(t.length).toBe(MAX_POPS);
+    expect(t[0]).toBe(0);
+    expect(t.at(-1)).toBeCloseTo(499 * 6, 5);
   });
 });

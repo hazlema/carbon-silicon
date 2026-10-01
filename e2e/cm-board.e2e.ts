@@ -39,6 +39,13 @@ async function resign(page: Page) {
   await expect(verdict).toBeVisible();
 }
 const stage = (page: Page) => page.locator('.stage3d');
+/** The top bar's move counter ("turn N"). */
+const turnNo = async (page: Page) => Number((await page.locator('.bar.top .meta').first().textContent())?.match(/turn (\d+)/)?.[1] ?? 0);
+/** After your move: wait out the reply (two moves on) until it's your turn again — robust to replies too quick to see. */
+async function afterReply(page: Page, before: number) {
+  await expect.poll(() => turnNo(page), { timeout: 20_000 }).toBeGreaterThanOrEqual(before + 2);
+  await myTurn(page);
+}
 const totalOrbs = (page: Page) =>
   page.locator('button[data-cell]').evaluateAll((els) => els.reduce((n, el) => n + Number((el as any).dataset.orbs), 0));
 
@@ -165,4 +172,78 @@ test('at 400 px the board fits and the cards never cover a cell', async ({ brows
     expect(overlap, 'a card covers a cell').toBe(false);
   }
   await resign(page);
+});
+
+test('at a steep tilt, clicking an orb adds to its own cell, not the one drawn behind it', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await startMatch(page);
+  await myTurn(page);
+  const start = await turnNo(page);
+  // Claim an interior cell, then wait for the reply.
+  let mine = '';
+  for (const name of ['c5', 'd5', 'c4', 'd4', 'c6', 'd6']) {
+    const cell = page.locator(`button[data-cell="${name}"][data-legal="true"][data-orbs="0"]`);
+    if (await cell.count()) {
+      await cell.click();
+      mine = name;
+      break;
+    }
+  }
+  expect(mine, 'an empty interior cell to claim').not.toBe('');
+  await expect(page.locator(`button[data-cell="${mine}"]`)).not.toHaveAttribute('data-orbs', '0');
+  const owner = await page.locator(`button[data-cell="${mine}"]`).getAttribute('data-owner');
+  await afterReply(page, start);
+  await expect(page.locator(`button[data-cell="${mine}"]`)).toHaveAttribute('data-owner', owner!);
+  // Tilt all the way: drag upward from the stage's empty lower-left corner.
+  const s = (await stage(page).boundingBox())!;
+  await page.mouse.move(s.x + 30, s.y + s.height - 120);
+  await page.mouse.down();
+  await page.mouse.move(s.x + 30, s.y + s.height - 520, { steps: 10 });
+  await page.mouse.up();
+  await expect(stage(page)).toHaveAttribute('data-tilt', '70');
+  await page.waitForTimeout(300);
+  const before = Number(await page.locator(`button[data-cell="${mine}"]`).getAttribute('data-orbs'));
+  const orb = (await page.locator(`button[data-cell="${mine}"] .orb`).first().boundingBox())!;
+  await page.mouse.click(orb.x + orb.width / 2, orb.y + 2);
+  await expect(page.locator(`button[data-cell="${mine}"]`)).toHaveAttribute('data-orbs', String(before + 1));
+});
+
+test.describe('with motion', () => {
+  test.use({ reducedMotion: 'no-preference' });
+
+  test('each move gets a fresh effects layer, so a second chain replays instead of reusing the first one’s orbs', async ({ browser }) => {
+    const page = await newPlayer(browser);
+    await startMatch(page);
+    await myTurn(page);
+    const start = await turnNo(page);
+    await page.locator('button[data-legal="true"]').first().click();
+    await expect.poll(() => turnNo(page)).toBeGreaterThanOrEqual(start + 1);
+    await expect(page.locator('.fx')).toHaveCount(1);
+    await page.locator('.fx').evaluate((el) => ((el as any).dataset.mark = 'old'));
+    const marked = await turnNo(page);
+    // Any later move — Sprocket's reply, or ours if the reply already landed — must rebuild the layer.
+    if (await page.locator('button[data-legal="true"]').count()) await page.locator('button[data-legal="true"]').first().click();
+    await expect.poll(() => turnNo(page), { timeout: 20_000 }).toBeGreaterThan(marked);
+    await expect(page.locator('.fx')).toHaveCount(1);
+    await expect(page.locator('.fx[data-mark="old"]')).toHaveCount(0);
+  });
+
+  test('a flying orb fades as it lands, so it never reads as an extra orb on the cell', async ({ browser }) => {
+    const page = await newPlayer(browser);
+    await startMatch(page);
+    const end = await page.evaluate(() => {
+      const g = globalThis as any;
+      for (const sheet of g.document.styleSheets) {
+        for (const rule of sheet.cssRules ?? []) {
+          if (rule.type === 7 && /cm-fly$/.test(rule.name)) {
+            const last = [...rule.cssRules].find((k: any) => k.keyText === '100%');
+            return last?.style.opacity ?? null;
+          }
+        }
+      }
+      return 'no cm-fly keyframes';
+    });
+    expect(end).toBe('0');
+  });
 });

@@ -15,6 +15,8 @@ export const TOP = { spin: 0, tilt: 0 };
 /** Waves burst this far apart; each flight takes exactly one wave, landing as the next wave bursts. */
 export const WAVE_MS = 200;
 export const MAX_FLIGHTS = 240;
+export const MAX_BURSTS = 120;
+export const MAX_POPS = 16;
 const MAX_TOTAL_MS = 3000;
 
 export const clampTilt = (t: number) => Math.min(70, Math.max(0, t));
@@ -120,7 +122,7 @@ export function flightPlan(waves: number[][], cols: number, rows: number) {
   waves.forEach((wave, k) => {
     const delay = k * waveMs;
     for (const from of wave) {
-      bursts.push({ index: from, delay });
+      if (bursts.length < MAX_BURSTS) bursts.push({ index: from, delay });
       hits.set(from, Math.max(hits.get(from) ?? 0, delay));
       for (const to of neighbors(cols, rows, from)) {
         if (flights.length < MAX_FLIGHTS) flights.push({ from, to, delay });
@@ -130,4 +132,12 @@ export function flightPlan(waves: number[][], cols: number, rows: number) {
   });
   const total = Math.max(...hits.values());
   return { flights, hits, bursts, total, flightMs: waveMs };
+}
+
+/** When each wave's pop sounds: one per wave, or MAX_POPS spread evenly over a longer chain. */
+export function popTimes(waveCount: number, waveMs: number): number[] {
+  if (waveCount <= 0) return [];
+  if (waveCount <= MAX_POPS) return Array.from({ length: waveCount }, (_, k) => k * waveMs);
+  const span = (waveCount - 1) * waveMs;
+  return Array.from({ length: MAX_POPS }, (_, k) => (k * span) / (MAX_POPS - 1));
 }

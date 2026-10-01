@@ -2,7 +2,7 @@
 export const popFrequency = (wave: number) => 440 * 2 ** (Math.min(wave, 12) / 12);
 
 /** Critical Mass's sounds, synthesized like Crown & Steel's: no files, nothing until the player turns it on. */
-export function createSound(key = 'cm_sound') {
+export function createSound(key = 'cm_sound', makeContext: () => AudioContext = () => new AudioContext()) {
   let enabled = false;
   try {
     enabled = localStorage.getItem(key) === 'on';
@@ -11,15 +11,24 @@ export function createSound(key = 'cm_sound') {
   }
   let ctx: AudioContext | undefined;
   let noise: AudioBuffer | undefined;
+  /** Everything plays through one gain; muting disconnects it, silencing sounds already scheduled. */
+  let master: GainNode | undefined;
   function audio() {
     if (!enabled) return;
     try {
-      ctx ??= new AudioContext();
+      ctx ??= makeContext();
       void ctx.resume();
       return ctx;
     } catch {
       return; /* Sound is optional. */
     }
+  }
+  function out(a: AudioContext) {
+    if (!master) {
+      master = a.createGain();
+      master.connect(a.destination);
+    }
+    return master;
   }
   function noiseBuffer(a: AudioContext) {
     if (!noise) {
@@ -42,7 +51,7 @@ export function createSound(key = 'cm_sound') {
       gain.gain.setValueAtTime(vol, t);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
       osc.connect(gain);
-      gain.connect(a.destination);
+      gain.connect(out(a));
       osc.start(t);
       osc.stop(t + 0.26);
     }
@@ -61,7 +70,7 @@ export function createSound(key = 'cm_sound') {
     gain.gain.setValueAtTime(0.12, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
     osc.connect(gain);
-    gain.connect(a.destination);
+    gain.connect(out(a));
     osc.start(t);
     osc.stop(t + 0.15);
     const puff = a.createBufferSource();
@@ -74,7 +83,7 @@ export function createSound(key = 'cm_sound') {
     puffGain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
     puff.connect(band);
     band.connect(puffGain);
-    puffGain.connect(a.destination);
+    puffGain.connect(out(a));
     puff.start(t);
     puff.stop(t + 0.09);
   }
@@ -91,7 +100,7 @@ export function createSound(key = 'cm_sound') {
     gain.gain.setValueAtTime(0.28, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
     osc.connect(gain);
-    gain.connect(a.destination);
+    gain.connect(out(a));
     osc.start(t);
     osc.stop(t + 0.25);
   }
@@ -107,6 +116,10 @@ export function createSound(key = 'cm_sound') {
         /* Storage is optional. */
       }
       if (enabled) clink();
+      else {
+        master?.disconnect();
+        master = undefined;
+      }
       return enabled;
     },
     clink,
