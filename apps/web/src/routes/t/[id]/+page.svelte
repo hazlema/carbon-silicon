@@ -4,22 +4,21 @@
   import type { CheckersView } from '@cs/checkers';
   import type { CMView } from '@cs/critical-mass';
   import type { LLView } from '@cs/lightline';
-  import { dmParticipants, groupOf, railChannel, tableChannel, type MatchEnvelope, type SeatInfo, type TableInfo } from '@cs/shared/protocol';
+  import { dmParticipants, groupOf, railChannel, tableChannel, type MatchEnvelope, type TableInfo } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
-  import Avatar from '$lib/components/Avatar.svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
   import ConvMenu from '$lib/components/ConvMenu.svelte';
   import ConvTabs from '$lib/components/ConvTabs.svelte';
   import { groupTitle } from '$lib/groups';
   import GatheringCard from '$lib/components/GatheringCard.svelte';
-  import IdentityChip from '$lib/components/IdentityChip.svelte';
   import Board from '$lib/games/critical-mass/Board.svelte';
+  import SeatCard from '$lib/games/critical-mass/SeatCard.svelte';
   import CrownBoard from '$lib/games/checkers/Board.svelte';
   import LightlineBoard from '$lib/games/lightline/Board.svelte';
   import { keyOf, typing, type SteerKey } from '$lib/games/lightline/controls';
   import { live } from '$lib/live.svelte';
   import { pollMatch } from '$lib/match-poll';
-  import { clock, colorOf, tableColors } from '$lib/seats';
+  import { colorOf, tableColors } from '$lib/seats';
 
   const REASONS: Record<string, string> = {
     'last-standing': 'Last one with orbs on the board.',
@@ -255,12 +254,10 @@
     return { lead: `Waiting for ${handleOf(match.toMove[0] ?? '')}…` };
   });
   const colors = $derived(tableColors(match?.seats ?? []));
-  // You sit on the left; everyone else fills in after you, half a table per side.
-  const sides = $derived.by(() => {
+  /** You first, then the rest in seat order: top-left, top-right, bottom-left, bottom-right. */
+  const ordered = $derived.by(() => {
     const seats = match?.seats ?? [];
-    const ordered = [...seats.filter((s) => s.seat === mySeat), ...seats.filter((s) => s.seat !== mySeat)];
-    const half = Math.ceil(ordered.length / 2);
-    return { left: ordered.slice(0, half), right: ordered.slice(half) };
+    return [...seats.filter((s) => s.seat === mySeat), ...seats.filter((s) => s.seat !== mySeat)];
   });
   /** A rematch is gathering and you're in it: the card sits where the verdict was. */
   const regathering = $derived(table?.status === 'forming' && !!live.me && table.seated.some((p) => p.id === live.me!.id));
@@ -389,45 +386,27 @@
         </div>
       {/if}
       {#if view}
-      <div class="stage" style:--board-w="min(60vw, calc((100dvh - 14rem) * {view.cols} / {view.rows} * 1.6))">
-        {#snippet card(s: SeatInfo, side: 'left' | 'right')}
-          {@const out = view.eliminated.includes(s.seat)}
-          {@const onClock = match.toMove.includes(s.seat)}
-          {@const count = view.counts[s.seat] ?? { cells: 0, orbs: 0 }}
-          {@const human = s.identity.kind === 'human'}
-          <div class="player {side}" class:out class:onclock={onClock} style:--seat={colorOf(colors, s.seat)}>
-            <Avatar kind={s.identity.kind} size="4.5rem" glow={onClock && !out} />
-            <div class="id">
-              <span class="name"><IdentityChip identity={s.identity} badge={false} tag={false} /></span>
-              <span class="role">
-                {[s.seat === mySeat ? 'you' : s.identity.isHouse ? 'house' : '', human ? 'human' : 'machine'].filter(Boolean).join(' · ')}
-              </span>
-            </div>
-            <p class="orbs"><span class="swatch" aria-hidden="true"></span><b>{count.orbs}</b> {count.orbs === 1 ? 'orb' : 'orbs'}</p>
-            <p class="cells">{count.cells} {count.cells === 1 ? 'cell' : 'cells'} held</p>
-            {#if out}
-              <span class="pill">out</span>
-            {:else if onClock && secondsLeft !== null}
-              <span class="pill clock" class:low={secondsLeft <= 15} aria-label="{secondsLeft} seconds left">
-                <span class="tick" aria-hidden="true"></span>{clock(secondsLeft)}
-              </span>
-            {:else if match.status === 'live'}
-              <span class="pill">waiting</span>
-            {/if}
+        <div class="stage cm">
+          <div class="corners">
+            {#each ordered as s, k (s.seat)}
+              <SeatCard
+                {s}
+                color={colorOf(colors, s.seat)}
+                you={s.seat === mySeat}
+                onClock={match.toMove.includes(s.seat)}
+                out={view.eliminated.includes(s.seat)}
+                {secondsLeft}
+                live={match.status === 'live'}
+                count={view.counts[s.seat] ?? { cells: 0, orbs: 0 }}
+                corner={(['tl', 'tr', 'bl', 'br'] as const)[k % 4]}
+              />
+            {/each}
           </div>
-        {/snippet}
-
-        <div class="side left">
-          {#each sides.left as s (s.seat)}{@render card(s, 'left')}{/each}
+          <div class="boardwrap">
+            <Board {view} {colors} legal={legalCells} interactive={myTurn && !busy} onMove={move} />
+            {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
+          </div>
         </div>
-        <div class="boardwrap">
-          <Board {view} {colors} legal={legalCells} interactive={myTurn && !busy} onMove={move} />
-          {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
-        </div>
-        <div class="side right">
-          {#each sides.right as s (s.seat)}{@render card(s, 'right')}{/each}
-        </div>
-      </div>
       {/if}
 
       {#snippet tableActions()}
@@ -578,133 +557,53 @@
   }
   .stage {
     display: grid;
-    /* The board's column is as wide as the board (Board.svelte sizes itself to 68dvh tall). */
-    grid-template-columns: minmax(8rem, 1fr) minmax(0, var(--board-w)) minmax(8rem, 1fr);
-    grid-template-areas: 'left board right';
     align-items: center;
     gap: 2rem;
     padding: 1.5rem;
     min-height: 0;
   }
-  .stage:not(.ll):not(.ck) .boardwrap {
-    align-self: stretch;
-    min-height: 24rem;
-  }
-  .side {
+  /* Critical Mass: the board owns the stage; players float in its corners. */
+  .stage.cm {
+    position: relative;
     display: flex;
     flex-direction: column;
-    gap: 2.5rem;
-    min-width: 0;
+    padding: 0;
+    min-height: 0;
+    container-type: size;
   }
-  .side.left {
-    grid-area: left;
+  .stage.cm .boardwrap {
+    flex: 1;
+    min-height: 0;
+    display: block;
   }
-  .side.right {
-    grid-area: right;
+  .corners {
+    position: absolute;
+    inset: 18px 18px 72px;
+    z-index: 2;
+    pointer-events: none;
   }
-  .player {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    min-width: 0;
+  .corners > :global(.seat) {
+    position: absolute;
+    max-width: calc(50% - 9px);
   }
-  .player.left {
-    align-items: flex-end;
-    text-align: right;
-  }
-  .player.right {
-    align-items: flex-start;
-  }
-  .player.out {
-    opacity: 0.45;
-  }
-  .player.out .name {
-    text-decoration: line-through;
-  }
-  .id {
-    display: grid;
-    margin-top: 0.4rem;
-    min-width: 0;
-    max-width: 100%;
-  }
-  .name {
-    font-size: var(--step-2);
-    line-height: 1.2;
-    min-width: 0;
-    overflow: hidden;
-  }
-  .role {
-    color: var(--fog);
-    font-size: var(--step--1);
-  }
-  .orbs,
-  .cells {
-    margin: 0;
-    color: var(--fog);
-    font-size: var(--step--1);
-  }
-  .orbs {
-    display: flex;
-    align-items: baseline;
-    gap: 0.4rem;
-    margin-top: 0.6rem;
-  }
-  .orbs b {
-    color: var(--chalk);
-    font-family: var(--font-silicon);
-    font-size: var(--step-3);
-    font-weight: 500;
-    line-height: 1;
-    font-variant-numeric: tabular-nums;
-  }
-  .swatch {
-    align-self: center;
-    width: 0.6rem;
-    height: 0.6rem;
-    border-radius: 50%;
-    background: var(--seat);
-    box-shadow: 0 0 0.5rem var(--seat);
-  }
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-    margin-top: 0.6rem;
-    padding: 0.3rem 0.8rem;
-    border: 1px solid var(--lattice);
-    border-radius: var(--r-control);
-    color: var(--dust);
-    font-size: var(--step--1);
-  }
-  .pill.clock {
-    border-color: var(--seat);
-    color: var(--chalk);
-    font-family: var(--font-silicon);
-    font-size: var(--step-1);
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-  }
-  .pill.clock.low {
-    border-color: var(--danger);
-    color: var(--danger);
-  }
-  .tick {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 50%;
-    background: currentColor;
-    animation: pulse 1s ease-in-out infinite;
-  }
-  .pill.clock:not(.low) .tick {
-    background: var(--seat);
-  }
-  @keyframes pulse {
-    50% {
-      opacity: 0.3;
+  .corners > :global(.tl) { top: 0; left: 0; }
+  .corners > :global(.tr) { top: 0; right: 0; }
+  .corners > :global(.bl) { bottom: 0; left: 0; }
+  .corners > :global(.br) { bottom: 0; right: 0; }
+  @container (max-width: 560px) {
+    .corners {
+      position: static;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 10px 10px 0;
+    }
+    .corners > :global(.seat) {
+      position: static;
+      max-width: none;
     }
   }
   .boardwrap {
-    grid-area: board;
     position: relative;
     display: grid;
     place-items: center;
@@ -808,14 +707,6 @@
     text-align: center;
     margin-top: 4rem;
   }
-  @media (max-width: 1180px) {
-    .stage {
-      gap: 1.25rem;
-    }
-    .name {
-      font-size: var(--step-1);
-    }
-  }
   @media (max-width: 960px) {
     .table {
       grid-template-columns: minmax(0, 1fr);
@@ -824,46 +715,8 @@
     .bar {
       padding: 0.75rem 1rem;
     }
-    .stage {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      grid-template-areas: 'left right' 'board board';
-      padding: 1rem;
-      gap: 1rem;
-    }
-    .side {
-      gap: 0.75rem;
-    }
-    /* Compact cards: tile beside the name, stats underneath. */
-    .player {
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
-      column-gap: 0.6rem;
-      row-gap: 0.1rem;
-      align-items: center;
-    }
-    .player.left {
-      text-align: left;
-    }
-    .player :global(.avatar) {
-      --size: 2.75rem !important;
-    }
-    .id {
-      margin: 0;
-    }
-    .orbs,
-    .cells,
-    .pill {
-      grid-column: 1 / -1;
-      margin: 0;
-    }
-    .orbs {
-      margin-top: 0.3rem;
-    }
-    .orbs b {
-      font-size: var(--step-2);
-    }
-    .pill {
-      justify-self: start;
+    .stage.cm {
+      height: clamp(30rem, min(85dvh, calc(100vw + 10rem)), 52rem);
     }
     /* Narrow, the board is width-bound: the stage is as tall as the width needs, plus the cards and footer. */
     .stage.ck {

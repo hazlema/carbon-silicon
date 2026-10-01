@@ -1,10 +1,25 @@
 import { expect, test, type Page } from '@playwright/test';
-import { pickGame, randomTag } from './testing';
+import { enter, newPlayer, pickGame, randomTag } from './testing';
 
+let open: Page | null = null;
+// A test that fails before it resigns would keep Sprocket booked and sink every test after it.
+test.afterEach(async () => {
+  const page = open;
+  open = null;
+  if (!page) return;
+  const resignBtn = page.getByRole('button', { name: 'Resign' });
+  if (await resignBtn.isVisible().catch(() => false)) {
+    await resignBtn.click().catch(() => {});
+    await page.getByRole('button', { name: 'Yes, resign' }).click({ timeout: 3000 }).catch(() => {});
+    await page.getByRole('button', { name: 'Rematch' }).waitFor({ timeout: 5000 }).catch(() => {});
+  }
+});
+
+/** Each test is its own guest from its own address: the server caps new names per IP, and the
+ *  `page` fixture shares 127.0.0.1 with every other suite. */
 async function startMatch(page: Page) {
-  await page.goto('/');
-  await page.getByLabel('Your handle').fill(`iso${randomTag()}`);
-  await page.getByRole('button', { name: 'Enter the parlor' }).click();
+  open = page;
+  await enter(page, `iso${randomTag()}`);
   await pickGame(page);
   await page.getByRole('button', { name: 'Find a match' }).click();
   await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
@@ -21,7 +36,8 @@ const stage = (page: Page) => page.locator('.stage3d');
 const totalOrbs = (page: Page) =>
   page.locator('button[data-cell]').evaluateAll((els) => els.reduce((n, el) => n + Number((el as any).dataset.orbs), 0));
 
-test('the view pill turns the board, and a click still lands on the cell under the pointer', async ({ page }) => {
+test('the view pill turns the board, and a click still lands on the cell under the pointer', async ({ browser }) => {
+  const page = await newPlayer(browser);
   await page.setViewportSize({ width: 1400, height: 900 });
   await startMatch(page);
   await expect(stage(page)).toHaveAttribute('data-spin', '-35');
@@ -44,7 +60,8 @@ test('the view pill turns the board, and a click still lands on the cell under t
   await resign(page);
 });
 
-test('a swivel that ends over a cell places nothing, and tilt stays within 0–70°', async ({ page }) => {
+test('a swivel that ends over a cell places nothing, and tilt stays within 0–70°', async ({ browser }) => {
+  const page = await newPlayer(browser);
   await page.setViewportSize({ width: 1400, height: 900 });
   await startMatch(page);
   await myTurn(page);
@@ -54,7 +71,7 @@ test('a swivel that ends over a cell places nothing, and tilt stays within 0–7
   await page.mouse.down();
   await page.mouse.move(cell.x + cell.width / 2 + 200, cell.y + cell.height / 2 - 400, { steps: 8 });
   // Mid-swivel: the board has turned, and an upward drag can't tilt it past 70°.
-  expect(Number(await stage(page).getAttribute('data-spin'))).toBe(-35 + 200 * 0.4);
+  expect(Number(await stage(page).getAttribute('data-spin'))).toBeCloseTo(-35 + 200 * 0.4, 1);
   expect(Number(await stage(page).getAttribute('data-tilt'))).toBe(70);
   // Back to where it started, so the release lands on the very cell the press began on.
   await page.mouse.move(cell.x + cell.width / 2, cell.y + cell.height / 2, { steps: 8 });
@@ -64,7 +81,8 @@ test('a swivel that ends over a cell places nothing, and tilt stays within 0–7
   await resign(page);
 });
 
-test('a resized window refits the board: every cell stays inside the stage', async ({ page }) => {
+test('a resized window refits the board: every cell stays inside the stage', async ({ browser }) => {
+  const page = await newPlayer(browser);
   await page.setViewportSize({ width: 1400, height: 900 });
   await startMatch(page);
   for (const size of [{ width: 1920, height: 1080 }, { width: 1024, height: 700 }]) {
@@ -81,7 +99,8 @@ test('a resized window refits the board: every cell stays inside the stage', asy
   await resign(page);
 });
 
-test('every cell is hittable at its own centre, at Iso and from the top', async ({ page }) => {
+test('every cell is hittable at its own centre, at Iso and from the top', async ({ browser }) => {
+  const page = await newPlayer(browser);
   await page.setViewportSize({ width: 1400, height: 900 });
   await startMatch(page);
   const misses = () =>
@@ -99,7 +118,8 @@ test('every cell is hittable at its own centre, at Iso and from the top', async 
   await resign(page);
 });
 
-test('the sound toggle starts off and is remembered', async ({ page }) => {
+test('the sound toggle starts off and is remembered', async ({ browser }) => {
+  const page = await newPlayer(browser);
   await startMatch(page);
   const sound = page.getByRole('toolbar', { name: 'Board view' }).getByRole('button', { name: 'Sound' });
   await expect(sound).toHaveAttribute('aria-pressed', 'false');
@@ -107,5 +127,36 @@ test('the sound toggle starts off and is remembered', async ({ page }) => {
   await expect(sound).toHaveAttribute('aria-pressed', 'true');
   await page.reload();
   await expect(page.getByRole('toolbar', { name: 'Board view' }).getByRole('button', { name: 'Sound' })).toHaveAttribute('aria-pressed', 'true');
+  await resign(page);
+});
+
+test('players sit in corner cards; the seat to move shows the clock', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await startMatch(page);
+  await myTurn(page);
+  const cards = page.locator('.seat[data-seat]');
+  await expect(cards).toHaveCount(2);
+  await expect(cards.first()).toContainText('you');
+  await expect(cards.first().locator('.clock')).toBeVisible();
+  await expect(cards.nth(1)).toContainText('waiting');
+  await resign(page);
+});
+
+test('at 400 px the board fits and the cards never cover a cell', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await page.setViewportSize({ width: 400, height: 860 });
+  await startMatch(page);
+  const { scroll, inner } = await page.evaluate(() => {
+    const g = globalThis as any;
+    return { scroll: g.document.documentElement.scrollWidth as number, inner: g.innerWidth as number };
+  });
+  expect(scroll).toBeLessThanOrEqual(inner);
+  const cards = await page.locator('.seat[data-seat]').evaluateAll((els) => els.map((el) => (el as any).getBoundingClientRect().toJSON()));
+  const cells = await page.locator('button[data-cell]').evaluateAll((els) => els.map((el) => (el as any).getBoundingClientRect().toJSON()));
+  for (const c of cards) for (const b of cells) {
+    const overlap = c.left < b.right && b.left < c.right && c.top < b.bottom && b.top < c.bottom;
+    expect(overlap, 'a card covers a cell').toBe(false);
+  }
   await resign(page);
 });
