@@ -120,6 +120,18 @@
     }
     .state {
       margin-inline: 4px 0;
+      font-size: 11px;
+    }
+    .tr .state,
+    .br .state {
+      margin-inline: 0 4px;
+    }
+    /* Narrow: the name gets the room; "you"/"house" is already said by the tile and the order. */
+    small {
+      display: none;
+    }
+    .clock {
+      font-size: 14px;
     }
   }
 </style>

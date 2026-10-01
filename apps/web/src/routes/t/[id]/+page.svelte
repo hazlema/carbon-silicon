@@ -567,6 +567,7 @@
     position: relative;
     display: flex;
     flex-direction: column;
+    align-items: stretch;
     padding: 0;
     min-height: 0;
     container-type: size;

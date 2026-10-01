@@ -170,7 +170,7 @@
   style:--tilt="{tilt}deg"
   style:--mine={mine ? rgba(mine, 0.14) : 'transparent'}
 >
-  <div class="slab" style:transform="rotateX({tilt}deg) rotateZ({spin}deg) scale({scale})">
+  <div class="slab" style:transform="rotateX({tilt}deg) rotateZ({spin}deg) scale3d({scale}, {scale}, {scale})">
     <div class="shadow" aria-hidden="true"></div>
     <div class="face" role="group" aria-label="Board" bind:this={cellsEl} style:grid-template-columns="repeat({view.cols}, var(--cell))">
       <i class="edge s" aria-hidden="true"></i><i class="edge n" aria-hidden="true"></i><i class="edge w" aria-hidden="true"></i><i class="edge e" aria-hidden="true"></i>
@@ -244,7 +244,7 @@
 <style>
   .stage3d {
     --cell: 66px;
-    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     position: relative;
     width: 100%;
     height: 100%;
@@ -412,10 +412,15 @@
   .pill button {
     width: auto;
     height: auto;
+    min-height: 0;
     padding: 6px 12px;
+    border: 0;
     border-radius: 999px;
+    background: none;
+    box-shadow: none;
     color: inherit;
     font: inherit;
+    white-space: nowrap;
     transform-style: flat;
   }
   .pill button:hover {
