@@ -6,6 +6,8 @@ import { ApiError, Client } from './client';
 import { DmBudget } from './dm-budget';
 import { DEFAULT_STRATEGY, line, linesFor, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
+import { chooseCheckersMove } from './strategies/checkers';
+import type { CheckersState } from '@cs/checkers';
 import { lightlineDoctrine } from './strategies/lightline';
 import type { ChatLine, Moment, MomentKind, Voice } from './voice';
 
@@ -218,10 +220,13 @@ export async function connect(
   log(`registered as @${reg.identity.handle}`);
 }
 
-function chooseMove(env: MatchEnvelope, strategy: Personality['strategy'], think: { rng: () => number }): unknown {
+function chooseMove(env: MatchEnvelope, personality: Personality, think: { rng: () => number }): unknown {
   if (env.match.gameId === 'critical-mass' && env.you) {
-    const { depth, randomness } = strategy ?? DEFAULT_STRATEGY;
+    const { depth, randomness } = personality.strategy ?? DEFAULT_STRATEGY;
     return chooseCriticalMassMove(stateFromView(env.view as CMView), env.you, { depth, randomness, rng: think.rng });
+  }
+  if (env.match.gameId === 'checkers' && (env.you === 'red' || env.you === 'blue')) {
+    return chooseCheckersMove(env.view as CheckersState, env.you, { randomness: personality.checkers?.randomness ?? 0.5, rng: think.rng });
   }
   return env.legal[Math.floor(think.rng() * env.legal.length)];
 }
@@ -317,7 +322,7 @@ async function playMatch(
         const [lo, hi] = opts.thinkMs;
         await sleep(lo + Math.random() * Math.max(0, hi - lo), opts.signal);
         try {
-          env = await client.move(matchId, env.match.revision, chooseMove(env, opts.personality.strategy, { rng: Math.random }));
+          env = await client.move(matchId, env.match.revision, chooseMove(env, opts.personality, { rng: Math.random }));
         } catch (e) {
           if (e instanceof ApiError && (e.status === 409 || e.status === 400)) {
             env = await client.match(matchId);

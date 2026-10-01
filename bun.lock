@@ -14,6 +14,7 @@
     "apps/bots": {
       "name": "@cs/bots",
       "dependencies": {
+        "@cs/checkers": "workspace:*",
         "@cs/critical-mass": "workspace:*",
         "@cs/game-api": "workspace:*",
         "@cs/lightline": "workspace:*",

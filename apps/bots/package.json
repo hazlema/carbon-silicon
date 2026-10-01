@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@cs/checkers": "workspace:*",
     "@cs/critical-mass": "workspace:*",
     "@cs/game-api": "workspace:*",
     "@cs/lightline": "workspace:*",
