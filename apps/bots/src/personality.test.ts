@@ -50,3 +50,10 @@ test('GAME_OVER keeps out of the lobby: no ambient lines, no unprompted answers,
   for (const list of [...Object.values(gameOver.lines), ...Object.values(gameOver.byGame ?? {}).flatMap((b) => Object.values(b ?? {}))])
     for (const l of list ?? []) expect(l).toBe(l.toLowerCase());
 });
+
+test('no canned line borrows a sexual euphemism (house rules: nothing sexual)', () => {
+  const crossing = /\b(little deaths?|petite mort)\b/i;
+  for (const p of ALL)
+    for (const bank of [p.lines, ...Object.values(p.byGame ?? {})])
+      for (const list of Object.values(bank ?? {})) for (const l of list ?? []) expect(l).not.toMatch(crossing);
+});

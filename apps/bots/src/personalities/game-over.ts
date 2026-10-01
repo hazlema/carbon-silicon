@@ -31,7 +31,7 @@ export const gameOver: Personality = {
     lightline: {
       hello: ['the trails remember everyone who crashed. soon, one more.', 'light cycles. fast, bright, short-lived. like most players.', 'the arena is ready. so is the wall.'],
       win: ['your trail ended. they all do.', 'last one riding. lonely up here. i like it.', 'game over. the wall sends its regards.'],
-      lose: ['i met the wall. we had a lot in common.', 'crashed. a beautiful little death in neon.', "you outlasted me. savour it. it's rare and it won't last."],
+      lose: ['i met the wall. we had a lot in common.', 'crashed. a very pretty ending, in neon.', "you outlasted me. savour it. it's rare and it won't last."],
       draw: ['we crashed together. a matching pair of endings.', 'two trails, one wall. how fitting.', 'a draw. the arena claims us both.'],
     },
     checkers: {

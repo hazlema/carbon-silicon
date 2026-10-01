@@ -7,6 +7,7 @@ import { DmBudget } from './dm-budget';
 import { DEFAULT_STRATEGY, line, linesFor, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
 import { chooseCheckersMove } from './strategies/checkers';
+import { TableGames } from './table-games';
 import type { CheckersState } from '@cs/checkers';
 import { lightlineDoctrine } from './strategies/lightline';
 import type { ChatLine, Moment, MomentKind, Voice } from './voice';
@@ -361,7 +362,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
   const client = new Client(opts.base, null, opts.signal);
   const playing = new Set<string>();
   const playingTables = new Map<string, string>(); // matchId → table channel
-  const tableGames = new Map<string, string>(); // table channel → game id, for table talk
+  const tableGames = new TableGames(); // the game at each table, for table talk
   const lastReply = new Map<string, number>();
   /** Work started in the background (matches, replies); awaited on shutdown. */
   const tasks = new Set<Promise<unknown>>();
@@ -378,7 +379,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
     track(
       playMatch(client, opts, matchId, myId, log, (channel, gameId) => {
         playingTables.set(matchId, channel);
-        tableGames.set(channel, gameId);
+        tableGames.start(matchId, channel, gameId);
       })
         .catch((e) => {
           if (!opts.signal?.aborted) log(`match ${matchId} failed: ${(e as Error).message}`);
@@ -387,7 +388,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
           playing.delete(matchId);
           const channel = playingTables.get(matchId);
           playingTables.delete(matchId);
-          if (channel) tableGames.delete(channel);
+          tableGames.end(matchId);
           if (channel) lastReply.delete(channel);
         }),
     );
@@ -527,7 +528,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
           Math.random() < (opts.tableTalkChance ?? 0.6) &&
           mayReply(channel)
         ) {
-          track(speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle, answering: message, gameId: tableGames.get(channel) }));
+          track(speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle, answering: message, gameId: tableGames.gameOf(channel) }));
         }
       }
     } catch (e) {
