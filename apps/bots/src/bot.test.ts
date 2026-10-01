@@ -8,7 +8,7 @@ import { createApp } from '@cs/server/http';
 import { startServer } from '@cs/server/server';
 import { ambientDue, CHAT_WATCH_MS, runBot, unansweredCandidate, type BotOptions } from './bot';
 import { Client } from './client';
-import { shout } from './personality';
+import { shout, linesFor } from './personality';
 import { oldIron } from './personalities/old-iron';
 import { sprocket } from './personalities/sprocket';
 import type { ChatMessage } from '@cs/shared/protocol';
@@ -76,7 +76,7 @@ const randomIp = () => `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.
 
 async function botSaidHelloTimes(client: Client, tableId: string, botId: string): Promise<number> {
   const { messages } = await client.call<{ messages: { author: { id: string } | null; text: string }[] }>('GET', `/api/chat/table:${tableId}?since=0&limit=200`);
-  const hello = new Set(sprocket.lines.hello);
+  const hello = new Set(linesFor(sprocket, 'hello', 'critical-mass'));
   return messages.filter((m) => m.author?.id === botId && hello.has(m.text)).length;
 }
 
@@ -135,7 +135,7 @@ describe('Sprocket', () => {
       const said = r.messages.filter((m) => m.author?.handle === 'Sprocket').map((m) => m.text);
       return said.length >= 2 ? said : null;
     });
-    expect(sprocket.lines.hello).toContain(table[0]);
+    expect(linesFor(sprocket, 'hello', 'critical-mass')).toContain(table[0]);
   }, 60_000);
 
   test('greets exactly once per match', async () => {
@@ -155,7 +155,7 @@ describe('Sprocket', () => {
         'GET',
         `/api/chat/match:${matchId}?since=0&limit=200`,
       );
-      const said = r.messages.filter((m) => m.author?.handle === 'Sprocket' && sprocket.lines.hello.includes(m.text));
+      const said = r.messages.filter((m) => m.author?.handle === 'Sprocket' && linesFor(sprocket, 'hello', 'critical-mass').includes(m.text));
       return said.length >= 1 ? said : null;
     });
     await guest.call('POST', `/api/matches/${matchId}/resign`).catch(() => {}); // best-effort cleanup
@@ -243,6 +243,32 @@ describe('tables', () => {
     // The hello was said at the first match only: the table remembers it.
     expect(await botSaidHelloTimes(human, tableId, bot.id)).toBe(1);
   }, 30_000);
+  test('Sprocket greets a Crown & Steel table from its Crown & Steel lines', async () => {
+    const human = new Client(running.url);
+    const reg = await human.register({ name: `knight${randomTag()}` });
+    human.token = reg.token;
+    type Who = { presence: { identity: { id: string; handle: string; isHouse: boolean }; status: string }[] };
+    const sprocketNow = async () =>
+      (await human.call<Who>('GET', '/api/who')).presence.find((p) => p.identity.isHouse && p.identity.handle.startsWith('Sprocket'))!;
+    for (let i = 0; i < 100 && (await sprocketNow()).status !== 'ready'; i++) await Bun.sleep(50);
+    const bot = (await sprocketNow()).identity;
+    const tableId = (await human.hostTable('checkers', [bot.handle])).table.id;
+    for (let i = 0; i < 100; i++) {
+      if ((await human.call<{ table: { seated: unknown[] } }>('GET', `/api/tables/${tableId}`)).table.seated.length === 2) break;
+      await Bun.sleep(50);
+    }
+    const { match } = await human.startTable(tableId);
+    try {
+      const hello = await until(async () => {
+        const r = await human.call<{ messages: { author: { id: string } | null; text: string }[] }>('GET', `/api/chat/table:${tableId}?since=0&limit=200`);
+        return r.messages.find((m) => m.author?.id === bot.id)?.text;
+      });
+      expect(linesFor(sprocket, 'hello', 'checkers')).toContain(hello);
+    } finally {
+      await human.call('POST', `/api/matches/${match.id}/resign`).catch(() => {});
+    }
+  }, 30_000);
+
   test('Sprocket seated at one table declines an invite to another, and stays put', async () => {
     const a = await newAgent(running.url, `hosta${randomTag()}`);
     const b = await newAgent(running.url, `hostb${randomTag()}`);
@@ -350,12 +376,14 @@ describe('OLD IRON (a bot with a voice)', () => {
     try {
       expect(await ironSaid(client, table, (t) => t === 'VOICE HELLO LINE.')).toBe('VOICE HELLO LINE.');
       expect(heard.find((m) => m.kind === 'hello' && m.channel === table)?.opponent).toBe(handle);
+      expect(heard.find((m) => m.kind === 'hello' && m.channel === table)?.game?.name).toBe('Critical Mass');
       await client.chat(table, 'your corner is toast, grandpa');
       expect(await ironSaid(client, table, (t) => t === 'VOICE TABLETALK LINE.')).toBe('VOICE TABLETALK LINE.');
       const asked = heard.find((m) => m.kind === 'tableTalk' && m.channel === table)!;
       expect(asked.opponent).toBe(handle);
       expect(asked.recent.map((l) => l.text)).toContain('your corner is toast, grandpa');
       expect(asked.answering?.text).toBe('your corner is toast, grandpa');
+      expect(asked.game?.name).toBe('Critical Mass'); // table talk comes from the inbox, not playMatch: it must carry the game too
     } finally {
       await client.call('POST', `/api/matches/${matchId}/resign`).catch(() => {});
     }
@@ -374,7 +402,7 @@ describe('OLD IRON (a bot with a voice)', () => {
       const hello = await ironSaid(client, table, () => true);
       // Deadline plus one inbox poll (500 ms) plus slack; without the deadline this never arrives.
       expect(Date.now() - seen).toBeLessThan(VOICE_DEADLINE_MS + 2500);
-      expect(oldIron.lines.hello).toContain(hello);
+      expect(linesFor(oldIron, 'hello', 'critical-mass')).toContain(hello);
       let env = await client.match(matchId);
       const ironSeat = env.match.seats.find((s) => s.identity.handle === 'OLD_IRON')!.seat;
       if (env.you && env.match.toMove.includes(env.you)) env = await client.move(matchId, env.match.revision, env.legal[0] as CMCommand);

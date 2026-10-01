@@ -329,3 +329,17 @@ describe('the dm moment', () => {
     expect(prompt).toContain('frosty (human): you awake, old timer?');
   });
 });
+
+describe('the game at the table', () => {
+  test('a table moment names the game in the prompt', () => {
+    const p = buildUserPrompt({ kind: 'hello', channel: 'table:t1', recent: [], opponent: 'ann', game: { name: 'Crown & Steel', tagline: 'Two houses. One throne.' } });
+    expect(p).toContain('The game at this table is Crown & Steel: Two houses. One throne.');
+    expect(p).toContain('A match of Crown & Steel against @ann is starting.');
+    expect(p).not.toContain('Critical Mass');
+  });
+  test('without a game the prompt names none', () => {
+    const p = buildUserPrompt({ kind: 'hello', channel: 'table:t1', recent: [], opponent: 'ann' });
+    expect(p).not.toContain('The game at this table');
+    expect(p).not.toContain('Critical Mass');
+  });
+});

@@ -21,6 +21,8 @@ export interface Moment {
   /** The chat line being answered (mentions, table talk, unanswered lines), so the model answers
    *  that one and not an older question that is still in the transcript. */
   answering?: ChatLine;
+  /** The game being played, for every moment spoken at a table. */
+  game?: { name: string; tagline: string };
 }
 
 /** Returns a line to post, or null to fall back to the canned line bank. Must never throw.
@@ -83,9 +85,9 @@ export function describeMoment(m: Moment): string {
     case 'mention':
       return `${at(m.addressedBy, 'Someone')} mentioned you in ${channelName(m.channel)}. Answer their message.`;
     case 'tableTalk':
-      return `You are in the middle of a Critical Mass match against ${them}, and they just said something at your table. Answer their message.`;
+      return `You are in the middle of ${m.game ? `a match of ${m.game.name}` : 'a match'} against ${them}, and they just said something at your table. Answer their message.`;
     case 'hello':
-      return `A Critical Mass match against ${them} is starting. Greet your opponent.`;
+      return `${m.game ? `A match of ${m.game.name}` : 'A match'} against ${them} is starting. Greet your opponent.`;
     case 'win':
       return `You won the match against ${them}.`;
     case 'lose':
@@ -128,6 +130,7 @@ function quoteLine(l: ChatLine): string {
 export function buildUserPrompt(m: Moment): string {
   const lines = m.recent.slice(-MAX_TRANSCRIPT_LINES).map(quoteLine);
   return [
+    ...(m.game ? [`The game at this table is ${m.game.name}: ${m.game.tagline}`, ''] : []),
     describeMoment(m),
     '',
     `The last messages in ${channelName(m.channel)}, oldest first:`,

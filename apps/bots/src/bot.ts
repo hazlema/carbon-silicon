@@ -4,7 +4,7 @@ import { stateFromView, type CMView } from '@cs/critical-mass';
 import { PUBLIC_CHANNELS, type ChatMessage, type InboxEvent, type MatchEnvelope, type PresenceInfo } from '@cs/shared/protocol';
 import { ApiError, Client } from './client';
 import { DmBudget } from './dm-budget';
-import { DEFAULT_STRATEGY, line, shout, type Personality } from './personality';
+import { DEFAULT_STRATEGY, line, linesFor, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
 import { lightlineDoctrine } from './strategies/lightline';
 import type { ChatLine, Moment, MomentKind, Voice } from './voice';
@@ -22,6 +22,8 @@ export interface BotOptions {
   log?: (msg: string) => void;
   /** Where the bot's words come from; without one it only uses its canned line bank. */
   voice?: Voice;
+  /** A bot with a voice reads the public channels to answer humans nobody answered (default true). */
+  watchPublic?: boolean;
   /** How often a bot with a voice considers livening up a quiet lobby (default 12 min; 0 disables). */
   ambientEveryMs?: number;
   /** Chance that a bot with a voice answers its opponent's table talk (default 0.6). */
@@ -107,6 +109,22 @@ function untilAborted<T>(p: Promise<T>, signal: AbortSignal | undefined): Promis
   });
 }
 
+/** The catalog's name and tagline for a game, fetched once and refreshed hourly (or when a new game shows up). */
+const catalogs = new WeakMap<Client, { at: number; games: Map<string, { name: string; tagline: string }> }>();
+async function gameInfo(client: Client, id: string): Promise<{ name: string; tagline: string } | undefined> {
+  let c = catalogs.get(client);
+  if (!c || Date.now() - c.at > 60 * 60_000 || !c.games.has(id)) {
+    try {
+      const { games } = await client.call<{ games: { id: string; name: string; tagline: string }[] }>('GET', '/api/games');
+      c = { at: Date.now(), games: new Map(games.map((g) => [g.id, { name: g.name, tagline: g.tagline }])) };
+      catalogs.set(client, c);
+    } catch {
+      return c?.games.get(id);
+    }
+  }
+  return c.games.get(id);
+}
+
 async function recentLines(client: Client, channel: string): Promise<ChatMessage[]> {
   const r = await client.call<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(channel)}?limit=8`);
   return r.messages;
@@ -122,14 +140,22 @@ async function speak(
   opts: BotOptions,
   kind: MomentKind,
   channel: string,
-  extra: { opponent?: string; addressedBy?: string; answering?: ChatMessage } = {},
+  extra: { opponent?: string; addressedBy?: string; answering?: ChatMessage; gameId?: string } = {},
 ): Promise<void> {
   try {
     let text: string | null = null;
     if (opts.voice) {
       const recent = await recentLines(client, channel).catch(() => [] as ChatMessage[]);
-      const { answering, ...who } = extra;
-      const moment: Moment = { kind, channel, recent: recent.map(toChatLine), ...who, ...(answering ? { answering: toChatLine(answering) } : {}) };
+      const { answering, gameId, ...who } = extra;
+      const game = gameId ? await gameInfo(client, gameId) : undefined;
+      const moment: Moment = {
+        kind,
+        channel,
+        recent: recent.map(toChatLine),
+        ...who,
+        ...(answering ? { answering: toChatLine(answering) } : {}),
+        ...(game ? { game } : {}),
+      };
       // At a table the game clock is running, so the voice gets a short deadline; everywhere, the
       // bot's own shutdown signal cuts it off.
       const deadline = /^(match|table):/.test(channel) ? AbortSignal.timeout(opts.voiceDeadlineMs ?? 4000) : undefined;
@@ -140,7 +166,7 @@ async function speak(
     }
     if (opts.signal?.aborted) return;
     const bank = BANK[kind];
-    const lines = bank ? opts.personality.lines[bank] : undefined;
+    const lines = bank ? linesFor(opts.personality, bank, extra.gameId) : undefined;
     text ||= lines ? line(lines) : null;
     if (!text) return;
     if (extra.addressedBy && !channel.startsWith('dm:') && !text.includes(`@${extra.addressedBy}`)) text = `@${extra.addressedBy} ${text}`;
@@ -258,13 +284,13 @@ async function playMatch(
   matchId: string,
   identityId: string | null,
   log: (m: string) => void,
-  onTable: (channel: string) => void,
+  onTable: (channel: string, gameId: string) => void,
 ): Promise<void> {
   let env = await client.match(matchId);
   const table = env.match.tableId ? `table:${env.match.tableId}` : `match:${matchId}`;
-  onTable(table);
+  onTable(table, env.match.gameId);
   const opponent = env.match.seats.find((s) => s.seat !== env.you)?.identity.handle;
-  const say = (kind: MomentKind) => speak(client, opts, kind, table, { opponent });
+  const say = (kind: MomentKind) => speak(client, opts, kind, table, { opponent, gameId: env.match.gameId });
   if (!(await alreadyGreeted(client, table, identityId))) await say('hello');
   // Cascade commentary is spaced out: in a fast game every other move is a chain reaction, and
   // narrating each one would spam the table and spend the parlor's chat allowance (a short burst,
@@ -330,6 +356,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
   const client = new Client(opts.base, null, opts.signal);
   const playing = new Set<string>();
   const playingTables = new Map<string, string>(); // matchId → table channel
+  const tableGames = new Map<string, string>(); // table channel → game id, for table talk
   const lastReply = new Map<string, number>();
   /** Work started in the background (matches, replies); awaited on shutdown. */
   const tasks = new Set<Promise<unknown>>();
@@ -344,7 +371,10 @@ export async function runBot(opts: BotOptions): Promise<void> {
     if (playing.has(matchId)) return;
     playing.add(matchId);
     track(
-      playMatch(client, opts, matchId, myId, log, (channel) => playingTables.set(matchId, channel))
+      playMatch(client, opts, matchId, myId, log, (channel, gameId) => {
+        playingTables.set(matchId, channel);
+        tableGames.set(channel, gameId);
+      })
         .catch((e) => {
           if (!opts.signal?.aborted) log(`match ${matchId} failed: ${(e as Error).message}`);
         })
@@ -352,6 +382,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
           playing.delete(matchId);
           const channel = playingTables.get(matchId);
           playingTables.delete(matchId);
+          if (channel) tableGames.delete(channel);
           if (channel) lastReply.delete(channel);
         }),
     );
@@ -421,7 +452,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
   // Voiceless bots make no extra calls at all.
   const lastUnprompted = new Map<string, number>();
   const unansweredCooldown = opts.unansweredCooldownMs ?? 60_000;
-  const watch = opts.voice
+  const watch = opts.voice && opts.watchPublic !== false
     ? watchPublicChannels(client, opts, myId, log, (channel, message, lastOwnLineAt) => {
         const now = Date.now();
         if (playing.size > 0) return; // seated at a table: the match has its own talk
@@ -491,7 +522,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
           Math.random() < (opts.tableTalkChance ?? 0.6) &&
           mayReply(channel)
         ) {
-          track(speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle, answering: message }));
+          track(speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle, answering: message, gameId: tableGames.get(channel) }));
         }
       }
     } catch (e) {
