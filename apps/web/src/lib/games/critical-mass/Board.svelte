@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { CMBoardCell, CMView } from '@cs/critical-mass';
+  import { cellIndex, type CMBoardCell, type CMView } from '@cs/critical-mass';
   import { colorOf, type TableColors } from '$lib/seats';
-  import { boardSize, cellOrder, clampTilt, EMPTY, fitScale, ISO, orbSpots, shades, TOP } from './iso';
+  import { boardSize, cellCenter, cellOrder, changedCells, clampTilt, EMPTY, fitScale, flightPlan, ISO, orbSpots, shades, TOP, type Flight } from './iso';
   import { rgba } from './render';
 
   let {
@@ -80,6 +80,56 @@
     return () => ro.disconnect();
   });
 
+  const reduced = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  type Plain = { owner: string | null; orbs: number };
+  type Anim = {
+    move: number;
+    last: number | null;
+    hits: Map<number, number>;
+    changed: Set<number>;
+    flights: Flight[];
+    bursts: { index: number; delay: number }[];
+    total: number;
+    flightMs: number;
+    mover: string | null;
+  };
+  let anim = $state<Anim | null>(null);
+  let seenMove = -1;
+  let prev: Plain[] = [];
+  let clearFx: ReturnType<typeof setTimeout> | undefined;
+
+  // A new move arrived: work out what changed and stage its animation (skipped on first paint and with reduced motion).
+  $effect(() => {
+    const move = view.moveCount;
+    const board = view.board.map((b) => ({ owner: b.owner, orbs: b.orbs }));
+    if (move === seenMove) return;
+    const firstPaint = seenMove === -1;
+    seenMove = move;
+    const before = prev;
+    prev = board;
+    if (firstPaint || before.length !== board.length) return;
+    onNewMove(before, board);
+    if (reduced) return;
+    const waves = (view.lastMove?.waves ?? []).map((w) =>
+      w.map((c) => cellIndex(view.cols, view.rows, c)).filter((i): i is number => i !== null),
+    );
+    const plan = flightPlan(waves, view.cols, view.rows);
+    const last = view.lastMove ? cellIndex(view.cols, view.rows, view.lastMove.cell) : null;
+    anim = { move, last, changed: new Set(changedCells(before, board)), mover: view.lastMove?.seat ?? null, ...plan };
+    clearTimeout(clearFx);
+    clearFx = setTimeout(() => anim && (anim = { ...anim, flights: [], bursts: [] }), plan.total + 500);
+  });
+  $effect(() => () => clearTimeout(clearFx));
+
+  /** Side effects of a move seen live (sound hooks in here). */
+  function onNewMove(before: Plain[], after: Plain[]) {
+    void before;
+    void after;
+  }
+
+  /** Orbs re-mount (and so re-animate) only in cells this move touched. */
+  const animKey = (i: number) => (anim && (anim.changed.has(i) || i === anim.last) ? anim.move : -1);
+
   const tone = (b: CMBoardCell) => (b.owner && b.orbs > 0 ? shades(colorOf(colors, b.owner)) : EMPTY);
   const hot = (b: CMBoardCell) => !!b.owner && b.orbs > 0 && b.orbs === b.critical - 1;
 
@@ -140,14 +190,36 @@
           <span class="floor"></span>
           <span class="rim s"></span><span class="rim n"></span><span class="rim w"></span><span class="rim e"></span>
           {#if hot(b)}<span class="hot"></span>{/if}
-          {#each orbSpots(b.owner ? b.orbs : 0) as [x, y], o (o)}
-            <span class="spot" style:left="{x}px" style:top="{y}px">
-              <i class="contact"></i>
-              <span class="bb"><i class="orb"></i></span>
-            </span>
-          {/each}
+          {#if anim && i === anim.last}{#key anim.move}<span class="ring" style:--ring={colorOf(colors, anim.mover)}></span>{/key}{/if}
+          {#key animKey(i)}
+            {#each orbSpots(b.owner ? b.orbs : 0) as [x, y], o (o)}
+              {@const isDrop = !!anim && i === anim.last && !anim.hits.has(i) && o === Math.min(b.orbs, 3) - 1}
+              {@const moving = animKey(i) !== -1}
+              {@const delay = anim && moving ? (anim.hits.get(i) ?? 0) + o * 50 : 0}
+              <span class="spot" class:drop={isDrop} class:pop={!isDrop && moving} style:left="{x}px" style:top="{y}px" style:--d="{delay}ms">
+                <i class="contact"></i>
+                <span class="bb"><i class="orb"></i></span>
+              </span>
+            {/each}
+          {/key}
         </button>
       {/each}
+      {#if anim}
+        <div class="fx" aria-hidden="true">
+          {#each anim.bursts as burst, n (n)}
+            {@const c = cellCenter(burst.index, view.cols, view.rows)}
+            <i class="burst" style:left="{c.x}px" style:top="{c.y}px" style:animation-delay="{burst.delay}ms" style:--burst={colorOf(colors, anim.mover)}></i>
+          {/each}
+          {#each anim.flights as f, n (n)}
+            {@const a = cellCenter(f.from, view.cols, view.rows)}
+            {@const z = cellCenter(f.to, view.cols, view.rows)}
+            {@const t = shades(colorOf(colors, anim.mover))}
+            <span class="flight" style:left="{a.x}px" style:top="{a.y}px" style:--dx="{z.x - a.x}px" style:--dy="{z.y - a.y}px" style:--flight="{anim.flightMs}ms" style:animation-delay="{f.delay}ms">
+              <span class="bb"><i class="orb small" style:--orb-light={t.light} style:--orb={colorOf(colors, anim.mover)} style:--orb-dark={t.dark} style:--glow={t.glow}></i></span>
+            </span>
+          {/each}
+        </div>
+      {/if}
     </div>
   </div>
   <div class="pill" role="toolbar" aria-label="Board view">
@@ -355,6 +427,101 @@
     .slab,
     .bb {
       transition: none;
+    }
+  }
+  .drop .orb {
+    animation: cm-drop 0.55s cubic-bezier(0.3, 0.7, 0.4, 1) var(--d) both;
+  }
+  .pop .orb {
+    animation: cm-pop 0.42s ease-out var(--d) both;
+  }
+  /* The floor shadow arrives with its orb, or it reads as a hole. */
+  .drop .contact,
+  .pop .contact {
+    animation: cm-shadow 0.42s ease-out var(--d) both;
+  }
+  @keyframes cm-shadow {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  .ring {
+    position: absolute;
+    inset: -2px;
+    border-radius: 5px;
+    border: 2px solid var(--ring);
+    transform: translateZ(8px);
+    animation: cm-ring 0.55s ease-out both;
+    pointer-events: none;
+  }
+  .fx {
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d;
+    pointer-events: none;
+  }
+  .burst {
+    position: absolute;
+    width: 0;
+    height: 0;
+    transform: translateZ(10px);
+  }
+  .burst::after {
+    content: '';
+    position: absolute;
+    left: -22px;
+    top: -22px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.9), var(--burst) 40%, transparent 70%);
+    animation: cm-burst 0.42s ease-out both;
+    animation-delay: inherit;
+  }
+  .flight {
+    position: absolute;
+    width: 0;
+    height: 0;
+    transform-style: preserve-3d;
+    animation: cm-fly var(--flight) cubic-bezier(0.4, 0, 0.6, 1) both;
+  }
+  .orb.small {
+    inset: 3px;
+  }
+  @keyframes cm-drop {
+    0% { transform: translateY(-80px); opacity: 0; }
+    50% { transform: translateY(0) scale(1.18, 0.8); opacity: 1; }
+    70% { transform: translateY(-7px) scale(0.95, 1.06); }
+    85% { transform: translateY(0) scale(1.04, 0.96); }
+    100% { transform: none; }
+  }
+  @keyframes cm-pop {
+    0% { transform: scale(0.2); opacity: 0; }
+    60% { transform: scale(1.25); opacity: 1; }
+    100% { transform: none; }
+  }
+  @keyframes cm-ring {
+    0% { transform: translateZ(8px) scale(0.85); opacity: 0.9; }
+    100% { transform: translateZ(8px) scale(1.35); opacity: 0; }
+  }
+  @keyframes cm-burst {
+    0% { transform: scale(0.3); opacity: 0; }
+    30% { opacity: 1; }
+    100% { transform: scale(1.4); opacity: 0; }
+  }
+  @keyframes cm-fly {
+    0% { transform: translate(0, 0); opacity: 0; }
+    15% { opacity: 1; }
+    100% { transform: translate(var(--dx), var(--dy)); opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .drop .orb,
+    .pop .orb,
+    .drop .contact,
+    .pop .contact,
+    .ring,
+    .burst::after,
+    .flight {
+      animation: none;
     }
   }
 </style>
