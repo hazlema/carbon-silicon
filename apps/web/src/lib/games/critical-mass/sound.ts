@@ -1,11 +1,14 @@
+/** Browsers start audio only after the page has seen a click or key press. */
+export const activated = () => (globalThis.navigator as Navigator | undefined)?.userActivation?.hasBeenActive ?? true;
+
 /** Explosion waves climb a semitone each, for an octave. */
 export const popFrequency = (wave: number) => 440 * 2 ** (Math.min(wave, 12) / 12);
 
-/** Critical Mass's sounds, synthesized like Crown & Steel's: no files, nothing until the player turns it on. */
+/** Critical Mass's sounds, synthesized like Crown & Steel's: no files; on unless the player turns it off. */
 export function createSound(key = 'cm_sound', makeContext: () => AudioContext = () => new AudioContext()) {
-  let enabled = false;
+  let enabled = true;
   try {
-    enabled = localStorage.getItem(key) === 'on';
+    enabled = localStorage.getItem(key) !== 'off';
   } catch {
     /* Storage is optional. */
   }
@@ -14,11 +17,12 @@ export function createSound(key = 'cm_sound', makeContext: () => AudioContext = 
   /** Everything plays through one gain; muting disconnects it, silencing sounds already scheduled. */
   let master: GainNode | undefined;
   function audio() {
-    if (!enabled) return;
+    if (!enabled || !activated()) return;
     try {
       ctx ??= makeContext();
       void ctx.resume();
-      return ctx;
+      // Until the browser lets it play, scheduling would only queue a backlog that bursts out on the first click.
+      return ctx.state === 'running' ? ctx : undefined;
     } catch {
       return; /* Sound is optional. */
     }

@@ -55,7 +55,7 @@ describe('createSound', () => {
   test('every sound runs through one master gain, and muting cuts it — scheduled pops included', () => {
     const audio = fakeAudio();
     const sound = createSound('test_sound', () => audio.ctx as unknown as AudioContext);
-    expect(sound.toggle()).toBe(true);
+    expect(sound.enabled).toBe(true);
     sound.pop(0, 0.4);
     sound.thud(0.8);
     const masters = audio.nodes.filter((n) => n.outputs.includes(audio.destination));
@@ -67,5 +67,22 @@ describe('createSound', () => {
     const after = audio.nodes.filter((n) => n.outputs.includes(audio.destination) && !n.disconnected);
     expect(after).toHaveLength(1);
     expect(after[0]).not.toBe(masters[0]);
+  });
+});
+
+describe('createSound before the browser lets it play', () => {
+  test('sound is on unless the player turned it off', () => {
+    expect(createSound('test_sound_default', () => fakeAudio().ctx as unknown as AudioContext).enabled).toBe(true);
+  });
+  test('a context still waiting for a click schedules nothing, so no backlog bursts out later', () => {
+    const audio = fakeAudio();
+    audio.ctx.state = 'suspended';
+    const sound = createSound('test_sound_suspended', () => audio.ctx as unknown as AudioContext);
+    sound.clink();
+    sound.pop(3, 0.2);
+    expect(audio.nodes).toHaveLength(0);
+    audio.ctx.state = 'running';
+    sound.pop(0);
+    expect(audio.nodes.length).toBeGreaterThan(0);
   });
 });

@@ -28,12 +28,13 @@ export function mountCheckers(host: HTMLElement, initial: BoardProps, options: B
  let props=initial,destroyed=false;
  const selection=new TurnSelection();
  let state: {game:CheckersView; moves:CheckersCommand[]}|null=null,selected:string|null=null,busy=false,sound=false;
- try{sound=localStorage.getItem('crown_sound')==='on';}catch{/* Storage is optional. */}
+ sound=true;try{sound=localStorage.getItem('crown_sound')!=='off';}catch{/* Storage is optional. */}
 let field:Battlefield|undefined;
 let toastTimer:ReturnType<typeof setTimeout>;
 function toast(message:string){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000);}
 let audio:AudioContext|undefined,noise:AudioBuffer|undefined;
-function soundContext(){if(!sound)return;try{audio??=new AudioContext();void audio.resume();return audio;}catch{return;/* Sound is optional. */}}
+/** Nothing is scheduled before the browser lets audio play: a backlog would burst out on the first click. */
+function soundContext(){if(!sound||navigator.userActivation?.hasBeenActive===false)return;try{audio??=new AudioContext();void audio.resume();return audio.state==='running'?audio:undefined;}catch{return;/* Sound is optional. */}}
 function noiseBuffer(a:AudioContext){if(!noise){noise=a.createBuffer(1,Math.floor(a.sampleRate*.3),a.sampleRate);const data=noise.getChannelData(0);for(let i=0;i<data.length;i++)data[i]=Math.random()*2-1;}return noise;}
 /** A piece sliding over stone: a short burst of noise swept down through a lowpass. */
 function playSlide(delay=0){const a=soundContext();if(!a)return;const t=a.currentTime+delay;const src=a.createBufferSource();src.buffer=noiseBuffer(a);const filter=a.createBiquadFilter();filter.type='lowpass';filter.frequency.setValueAtTime(900,t);filter.frequency.exponentialRampToValueAtTime(220,t+.14);const gain=a.createGain();gain.gain.setValueAtTime(.15,t);gain.gain.exponentialRampToValueAtTime(.001,t+.15);src.connect(filter);filter.connect(gain);gain.connect(a.destination);src.start(t);src.stop(t+.16);}
