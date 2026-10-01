@@ -27,10 +27,16 @@ async function startMatch(page: Page) {
 async function myTurn(page: Page) {
   await expect(page.locator('button[data-legal="true"]').first()).toBeVisible({ timeout: 20_000 });
 }
+/** End the match, unless Sprocket already has (an early chain can take your only orb). */
 async function resign(page: Page) {
-  await page.getByRole('button', { name: 'Resign' }).click();
-  await page.getByRole('button', { name: 'Yes, resign' }).click();
-  await expect(page.getByRole('heading', { name: 'You lose.' })).toBeVisible();
+  const verdict = page.getByRole('heading', { name: /^(You win\.|You lose\.|Draw\.)$/ });
+  try {
+    await page.getByRole('button', { name: 'Resign' }).click({ timeout: 5000 });
+    await page.getByRole('button', { name: 'Yes, resign' }).click({ timeout: 5000 });
+  } catch {
+    // Over already: the verdict below says so.
+  }
+  await expect(verdict).toBeVisible();
 }
 const stage = (page: Page) => page.locator('.stage3d');
 const totalOrbs = (page: Page) =>
