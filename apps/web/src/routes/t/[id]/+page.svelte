@@ -220,6 +220,15 @@
   const countdown = $derived(
     match?.status === 'countdown' ? Math.max(0, Math.ceil((Date.parse(match.startsAt) - now) / 1000)) : null,
   );
+  /** Crown & Steel's army cards carry the real commanders. */
+  const ckPlayers = $derived(
+    Object.fromEntries(
+      (match?.seats ?? []).map((s) => [
+        s.seat,
+        { name: s.identity.handle, note: s.identity.isHouse ? 'house machine' : s.identity.kind === 'human' ? 'human' : 'machine' },
+      ]),
+    ),
+  );
   const handleOf = (seat: string) => match?.seats.find((s) => s.seat === seat)?.identity.handle ?? seat;
   const verdict = $derived.by(() => {
     const o = match?.outcome;
@@ -374,7 +383,7 @@
       {#if ck}
         <div class="stage ck">
           <div class="boardwrap">
-            <CrownBoard view={ck} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} />
+            <CrownBoard view={ck} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} players={ckPlayers} actions={tableActions} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
           </div>
         </div>
@@ -421,11 +430,7 @@
       </div>
       {/if}
 
-      <footer class="bar bottom">
-        <p class="status" role="status">
-          <span class="lead">{status.lead}</span>
-          {#if status.detail}<span class="detail">{status.detail}</span>{/if}
-        </p>
+      {#snippet tableActions()}
         {#if error}<p class="error" role="alert">{error}</p>{/if}
         {#if mySeat && !iAmOut && (match.status === 'live' || match.status === 'countdown')}
           <div class="actions">
@@ -438,7 +443,17 @@
             {/if}
           </div>
         {/if}
-      </footer>
+      {/snippet}
+      <!-- Crown & Steel carries its own turn banner and takes these actions into its footer band. -->
+      {#if !ck}
+        <footer class="bar bottom">
+          <p class="status" role="status">
+            <span class="lead">{status.lead}</span>
+            {#if status.detail}<span class="detail">{status.detail}</span>{/if}
+          </p>
+          {@render tableActions()}
+        </footer>
+      {/if}
     </section>
 
     <div class="talk">
@@ -550,14 +565,16 @@
     max-width: calc(68dvh * 64 / 40);
     margin-inline: auto;
   }
-  /* Crown & Steel brings its own army cards and chronicle; give it the whole stage and let it scroll. */
+  /* Crown & Steel stacks its own armies, field and footer; it fills the stage and the field takes the slack. */
   .stage.ck {
     display: block;
-    overflow-y: auto;
     padding: 0;
+    overflow: hidden;
   }
   .stage.ck .boardwrap {
+    display: block;
     width: 100%;
+    height: 100%;
   }
   .stage {
     display: grid;
@@ -843,6 +860,10 @@
     }
     .pill {
       justify-self: start;
+    }
+    /* Narrow, the board is width-bound: the stage is as tall as the width needs, plus the cards and footer. */
+    .stage.ck {
+      height: clamp(32rem, min(88dvh, calc(100vw + 16rem)), 60rem);
     }
     .talk {
       height: 55dvh;

@@ -8,6 +8,8 @@ export interface BoardProps {
  legal: unknown[];
  interactive: boolean;
  onMove: (command: CheckersCommand) => void | Promise<void>;
+ /** Who commands each army; the house names stand in for anyone missing. */
+ players?: Partial<Record<Side, {name: string; note?: string}>>;
 }
 export interface BoardOptions {
  /** URL of the supplied style.css, served by the host. */
@@ -41,6 +43,8 @@ function playThud(delay=0){const a=soundContext();if(!a)return;const t=a.current
 function playTing(delay=0){const a=soundContext();if(!a)return;const t=a.currentTime+delay;for(const [freq,vol] of [[1319,.1],[1976,.06]] as const){const osc=a.createOscillator(),gain=a.createGain();osc.type='sine';osc.frequency.value=freq;gain.gain.setValueAtTime(vol,t);gain.gain.exponentialRampToValueAtTime(.001,t+.4);osc.connect(gain);gain.connect(a.destination);osc.start(t);osc.stop(t+.41);}}
 function playVerdictSound(kind:'won'|'lost'|'draw'|'neutral'){const a=soundContext();if(!a)return;const notes:readonly (readonly [number,number])[]=kind==='lost'?[[330,0],[262,.28]]:kind==='draw'?[[440,0],[440,.25]]:[[392,0],[523,.13],[659,.26]];for(const [freq,at] of notes){const t=a.currentTime+at;const osc=a.createOscillator(),gain=a.createGain();osc.type='triangle';osc.frequency.value=freq;gain.gain.setValueAtTime(.14,t);gain.gain.exponentialRampToValueAtTime(.001,t+.35);osc.connect(gain);gain.connect(a.destination);osc.start(t);osc.stop(t+.36);}}
 const house=(side:Side)=>side==='red'?'House Ember':'House Azure';
+/** The commander's name when the host supplied one, else the house's. */
+const title=(side:Side)=>props.players?.[side]?.name??house(side);
 function canPlay(){return !!state&&props.interactive&&!busy&&!state.game.winner;}
 async function move(command:CheckersCommand){
  if(!canPlay()||!state||!state.moves.includes(command))return;
@@ -87,8 +91,8 @@ function showVerdict(winner:Side|'draw'){
   const won=humans.length===1&&humans[0]===winner,lost=humans.length===1&&humans[0]!==winner;
   emblem.textContent='♛';emblem.classList.add(winner);
   $('verdict-eyebrow').textContent='The chronicle records';
-  $('verdict-title').textContent=won?'Victory!':lost?'Defeat.':`${house(winner)} claims the crown.`;
-  $('verdict-text').textContent=won?`${house(winner)} claims the crown. The field is yours, commander — the bards will sing of this.`:lost?`${house(winner)} claims the crown. Your army fought to the last knight. Raise the banners and answer.`:'The battle is decided. Raise the armies to contest the throne again.';
+  $('verdict-title').textContent=won?'Victory!':lost?'Defeat.':`${title(winner)} claims the crown.`;
+  $('verdict-text').textContent=won?`${title(winner)} claims the crown. The field is yours, commander — the bards will sing of this.`:lost?`${title(winner)} claims the crown. Your army fought to the last knight. Raise the banners and answer.`:'The battle is decided. Raise the armies to contest the throne again.';
   playVerdictSound(won?'won':lost?'lost':'neutral');
  }
  $<HTMLDialogElement>('verdict-dialog').showModal();
@@ -98,16 +102,21 @@ function render(){
  for(const side of ['red','blue'] as Side[]){
   const pieces=game.pieces.filter(p=>p.side===side);$(`${side}-count`).textContent=String(pieces.length);$(`${side}-kings`).textContent=String(pieces.filter(p=>p.king).length);
   $(`${side}-card`).classList.toggle('active',game.turn===side&&!game.winner);
-  $(`${side}-agent`).textContent=game.you===side?'Your army':'';
+  $(`${side}-name`).textContent=title(side);
+  $(`${side}-role`).textContent=[house(side),game.you===side?'you':props.players?.[side]?.note].filter(Boolean).join(' · ');
  }
- $('turn-title').textContent=game.winner?(game.winner==='draw'?'An honorable stalemate.':`${house(game.winner)} claims the crown.`):`${house(game.turn)}, ${canPlay()?'your move.':'awaiting orders.'}`;
+ $('turn-title').textContent=game.winner?(game.winner==='draw'?'An honorable stalemate.':`${title(game.winner)} claims the crown.`):`${title(game.turn)}, ${canPlay()?'your move.':'awaiting orders.'}`;
  $('turn-help').textContent=game.winner?'The battle is decided.':!props.interactive?(game.you===null?'Watching the battlefield.':'Waiting for the opposing army.'):selection.path.length>1?'Continue the highlighted charge. The full turn will be submitted together.':selected?`${selected.toUpperCase()} selected. Choose a gold destination.`:'Select a knight to see where it can march.';
- root.querySelector('.battlefield-panel')!.classList.toggle('is-blue',game.turn==='blue');
+ root.querySelector('.ck-stack')!.classList.toggle('is-blue',game.turn==='blue');
  $('turn-number').textContent=String(game.moveCount+1).padStart(2,'0');
  $('round-label').textContent=game.history.length?`${game.history.length} ${game.history.length===1?'march':'marches'} made`:'Opening formation';
  $('history-count').textContent=`${game.history.length} move${game.history.length===1?'':'s'}`;
+ const marchText=(entry:CheckersView['history'][number])=>`${entry.from} ${entry.capture?'×':'→'} ${entry.to}${entry.crowned?' ♛':''}`;
+ const strip=$('chronicle-strip');
+ if(game.history.length){strip.replaceChildren(...game.history.slice(-6).reverse().map(entry=>{const item=document.createElement('li');item.className=`strip-march ${entry.side}`;const number=document.createElement('span');number.className='move-number';number.textContent=String(entry.number).padStart(2,'0');item.append(number,` ${marchText(entry)}`);return item;}));}
+ else if(strip.querySelector('.strip-march')){strip.innerHTML='<li class="strip-empty">History awaits.</li>';}
  const history=$('history-list');
- if(game.history.length){history.replaceChildren(...game.history.slice().reverse().map(entry=>{const row=document.createElement('div');row.className='history-row';const number=document.createElement('span');number.className='move-number';number.textContent=String(entry.number).padStart(2,'0');const text=document.createElement('span');text.className='move-text';text.textContent=`${entry.from} ${entry.capture?'×':'→'} ${entry.to}${entry.crowned?' ♛':''}`;const side=document.createElement('span');side.className=`move-side ${entry.side}`;side.textContent=entry.side==='red'?'Red':'Blue';row.append(number,text,side);return row;}));}else if(history.querySelector('.history-row')){history.innerHTML='<div class="empty-chronicle"><h3>History awaits.</h3><p>The first march writes<br>the first line.</p></div>';}
+ if(game.history.length){history.replaceChildren(...game.history.slice().reverse().map(entry=>{const row=document.createElement('div');row.className='history-row';const number=document.createElement('span');number.className='move-number';number.textContent=String(entry.number).padStart(2,'0');const text=document.createElement('span');text.className='move-text';text.textContent=marchText(entry);const side=document.createElement('span');side.className=`move-side ${entry.side}`;side.textContent=entry.side==='red'?'Red':'Blue';row.append(number,text,side);return row;}));}else if(history.querySelector('.history-row')){history.innerHTML='<div class="empty-chronicle"><h3>History awaits.</h3><p>The first march writes<br>the first line.</p></div>';}
  const selector=$<HTMLSelectElement>('move-select'),oldValue=selector.value;
  selector.replaceChildren(...moves.map((m,i)=>{const option=document.createElement('option');option.value=String(i);option.textContent=m.steps.join(' → ');return option;}));
  if(oldValue!==''&&Number(oldValue)<moves.length)selector.value=oldValue;
@@ -122,8 +131,8 @@ $('keyboard-toggle').onclick=()=>{$('keyboard-moves').hidden=!$('keyboard-moves'
 $('play-selected').onclick=()=>{const command=state?.moves[Number($<HTMLSelectElement>('move-select').value)];if(command)void move(command);};
 function openDialog(id:string){$<HTMLDialogElement>(id).showModal();}
 $('rules-open').onclick=()=>openDialog('rules-dialog');
+$('chronicle-open').onclick=()=>openDialog('chronicle-dialog');
 for(const dialog of root.querySelectorAll('dialog')){for(const close of dialog.querySelectorAll('.dialog-close,.close-dialog'))close.addEventListener('click',()=>dialog.close());dialog.addEventListener('click',e=>{if(e.target===dialog){const rect=dialog.getBoundingClientRect();if(e.clientX<rect.left||e.clientX>rect.right||e.clientY<rect.top||e.clientY>rect.bottom)dialog.close();}});}
-$('connection').innerHTML='<i></i> Crown & Steel';
 receive(initial);
 return {
  update(next:BoardProps){if(!destroyed)receive(next);},

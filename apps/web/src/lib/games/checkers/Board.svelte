@@ -1,18 +1,23 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import type { CheckersCommand, CheckersView } from '@cs/checkers';
-  import type { mountCheckers } from './board';
+  import type { BoardProps, mountCheckers } from './board';
 
   let {
     view,
     legal,
     interactive,
     onMove,
+    players,
+    actions,
   }: {
     view: CheckersView;
     legal: unknown[];
     interactive: boolean;
     onMove: (command: CheckersCommand) => void | Promise<void>;
+    players?: BoardProps['players'];
+    /** The table's own controls (Resign, errors), shown at the end of the battlefield's footer. */
+    actions?: Snippet;
   } = $props();
 
   let host: HTMLDivElement;
@@ -25,6 +30,7 @@
     legal: $state.snapshot(legal) as unknown[],
     interactive,
     onMove,
+    players: $state.snapshot(players),
   });
 
   onMount(() => {
@@ -36,13 +42,6 @@
         stylesheetUrl: '/games/checkers/style.css',
         backdropUrl: '/games/checkers/citadel.png',
       });
-      // The standalone page chrome stays behind — the table page brings its own.
-      const trim = document.createElement('style');
-      trim.textContent =
-        '.masthead,.page-heading,footer{display:none}' +
-        '.app-shell{max-width:none;padding:0 1.5rem 1.5rem}' +
-        '.board-root{min-height:0;background-attachment:scroll}';
-      host.shadowRoot?.append(trim);
     });
     return () => {
       cancelled = true;
@@ -55,10 +54,19 @@
   });
 </script>
 
-<div class="crown" bind:this={host}></div>
+<!-- Light-DOM children stay styled by the page; the slot attribute projects them into the shadow footer. -->
+<div class="crown" bind:this={host}>
+  {#if actions}<div class="actions" {...{ slot: 'actions' }}>{@render actions()}</div>{/if}
+</div>
 
 <style>
   .crown {
     width: 100%;
+    height: 100%;
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
   }
 </style>
