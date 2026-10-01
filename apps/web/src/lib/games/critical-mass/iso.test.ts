@@ -54,6 +54,20 @@ describe('fitScale', () => {
       }
     }
   });
+  test('perspective magnifies the near edge; the fit leaves room for it', () => {
+    const stage = { w: 900, h: 700 };
+    for (const spin of [-35, 45, 90]) {
+      for (const tilt of [30, 55, 70]) {
+        const s = fitScale(board, stage, spin, tilt);
+        const r = (spin * Math.PI) / 180, t = (tilt * Math.PI) / 180;
+        const pw = Math.abs(board.w * Math.cos(r)) + Math.abs(board.h * Math.sin(r));
+        const depth = Math.abs(board.w * Math.sin(r)) + Math.abs(board.h * Math.cos(r));
+        const near = 1900 / (1900 - ((depth * s) / 2) * Math.sin(t));
+        expect(pw * s * near).toBeLessThanOrEqual(stage.w);
+        expect((depth * Math.cos(t) + 26 * Math.sin(t)) * s * near).toBeLessThanOrEqual(stage.h - 64);
+      }
+    }
+  });
   test('an unmeasured stage never yields zero or negative scale', () => {
     expect(fitScale(board, { w: 0, h: 0 }, -35, 55)).toBeGreaterThan(0);
   });

@@ -23,15 +23,25 @@ export function boardSize(cols: number, rows: number) {
   return { w: cols * CELL + (cols - 1) * GAP + 2 * PAD, h: rows * CELL + (rows - 1) * GAP + 2 * PAD };
 }
 
-/** Largest scale at which the rotated, tilted slab fits the stage above the pill (orthographic estimate, 10% margin). */
+/** The stage's CSS perspective, in px. */
+export const PERSPECTIVE = 1900;
+
+/**
+ * Largest scale at which the rotated, tilted slab fits the stage above the pill, with a 10% margin.
+ * The near edge of a tilted board rises toward the viewer and perspective magnifies it, so the
+ * orthographic fit is shrunk until the magnified footprint fits too.
+ */
 export function fitScale(board: { w: number; h: number }, stage: { w: number; h: number }, spinDeg: number, tiltDeg: number, reserve = PILL_RESERVE) {
   const r = (spinDeg * Math.PI) / 180;
   const t = (tiltDeg * Math.PI) / 180;
   const pw = Math.abs(board.w * Math.cos(r)) + Math.abs(board.h * Math.sin(r));
   const depth = Math.abs(board.w * Math.sin(r)) + Math.abs(board.h * Math.cos(r));
   const ph = depth * Math.cos(t) + SLAB * Math.sin(t);
-  const s = Math.min((0.9 * stage.w) / pw, (0.9 * (stage.h - reserve)) / ph);
-  return Number.isFinite(s) && s > 0 ? s : 0.1;
+  const ortho = Math.min((0.9 * stage.w) / pw, (0.9 * (stage.h - reserve)) / ph);
+  if (!Number.isFinite(ortho) || ortho <= 0) return 0.1;
+  // near = P / (P - rise·s); solving s·near = ortho for s gives s = ortho·P / (P + rise·ortho).
+  const rise = (depth / 2) * Math.sin(t);
+  return (ortho * PERSPECTIVE) / (PERSPECTIVE + rise * ortho);
 }
 
 /** Cell indices in DOM order: the top row (highest rank) first, column a on the left. */

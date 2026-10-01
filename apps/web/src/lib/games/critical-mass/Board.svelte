@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { CMBoardCell, CMView } from '@cs/critical-mass';
   import { colorOf, type TableColors } from '$lib/seats';
-  import { boardSize, cellOrder, EMPTY, fitScale, ISO, orbSpots, shades } from './iso';
+  import { boardSize, cellOrder, clampTilt, EMPTY, fitScale, ISO, orbSpots, shades, TOP } from './iso';
   import { rgba } from './render';
 
   let {
@@ -14,10 +14,58 @@
 
   let spin = $state(ISO.spin);
   let tilt = $state(ISO.tilt);
+  /** The angle the fit is computed for: only updated at rest, so the board doesn't breathe while you drag. */
+  let rest = $state({ spin: ISO.spin, tilt: ISO.tilt });
+  let drag: { x: number; y: number; spin: number; tilt: number; touch: boolean; moved: boolean } | null = null;
+  let dragging = $state(false);
+  /** Set for the click that ends a swivel, so it never places an orb. */
+  let suppress = false;
+
+  function aim(next: { spin: number; tilt: number }) {
+    spin = next.spin;
+    tilt = clampTilt(next.tilt);
+    rest = { spin, tilt };
+  }
+  function down(e: PointerEvent) {
+    if (e.button !== 0 || (e.target as Element).closest('.pill')) return;
+    drag = { x: e.clientX, y: e.clientY, spin, tilt, touch: e.pointerType === 'touch', moved: false };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+  }
+  function move(e: PointerEvent) {
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    // Touch swivels only sideways: up and down stay with the page's scroll.
+    if (!drag.moved && Math.abs(dx) + (drag.touch ? 0 : Math.abs(dy)) > 4) {
+      drag.moved = true;
+      dragging = true;
+    }
+    if (!drag.moved) return;
+    spin = drag.spin + dx * 0.4;
+    if (!drag.touch) tilt = clampTilt(drag.tilt - dy * 0.3);
+  }
+  function up() {
+    if (drag?.moved) {
+      suppress = true;
+      setTimeout(() => (suppress = false), 0);
+      rest = { spin, tilt };
+    }
+    cancel();
+  }
+  function cancel() {
+    drag = null;
+    dragging = false;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', cancel);
+  }
+  $effect(() => cancel);
   let stage: HTMLDivElement | undefined = $state();
   let stageSize = $state({ w: 0, h: 0 });
   const size = $derived(boardSize(view.cols, view.rows));
-  const scale = $derived(fitScale(size, stageSize, spin, tilt));
+  const scale = $derived(fitScale(size, stageSize, rest.spin, rest.tilt));
   const legalSet = $derived(new Set(legal));
   const order = $derived(cellOrder(view.cols, view.rows));
   const mine = $derived(view.you ? colorOf(colors, view.you) : null);
@@ -53,7 +101,10 @@
 
 <div
   class="stage3d"
+  role="presentation"
+  class:dragging
   bind:this={stage}
+  onpointerdown={down}
   data-spin={spin}
   data-tilt={tilt}
   style:--spin="{spin}deg"
@@ -83,7 +134,7 @@
           style:--orb-dark={t.dark}
           style:--orb={b.owner ? colorOf(colors, b.owner) : 'transparent'}
           style:--glow={t.glow}
-          onclick={() => ok && onMove(b.cell)}
+          onclick={() => !suppress && ok && onMove(b.cell)}
           onkeydown={(e) => step(e, k)}
         >
           <span class="floor"></span>
@@ -99,6 +150,13 @@
       {/each}
     </div>
   </div>
+  <div class="pill" role="toolbar" aria-label="Board view">
+    <button type="button" aria-label="Rotate left 90°" onclick={() => aim({ spin: spin - 90, tilt })}>⟲ 90°</button>
+    <button type="button" aria-label="Isometric view" onclick={() => aim(ISO)}>Iso</button>
+    <button type="button" aria-label="Top view" onclick={() => aim(TOP)}>Top</button>
+    <button type="button" aria-label="Rotate right 90°" onclick={() => aim({ spin: spin + 90, tilt })}>90° ⟳</button>
+    <span class="hint">drag to swivel</span>
+  </div>
 </div>
 
 <style>
@@ -109,6 +167,9 @@
     width: 100%;
     height: 100%;
     display: grid;
+    /* Tracks sized by the stage, not the slab: the unscaled slab can be wider than a narrow stage, and
+       a content-sized track would start at the left edge and push the scaled board off centre. */
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     place-items: center;
     padding-bottom: 64px;
     perspective: 1900px;
@@ -160,6 +221,8 @@
     border: 0;
     background: none;
     transform-style: preserve-3d;
+    /* A hair above the face: coplanar with it, the face can win the hit test (z-fighting) and eat the click. */
+    transform: translateZ(1px);
     cursor: pointer;
   }
   .face > button[aria-disabled='true'] {
@@ -229,5 +292,69 @@
     border-radius: 50%;
     background: radial-gradient(circle at 35% 30%, var(--orb-light) 0%, var(--orb) 45%, var(--orb-dark) 100%);
     box-shadow: 0 0 12px var(--glow);
+  }
+  .stage3d {
+    cursor: grab;
+    touch-action: pan-y;
+  }
+  .stage3d.dragging {
+    cursor: grabbing;
+  }
+  .slab {
+    transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .dragging .slab,
+  .dragging .bb {
+    transition: none;
+  }
+  .bb {
+    transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .pill {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    background: rgba(13, 16, 32, 0.9);
+    border: 1px solid #23283f;
+    border-radius: 999px;
+    font: 500 12px var(--font-sans, 'IBM Plex Sans', sans-serif);
+    color: #b8bdd4;
+    cursor: default;
+    z-index: 3;
+  }
+  .pill button {
+    width: auto;
+    height: auto;
+    padding: 6px 12px;
+    border-radius: 999px;
+    color: inherit;
+    font: inherit;
+    transform-style: flat;
+  }
+  .pill button:hover {
+    background: #1a1f35;
+    color: #e6e8f2;
+  }
+  .hint {
+    padding: 6px 12px 6px 8px;
+    color: #5c6280;
+    border-left: 1px solid #23283f;
+    white-space: nowrap;
+  }
+  @media (max-width: 560px) {
+    .hint {
+      display: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .slab,
+    .bb {
+      transition: none;
+    }
   }
 </style>
