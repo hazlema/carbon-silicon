@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { cellIndex, neighbors, type CMBoardCell, type CMView } from '@cs/critical-mass';
+  import type { CMBoardCell, CMView } from '@cs/critical-mass';
   import { colorOf, type TableColors } from '$lib/seats';
-  import { burstDuration, cellOrigin, layout, orbOffsets, rgba, waveSchedule } from './render';
+  import { boardSize, cellOrder, EMPTY, fitScale, ISO, orbSpots, shades } from './iso';
+  import { rgba } from './render';
 
   let {
     view,
@@ -10,19 +11,29 @@
     interactive,
     onMove,
   }: { view: CMView; colors: TableColors; legal: string[]; interactive: boolean; onMove: (cell: string) => void } = $props();
-  const seatColor = (seat: string | null | undefined) => colorOf(colors, seat);
 
-  const WAVE_MS = 150;
-  const BURST_MS = 420;
-  const reduced = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  let box: HTMLDivElement | undefined = $state();
-  let canvas: HTMLCanvasElement | undefined = $state();
-  let size = $state({ w: 0, h: 0 });
-  let hover = $state<number | null>(null);
+  let spin = $state(ISO.spin);
+  let tilt = $state(ISO.tilt);
+  let stage: HTMLDivElement | undefined = $state();
+  let stageSize = $state({ w: 0, h: 0 });
+  const size = $derived(boardSize(view.cols, view.rows));
+  const scale = $derived(fitScale(size, stageSize, spin, tilt));
   const legalSet = $derived(new Set(legal));
-
+  const order = $derived(cellOrder(view.cols, view.rows));
+  const mine = $derived(view.you ? colorOf(colors, view.you) : null);
   let cellsEl: HTMLDivElement | undefined = $state();
+
+  $effect(() => {
+    if (!stage) return;
+    const ro = new ResizeObserver(([entry]) => {
+      stageSize = { w: entry.contentRect.width, h: entry.contentRect.height };
+    });
+    ro.observe(stage);
+    return () => ro.disconnect();
+  });
+
+  const tone = (b: CMBoardCell) => (b.owner && b.orbs > 0 ? shades(colorOf(colors, b.owner)) : EMPTY);
+  const hot = (b: CMBoardCell) => !!b.owner && b.orbs > 0 && b.orbs === b.critical - 1;
 
   /** Arrow keys move focus across the grid; every cell is focusable, legal or not. */
   function step(e: KeyboardEvent, k: number) {
@@ -31,218 +42,192 @@
     e.preventDefault();
     const col = Math.min(view.cols - 1, Math.max(0, (k % view.cols) + d[0]));
     const row = Math.min(view.rows - 1, Math.max(0, Math.floor(k / view.cols) + d[1]));
-    (cellsEl.children[row * view.cols + col] as HTMLElement | undefined)?.focus();
+    (cellsEl.querySelectorAll<HTMLElement>(':scope > button')[row * view.cols + col] as HTMLElement | undefined)?.focus();
   }
-
-  let bursts: { index: number; start: number }[] = [];
-  let burstsAt = 0;
-  let burstsUntil = 0;
-  let seenMove = -1;
-
-  $effect(() => {
-    if (!box) return;
-    const ro = new ResizeObserver(([entry]) => {
-      size = { w: entry.contentRect.width, h: entry.contentRect.height };
-    });
-    ro.observe(box);
-    return () => ro.disconnect();
-  });
-
-  // A new move arrived: schedule its explosion waves (skipped on first paint and with reduced motion).
-  $effect(() => {
-    const key = view.moveCount;
-    if (key === seenMove) return;
-    const firstPaint = seenMove === -1;
-    seenMove = key;
-    const waves = view.lastMove?.waves ?? [];
-    if (firstPaint || reduced || waves.length === 0) return;
-    const indices = waves.map((w) => w.map((c) => cellIndex(view.cols, view.rows, c)).filter((i): i is number => i !== null));
-    bursts = waveSchedule(indices, WAVE_MS);
-    burstsAt = performance.now();
-    burstsUntil = burstsAt + burstDuration(indices.length, WAVE_MS, BURST_MS);
-  });
-
-  function drawOrb(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, loaded: boolean) {
-    const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
-    g.addColorStop(0, '#ffffff');
-    g.addColorStop(0.3, color);
-    g.addColorStop(1, rgba(color, 0.55));
-    ctx.save();
-    ctx.shadowColor = color;
-    ctx.shadowBlur = loaded ? r * 2.4 : r * 1.1;
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  function draw(now: number) {
-    if (!canvas || size.w === 0) return;
-    const l = layout(view.cols, view.rows, size.w, size.h);
-    const dpr = window.devicePixelRatio || 1;
-    const pw = Math.round(l.width * dpr);
-    const ph = Math.round(l.height * dpr);
-    if (canvas.width !== pw || canvas.height !== ph) {
-      canvas.width = pw;
-      canvas.height = ph;
-    }
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, l.width, l.height);
-    const mine = seatColor(view.you);
-    const pad = l.cell * 0.06;
-
-    view.board.forEach((b, i) => {
-      const o = cellOrigin(l, i);
-      const isLegal = interactive && legalSet.has(b.cell);
-      const owner = b.owner && b.orbs > 0 ? seatColor(b.owner) : null;
-      const critical = owner !== null && b.orbs >= b.critical - 1;
-      ctx.save();
-      ctx.beginPath();
-      ctx.roundRect(o.x + pad, o.y + pad, l.cell - 2 * pad, l.cell - 2 * pad, l.cell * 0.14);
-      ctx.fillStyle = isLegal && hover === i ? rgba(mine, 0.22) : owner ? rgba(owner, critical ? 0.14 : 0.09) : 'rgba(255,255,255,0.025)';
-      ctx.fill();
-      // One orb from exploding: the cell lights up in its owner's colour.
-      if (critical) {
-        ctx.shadowColor = owner;
-        ctx.shadowBlur = l.cell * 0.22;
-      }
-      ctx.lineWidth = critical ? 1.5 : 1;
-      ctx.strokeStyle = critical ? rgba(owner, 0.75) : owner ? rgba(owner, 0.3) : isLegal ? rgba(mine, 0.16) : '#262a52';
-      ctx.stroke();
-      ctx.restore();
-    });
-
-    view.board.forEach((b, i) => {
-      if (!b.owner || b.orbs === 0) return;
-      const o = cellOrigin(l, i);
-      const cx = o.x + l.cell / 2;
-      const cy = o.y + l.cell / 2;
-      const loaded = b.orbs >= b.critical - 1;
-      const spin = reduced ? 0 : now * 0.0007 * (loaded ? 2.5 : 1);
-      const shake = loaded && !reduced ? Math.sin(now * 0.045 + i) * l.cell * 0.018 : 0;
-      for (const off of orbOffsets(b.orbs, l.cell * 0.15)) {
-        const x = cx + off.x * Math.cos(spin) - off.y * Math.sin(spin) + shake;
-        const y = cy + off.x * Math.sin(spin) + off.y * Math.cos(spin);
-        drawOrb(ctx, x, y, l.cell * 0.12, seatColor(b.owner), loaded);
-      }
-    });
-
-    if (bursts.length > 0 && now <= burstsUntil) {
-      const mover = seatColor(view.lastMove?.seat);
-      for (const burst of bursts) {
-        const p = (now - burstsAt - burst.start) / BURST_MS;
-        if (p < 0 || p > 1) continue;
-        const o = cellOrigin(l, burst.index);
-        const cx = o.x + l.cell / 2;
-        const cy = o.y + l.cell / 2;
-        ctx.beginPath();
-        ctx.arc(cx, cy, l.cell * (0.18 + 0.55 * p), 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(255,255,255,${0.9 * (1 - p)})`;
-        ctx.lineWidth = 1 + 3 * (1 - p);
-        ctx.stroke();
-        const ease = 1 - (1 - p) ** 3;
-        for (const n of neighbors(view.cols, view.rows, burst.index)) {
-          const no = cellOrigin(l, n);
-          const x = cx + (no.x + l.cell / 2 - cx) * ease;
-          const y = cy + (no.y + l.cell / 2 - cy) * ease;
-          drawOrb(ctx, x, y, l.cell * 0.07 * (1 - p * 0.5), mover, true);
-        }
-      }
-    } else if (bursts.length > 0) {
-      bursts = [];
-    }
-  }
-
-  // Continuous animation loop, or a redraw only when something changes if reduced motion is on.
-  $effect(() => {
-    if (reduced) return;
-    let raf = requestAnimationFrame(function loop(t) {
-      draw(t);
-      raf = requestAnimationFrame(loop);
-    });
-    return () => cancelAnimationFrame(raf);
-  });
-  $effect(() => {
-    if (!reduced) return;
-    void [view, colors, size, hover, legalSet, interactive, canvas];
-    draw(0);
-  });
 
   function label(b: CMBoardCell): string {
     const state = b.owner ? `${b.orbs} ${b.owner} ${b.orbs === 1 ? 'orb' : 'orbs'}` : 'empty';
     return `${b.cell}, ${state}, explodes at ${b.critical}`;
   }
-
-  const order = $derived(
-    Array.from({ length: view.rows }, (_, k) => view.rows - 1 - k).flatMap((r) =>
-      Array.from({ length: view.cols }, (_, c) => r * view.cols + c),
-    ),
-  );
 </script>
 
 <div
-  class="board"
-  bind:this={box}
-  style:aspect-ratio="{view.cols} / {view.rows}"
-  style:width="min(100%, calc(68dvh * {view.cols} / {view.rows}))"
+  class="stage3d"
+  bind:this={stage}
+  data-spin={spin}
+  data-tilt={tilt}
+  style:--spin="{spin}deg"
+  style:--tilt="{tilt}deg"
+  style:--mine={mine ? rgba(mine, 0.14) : 'transparent'}
 >
-  <canvas bind:this={canvas} aria-hidden="true"></canvas>
-  <div class="cells" role="group" aria-label="Board" bind:this={cellsEl} style:grid-template-columns="repeat({view.cols}, 1fr)">
-    {#each order as i, k (i)}
-      {@const b = view.board[i]}
-      {@const ok = interactive && legalSet.has(b.cell)}
-      <button
-        type="button"
-        data-cell={b.cell}
-        data-legal={ok ? 'true' : 'false'}
-        aria-disabled={!ok}
-        aria-label={label(b)}
-        onclick={() => ok && onMove(b.cell)}
-        onkeydown={(e) => step(e, k)}
-        onpointerenter={() => (hover = i)}
-        onpointerleave={() => hover === i && (hover = null)}
-        onfocus={() => (hover = i)}
-        onblur={() => hover === i && (hover = null)}
-      ></button>
-    {/each}
+  <div class="slab" style:transform="rotateX({tilt}deg) rotateZ({spin}deg) scale({scale})">
+    <div class="shadow" aria-hidden="true"></div>
+    <div class="face" role="group" aria-label="Board" bind:this={cellsEl} style:grid-template-columns="repeat({view.cols}, var(--cell))">
+      <i class="edge s" aria-hidden="true"></i><i class="edge n" aria-hidden="true"></i><i class="edge w" aria-hidden="true"></i><i class="edge e" aria-hidden="true"></i>
+      {#each order as i, k (i)}
+        {@const b = view.board[i]}
+        {@const ok = interactive && legalSet.has(b.cell)}
+        {@const t = tone(b)}
+        <button
+          type="button"
+          data-cell={b.cell}
+          data-legal={ok ? 'true' : 'false'}
+          data-owner={b.owner ?? ''}
+          data-orbs={b.orbs}
+          aria-disabled={!ok}
+          aria-label={label(b)}
+          style:--rim={t.rim}
+          style:--rim-hi={t.rimHi}
+          style:--floor={t.floor}
+          style:--orb-light={t.light}
+          style:--orb-dark={t.dark}
+          style:--orb={b.owner ? colorOf(colors, b.owner) : 'transparent'}
+          style:--glow={t.glow}
+          onclick={() => ok && onMove(b.cell)}
+          onkeydown={(e) => step(e, k)}
+        >
+          <span class="floor"></span>
+          <span class="rim s"></span><span class="rim n"></span><span class="rim w"></span><span class="rim e"></span>
+          {#if hot(b)}<span class="hot"></span>{/if}
+          {#each orbSpots(b.owner ? b.orbs : 0) as [x, y], o (o)}
+            <span class="spot" style:left="{x}px" style:top="{y}px">
+              <i class="contact"></i>
+              <span class="bb"><i class="orb"></i></span>
+            </span>
+          {/each}
+        </button>
+      {/each}
+    </div>
   </div>
 </div>
 
 <style>
-  .board {
+  .stage3d {
+    --cell: 66px;
+    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     position: relative;
-    margin: 0 auto;
-    max-width: 100%;
-    background: var(--ink-deep);
-    border: 1px solid var(--lattice);
-    border-radius: var(--r-panel);
-    box-shadow: 0 0 0 0.5rem var(--ink-deep);
-  }
-  canvas {
-    position: absolute;
-    inset: 0;
     width: 100%;
     height: 100%;
-  }
-  .cells {
-    position: absolute;
-    inset: 0;
     display: grid;
+    place-items: center;
+    padding-bottom: 64px;
+    perspective: 1900px;
+    perspective-origin: 50% 40%;
+    overflow: hidden;
+    user-select: none;
+    background: radial-gradient(ellipse at 50% 55%, #171c33 0%, transparent 60%);
   }
-  button {
-    background: transparent;
-    border: 0;
+  .slab {
+    transform-style: preserve-3d;
+  }
+  .shadow {
+    position: absolute;
+    inset: -40px;
+    border-radius: 40px;
+    background: radial-gradient(closest-side, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0));
+    transform: translateZ(-60px);
+  }
+  /* The comp's Soil surface: two noise layers over warm highlights. */
+  .face {
+    position: relative;
+    transform-style: preserve-3d;
+    display: grid;
+    gap: 6px;
+    padding: 14px;
+    border-radius: 3px;
+    background:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .12 0 0 0 0 .08 0 0 0 0 .05 0 0 0 .9 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 180px,
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .55 0 0 0 0 .4 0 0 0 0 .28 0 0 0 .35 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 260px,
+      radial-gradient(ellipse at 25% 20%, #5a3f2a 0%, transparent 45%),
+      radial-gradient(ellipse at 80% 75%, #4a3222 0%, transparent 50%),
+      linear-gradient(160deg, #3b2a1d, #22170f);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), inset 0 0 60px rgba(0, 0, 0, 0.55);
+  }
+  .edge {
+    position: absolute;
+    background: linear-gradient(#2a1d13, #120c08);
+    pointer-events: none;
+  }
+  .edge.s { left: 0; top: 100%; width: 100%; height: 26px; transform-origin: top; transform: rotateX(-90deg); }
+  .edge.n { left: 0; bottom: 100%; width: 100%; height: 26px; transform-origin: bottom; transform: rotateX(90deg); }
+  .edge.w { right: 100%; top: 0; width: 26px; height: 100%; transform-origin: right; transform: rotateY(-90deg); }
+  .edge.e { left: 100%; top: 0; width: 26px; height: 100%; transform-origin: left; transform: rotateY(90deg); }
+  .face > button {
+    position: relative;
+    width: var(--cell);
+    height: var(--cell);
     padding: 0;
-    border-radius: 12%;
+    border: 0;
+    background: none;
+    transform-style: preserve-3d;
+    cursor: pointer;
   }
-  button[aria-disabled='true'] {
+  .face > button[aria-disabled='true'] {
     cursor: default;
   }
-  button:focus-visible {
+  .floor {
+    position: absolute;
+    inset: 0;
+    border-radius: 3px;
+    background: var(--grain), var(--floor);
+    box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.6), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+  }
+  button[data-legal='true']:hover .floor,
+  button[data-legal='true']:focus-visible .floor {
+    background: var(--grain), var(--mine);
+  }
+  button:focus-visible .floor {
     outline: 2px solid var(--chalk);
-    outline-offset: -4px;
+    outline-offset: 2px;
+  }
+  .rim {
+    position: absolute;
+    background: var(--grain), var(--rim);
+    pointer-events: none;
+  }
+  .rim.s { left: 0; bottom: 0; width: 100%; height: 8px; transform-origin: bottom; transform: rotateX(-90deg); border-top: 1px solid var(--rim-hi); }
+  .rim.n { left: 0; top: 0; width: 100%; height: 8px; transform-origin: top; transform: rotateX(90deg); border-bottom: 1px solid var(--rim-hi); }
+  .rim.w { left: 0; top: 0; width: 8px; height: 100%; transform-origin: left; transform: rotateY(-90deg); border-right: 1px solid var(--rim-hi); }
+  .rim.e { right: 0; top: 0; width: 8px; height: 100%; transform-origin: right; transform: rotateY(90deg); border-left: 1px solid var(--rim-hi); }
+  .hot {
+    position: absolute;
+    inset: -1px;
+    border-radius: 4px;
+    box-shadow: 0 0 18px rgba(255, 255, 255, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+    transform: translateZ(8px);
+    pointer-events: none;
+  }
+  .spot {
+    position: absolute;
+    width: 0;
+    height: 0;
+    transform-style: preserve-3d;
+    pointer-events: none;
+  }
+  .contact {
+    position: absolute;
+    left: -10px;
+    top: -5px;
+    width: 20px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    filter: blur(2px);
+  }
+  /* Billboard: undo the board's spin and tilt so every orb faces the camera. */
+  .bb {
+    position: absolute;
+    left: -10px;
+    top: -10px;
+    width: 20px;
+    height: 20px;
+    transform: translateZ(11px) rotateZ(calc(-1 * var(--spin))) rotateX(calc(-1 * var(--tilt)));
+  }
+  .orb {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--orb-light) 0%, var(--orb) 45%, var(--orb-dark) 100%);
+    box-shadow: 0 0 12px var(--glow);
   }
 </style>

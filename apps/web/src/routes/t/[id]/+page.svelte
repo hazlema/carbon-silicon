@@ -389,7 +389,7 @@
         </div>
       {/if}
       {#if view}
-      <div class="stage" style:--board-w="calc(68dvh * {view.cols} / {view.rows})">
+      <div class="stage" style:--board-w="min(60vw, calc((100dvh - 14rem) * {view.cols} / {view.rows} * 1.6))">
         {#snippet card(s: SeatInfo, side: 'left' | 'right')}
           {@const out = view.eliminated.includes(s.seat)}
           {@const onClock = match.toMove.includes(s.seat)}
@@ -585,6 +585,10 @@
     gap: 2rem;
     padding: 1.5rem;
     min-height: 0;
+  }
+  .stage:not(.ll):not(.ck) .boardwrap {
+    align-self: stretch;
+    min-height: 24rem;
   }
   .side {
     display: flex;

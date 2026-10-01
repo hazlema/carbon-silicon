@@ -17,8 +17,8 @@ describe('geometry', () => {
   test('top row first, so a9 leads on 6×9', () => {
     const order = cellOrder(6, 9);
     expect(order).toHaveLength(54);
-    expect(order[0]).toBe(cellIndex(6, 9, 'a9'));
-    expect(order[53]).toBe(cellIndex(6, 9, 'f1'));
+    expect(order[0]).toBe(cellIndex(6, 9, 'a9')!);
+    expect(order[53]).toBe(cellIndex(6, 9, 'f1')!);
   });
   test('cell centres sit on the face, a1 bottom-left', () => {
     expect(cellCenter(cellIndex(6, 9, 'a9')!, 6, 9)).toEqual({ x: PAD + CELL / 2, y: PAD + CELL / 2 });
