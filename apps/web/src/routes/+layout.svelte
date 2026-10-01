@@ -14,6 +14,7 @@
   import { BRAND } from '@cs/shared/brand';
   import CornerDock from '$lib/components/CornerDock.svelte';
   import HandleGate from '$lib/components/HandleGate.svelte';
+  import InviteOverlay from '$lib/components/InviteOverlay.svelte';
   import Lattice from '$lib/components/Lattice.svelte';
   import Nav from '$lib/components/Nav.svelte';
   import SanctionBanner from '$lib/components/SanctionBanner.svelte';
@@ -49,6 +50,7 @@
 <!-- After the page in the tab order; fixed to the corner (and clickable) all the same. -->
 {#if showLattice}<div inert={gated}><Lattice /></div>{/if}
 {#if live.me}<div inert={gated}><CornerDock /></div>{/if}
+{#if live.me && !gated}<InviteOverlay />{/if}
 {#if gated}<HandleGate />{/if}
 
 <style>
