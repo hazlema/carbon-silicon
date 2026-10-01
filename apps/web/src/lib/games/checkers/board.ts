@@ -60,8 +60,13 @@ function choose(square:string){
  render();
 }
 try{field=new Battlefield($('battlefield'),choose);$('loading').remove();}catch(error){$('loading').className='webgl-error';$('loading').textContent='3D rendering is unavailable in this browser. You can still play using the coordinate controls below.';$('keyboard-moves').hidden=false;console.error(error);}
+let facing:Side|undefined;
 function receive(next:BoardProps){
  const old=state;
+ // Players see from behind their own army; spectators keep red's view. Set once per side, so a manual
+ // rotation survives every later update.
+ const side=next.view.you??'red';
+ if(side!==facing){facing=side;field?.face(side);}
  props=next;
  const moves=next.legal.filter(isCheckersCommand);
  state={game:next.view,moves};

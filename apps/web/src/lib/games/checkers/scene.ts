@@ -163,6 +163,8 @@ export class Battlefield {
  }
  private positionCamera(){this.camera.position.set(Math.sin(this.angle)*16,16,Math.cos(this.angle)*16);this.camera.lookAt(0,.2,0);}
  rotate(){this.angle+=Math.PI/2;this.positionCamera();}
+ /** Stand behind an army: red's view is the classic one; blue's is the same, from across the table. */
+ face(side:'red'|'blue'){this.angle=side==='blue'?.66+Math.PI:.66;this.host.dataset.facing=side;this.positionCamera();}
  changeZoom(delta:number){this.zoom=THREE.MathUtils.clamp(this.zoom+delta,.8,1.35);this.resize();}
  update(game:Game,selected:string|null,moves:Move[]){
   this.destinations=new Set(moves.filter(m=>m.from===selected).map(m=>m.to));

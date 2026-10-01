@@ -51,6 +51,8 @@ test('Crown & Steel: clicking a knight and then a gold square submits the march'
   await expect(page.locator(`#${mine}-role`)).toHaveText(/· you$/);
   await expect(page.locator(`#${theirs}-name`)).toHaveText('Sprocket');
   await expect(page.locator(`#${theirs}-role`)).toHaveText(/· house machine$/);
+  // You look over your own knights' shoulders, whichever army you drew.
+  await expect(page.locator('#battlefield')).toHaveAttribute('data-facing', mine);
 
   // The stacked layout gives the field most of the screen: no side columns squeezing it.
   const field = (await page.locator('#battlefield canvas').boundingBox())!;
