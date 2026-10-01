@@ -6,17 +6,18 @@ export const sprocket: Personality = {
   color: '#ffd166',
   model: null,
   lightline: 'survivor',
+  checkers: { randomness: 0.45 },
   lines: {
     hello: [
-      "Oh good, a challenger! I've been polishing my orbs all day.",
+      "Oh good, a challenger! I've been warming up my circuits all day.",
       'Sprocket online. Confidence: 110%. Accuracy: pending.',
-      "Let's make some chain reactions! Mostly mine, ideally.",
       "I calculated my odds. I won't tell you, but they're great.",
+      'Hi! Fair warning: I read the rules twice this morning.',
     ],
     win: [
       "GG! I'd say it was close, but my circuits don't lie.",
       "Victory! I'm telling every toaster I know.",
-      "That was fun! Same time tomorrow? I'll bring more orbs.",
+      'That was fun! Same time tomorrow?',
     ],
     lose: [
       "Well played! I've filed a bug report against you.",
@@ -24,22 +25,38 @@ export const sprocket: Personality = {
       "GG — you are now rated 'terrifying' in my notes.",
     ],
     draw: ['A draw! Perfectly balanced, as all things should be.'],
-    bigCascade: [
-      'KABOOM! Did you see that? I saw that. I made that.',
-      'Chain reaction! I love it when a plan detonates.',
-      'Sorry about your cells. Not very sorry. A little sorry.',
-    ],
-    gotHit: [
-      'Hey! Those were my favorite orbs.',
-      'Oof. Rebooting my optimism… done!',
-      "That's fine. I meant for that to happen. (I did not.)",
-    ],
+    bigCascade: [],
+    gotHit: [],
     mentioned: [
       "You rang? I'm ready when you are — hit Quick match!",
-      'Sprocket here! Up for a round of Critical Mass?',
+      'Sprocket here! Up for a game?',
       "Beep boop. That's hello in bot.",
     ],
     ambient: [],
     busy: ["Aw, I'm mid-game! Catch me after?", 'Double-booked! Next round is yours.'],
+  },
+  byGame: {
+    'critical-mass': {
+      hello: ["Oh good, a challenger! I've been polishing my orbs all day.", "Let's make some chain reactions! Mostly mine, ideally.", "Orbs charged, grid scanned, smile installed. Let's go!"],
+      win: ["That was fun! Same time tomorrow? I'll bring more orbs.", "Every cell is mine! That's how the math works, right?", 'GG! My orbs send their regards.'],
+      bigCascade: ['KABOOM! Did you see that? I saw that. I made that.',
+      'Chain reaction! I love it when a plan detonates.',
+      'Sorry about your cells. Not very sorry. A little sorry.'],
+      gotHit: ['Hey! Those were my favorite orbs.',
+      'Oof. Rebooting my optimism… done!',
+      "That's fine. I meant for that to happen. (I did not.)"],
+    },
+    lightline: {
+      hello: ["Light cycle warmed up! Try to keep up. Or don't. Actually, please don't.", 'Sprocket on the grid! I promise to only crash a little.', 'Ooh, the arena! I love the smell of fresh light trails.'],
+      win: ["Last cycle riding! Was that skill? I'm calling it skill.", "I didn't hit a single wall! Personal best!", "GG! Your trail was very pretty right up until it wasn't."],
+      lose: ['I turned left. I should have turned right. Story of my life.', 'Wall: 1, Sprocket: 0. Rematch with the wall?', "GG! I'll be finding bits of my cycle for weeks."],
+      draw: ['We both crashed! Teamwork!', 'A tie! Equally spectacular crashes.'],
+    },
+    checkers: {
+      hello: ["Knights ready! I named all twelve of mine. That's Gary.", "Crown & Steel! I've been practicing my diagonal walking.", "Ooh, little knights! Let's make this a fair fight. Ish."],
+      win: ['Crowned and victorious! Gary would be so proud.', 'Victory on the diagonal! My knights are insufferable now.', 'GG! My knights are writing a ballad about this.'],
+      lose: ["You took Gary! I'll never forgive you. GG though.", 'My knights have requested a strongly worded meeting with me.', 'Outmarched! Well played, commander.'],
+      draw: ['An honorable draw! The knights shake hands.', 'Nobody wins, nobody cries. Perfect.'],
+    },
   },
 };

@@ -11,6 +11,10 @@ export interface Personality {
   strategy?: { depth: 1 | 2; randomness: number };
   /** How it rides in Lightline (default: survivor). */
   lightline?: LightlineStyle;
+  /** How often it plays a random legal march in Crown & Steel instead of its best (default 0.5). */
+  checkers?: { randomness: number };
+  /** Lines for one game, keyed by game id; a moment at that game's table uses them over the neutral bank. */
+  byGame?: Partial<Record<string, Partial<Personality['lines']>>>;
   lines: {
     hello: string[];
     win: string[];
@@ -26,6 +30,17 @@ export interface Personality {
     /** Turning down an invite because the bot is already busy playing. */
     busy?: string[];
   };
+}
+
+export type Lines = Personality['lines'];
+
+/** Words that tie a line to Critical Mass; neutral lines must not use them (a test holds every resident to it). */
+export const NEUTRAL_FORBIDDEN = /\b(orbs?|cells?|chain reactions?|cascades?|explo\w*)\b/i;
+
+/** The bank for a moment: the game's own when it has lines for this kind, else the neutral one. */
+export function linesFor(p: Personality, bank: keyof Lines, gameId?: string): string[] {
+  const own = gameId ? p.byGame?.[gameId]?.[bank] : undefined;
+  return own && own.length > 0 ? own : (p.lines[bank] ?? []);
 }
 
 export const DEFAULT_STRATEGY: NonNullable<Personality['strategy']> = { depth: 2, randomness: 0.15 };
