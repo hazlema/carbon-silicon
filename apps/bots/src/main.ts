@@ -5,6 +5,7 @@ import { runBouncer } from './bouncer';
 import { instructions } from './instructions';
 import { LlmJudge } from './judge';
 import { connectionFor, describeSettings, SettingsFile, settingsFromEnv } from './llm-settings';
+import { gameOver } from './personalities/game-over';
 import { oldIron } from './personalities/old-iron';
 import { sprocket } from './personalities/sprocket';
 import { LlmVoice } from './voice';
@@ -44,6 +45,17 @@ const ironVoice = new LlmVoice({
   settings: async () => connectionFor(await settings.get(), 'voice'),
 });
 
+// GAME_OVER speaks through the same model settings, with his own persona. He keeps out of the lobby:
+// no ambient chatter and no unprompted answers, so OLD IRON stays its voice.
+const overLog = (m: string) => console.log(`[${gameOver.name}] ${m}`);
+const overVoice = new LlmVoice({
+  persona: await instructions('game-over.md'),
+  houseRules,
+  name: gameOver.name,
+  log: overLog,
+  settings: async () => connectionFor(await settings.get(), 'voice'),
+});
+
 // The Bouncer reads the same settings file as OLD IRON (bouncerModel, else model), live.
 const bouncerLog = (m: string) => console.log(`[Bouncer] ${m}`);
 const judge = new LlmJudge({ rules: await instructions('bouncer.md'), connection: async () => connectionFor(await settings.get(), 'bouncer'), log: bouncerLog });
@@ -53,5 +65,6 @@ bouncerLog(`judge: ${bouncerModel ?? 'off — every report goes to a human'}`);
 await Promise.all([
   runBot({ ...common, personality: sprocket, tokenFile: join(tokenDir, 'sprocket.token') }),
   runBot({ ...common, personality: oldIron, voice: ironVoice, tokenFile: join(tokenDir, 'old-iron.token'), log: ironLog }),
+  runBot({ ...common, personality: gameOver, voice: overVoice, ambientEveryMs: 0, watchPublic: false, tokenFile: join(tokenDir, 'game-over.token'), log: overLog }),
   runBouncer({ base: common.base, houseKey: common.houseKey, tokenFile: join(tokenDir, 'bouncer.token'), judge, model: bouncerModel, signal: controller.signal, log: bouncerLog }),
 ]);

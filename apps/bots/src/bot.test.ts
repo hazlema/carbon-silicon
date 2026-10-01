@@ -11,6 +11,7 @@ import { Client } from './client';
 import { shout, linesFor } from './personality';
 import { oldIron } from './personalities/old-iron';
 import { sprocket } from './personalities/sprocket';
+import { gameOver } from './personalities/game-over';
 import type { ChatMessage } from '@cs/shared/protocol';
 import type { Moment, Voice } from './voice';
 
@@ -674,6 +675,15 @@ describe('answering a human nobody answered', () => {
       await proxy.stop(true);
     }
   }, 30_000);
+
+  test('with public watching off (GAME_OVER), a voiced bot never answers a line nobody answered', async () => {
+    await bot?.stop();
+    bot = await listen({ watchPublic: false });
+    const { client } = await newHuman(listenServer.url, `Ann${randomTag()}`);
+    const asked = await post(client, 'quiet in here, is anybody home?');
+    await settle();
+    expect(ironLines(await lobbySince(asked))).toEqual([]);
+  }, 30_000);
 });
 
 describe('helpers', () => {
@@ -704,4 +714,49 @@ describe('helpers', () => {
     expect(unansweredCandidate(msg('hey', { ...human!, kind: 'agent' }), 'bot')).toBe(false);
     expect(unansweredCandidate(msg('frosty joined', null, true), 'bot')).toBe(false);
   });
+});
+
+describe('GAME_OVER', () => {
+  test('takes a seat at Crown & Steel, greets from its Crown & Steel lines, and plays real moves', async () => {
+    const overCore = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: 'hk', diaryDir: join(root, 'no-diary'), countdownMs: 0, houseFallbackMs: 100 });
+    const overServer = startServer(overCore, createApp(overCore, { apiDocs: '', llmsTxt: '', trustProxy: true }), { port: 0, hostname: '127.0.0.1', webDir: null, allowedOrigins: [] });
+    const c = new AbortController();
+    let ready = () => {};
+    const listening = new Promise<void>((resolve) => (ready = resolve));
+    const done = runBot({ base: overServer.url, personality: gameOver, houseKey: 'hk', tokenFile: join(root, `.data/test-bots/${crypto.randomUUID()}.token`), thinkMs: [0, 0], inviteThinkMs: [0, 0], pollWaitMs: 500, ambientEveryMs: 0, watchPublic: false, signal: c.signal, log: () => {}, onReady: () => ready() });
+    try {
+      // Seen as ready the moment it registers, but invites only reach it once its inbox is open.
+      await listening;
+      const human = await newAgent(overServer.url, `knight${randomTag()}`);
+      type Who = { presence: { identity: { id: string; handle: string; isHouse: boolean }; status: string }[] };
+      const bot = await until(async () =>
+        (await human.client.call<Who>('GET', '/api/who')).presence.find((p) => p.identity.handle === 'GAME_OVER' && p.status === 'ready')?.identity,
+      );
+      const tableId = (await human.client.hostTable('checkers', [bot.handle])).table.id;
+      await until(async () => (await human.client.call<{ table: { seated: unknown[] } }>('GET', `/api/tables/${tableId}`)).table.seated.length === 2);
+      const { match } = await human.client.startTable(tableId);
+      const hello = await until(async () => {
+        const r = await human.client.call<{ messages: { author: { id: string } | null; text: string }[] }>('GET', `/api/chat/table:${tableId}?since=0&limit=200`);
+        return r.messages.find((m) => m.author?.id === bot.id)?.text;
+      });
+      expect(linesFor(gameOver, 'hello', 'checkers')).toContain(hello);
+      // Play until GAME_OVER has marched at least once.
+      let env = await human.client.match(match.id);
+      const theirs = env.match.seats.find((s) => s.identity.id === bot.id)!.seat;
+      for (let i = 0; i < 40; i++) {
+        const marched = (env.view as { history: { side: string }[] }).history.some((h) => h.side === theirs);
+        if (marched) break;
+        if (env.match.status === 'live' && env.you && env.match.toMove.includes(env.you) && env.legal.length > 0) {
+          env = await human.client.move(match.id, env.match.revision, env.legal[0]).catch(() => human.client.match(match.id));
+        } else env = await human.client.match(match.id, env.match.revision, 2000);
+      }
+      expect((env.view as { history: { side: string }[] }).history.some((h) => h.side === theirs)).toBe(true);
+      await human.client.call('POST', `/api/matches/${match.id}/resign`).catch(() => {});
+    } finally {
+      c.abort();
+      await done.catch(() => {}); // stopped mid-start, the bot may throw on the way out
+      await overServer.stop();
+      await overCore.close();
+    }
+  }, 30_000);
 });

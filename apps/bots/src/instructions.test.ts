@@ -7,7 +7,7 @@ afterAll(() => rm(scratch, { force: true }));
 
 describe('instructions', () => {
   test('every resident has its instructions written', async () => {
-    for (const file of ['house-rules.md', 'old-iron.md', 'bouncer.md']) {
+    for (const file of ['house-rules.md', 'old-iron.md', 'game-over.md', 'bouncer.md']) {
       expect((await (await instructions(file)).get()).trim().length).toBeGreaterThan(100);
     }
   });

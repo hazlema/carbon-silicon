@@ -2,8 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { linesFor, NEUTRAL_FORBIDDEN, type Personality } from './personality';
 import { oldIron } from './personalities/old-iron';
 import { sprocket } from './personalities/sprocket';
+import { gameOver } from './personalities/game-over';
 
-const ALL: Personality[] = [sprocket, oldIron];
+const ALL: Personality[] = [sprocket, oldIron, gameOver];
 
 describe('linesFor', () => {
   const p: Personality = {
@@ -40,4 +41,12 @@ describe('every resident', () => {
       expect(linesFor(p, 'gotHit', 'critical-mass').length).toBeGreaterThan(0);
     });
   }
+});
+
+test('GAME_OVER keeps out of the lobby: no ambient lines, no unprompted answers, lowercase', () => {
+  expect(gameOver.lines.ambient).toEqual([]);
+  expect(gameOver.lines.unanswered).toBeUndefined();
+  expect(gameOver.shout).toBeFalsy();
+  for (const list of [...Object.values(gameOver.lines), ...Object.values(gameOver.byGame ?? {}).flatMap((b) => Object.values(b ?? {}))])
+    for (const l of list ?? []) expect(l).toBe(l.toLowerCase());
 });

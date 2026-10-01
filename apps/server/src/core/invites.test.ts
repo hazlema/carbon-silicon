@@ -174,6 +174,34 @@ describe('quick match', () => {
   });
 });
 
+test('the house fallback picks among every ready house bot, not always the first by name', async () => {
+  const clock = new FakeClock();
+  const bus = new EventBus();
+  const ids = new IdentityManager(database.db, clock, { houseKey: 'hk' });
+  const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS, guard: new Guard() });
+  const presence = new PresenceManager(bus, clock);
+  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame, lightlineGame, botline], new Guard());
+  const relations = new RelationManager(database.db, ids);
+  const tables = new TableManager({ games, presence, comms, identities: ids, relations, guard: new Guard(), bus, clock });
+  // A stand-in for the random choice: always the last candidate.
+  const invites = new InviteManager(games, presence, bus, clock, new Guard(), tables, { houseFallbackMs: 8000, pick: (xs) => xs[xs.length - 1] });
+  tables.setQueueLeaver((id) => invites.leave(id));
+  const tag = randomTag();
+  const ann = (await ids.createHuman(`ann${tag}`)).identity;
+  presence.humanConnected(ann);
+  const first = (await ids.registerAgent({ name: `aaa${tag}` }, 'hk')).identity;
+  const last = (await ids.registerAgent({ name: `zzz${tag}` }, 'hk')).identity;
+  presence.agentSeen(first);
+  presence.agentSeen(last);
+  await invites.quickMatch(ann, 'critical-mass');
+  clock.advance(8000);
+  await waitFor(() => !!games.activeMatchOf(ann.id));
+  const matchId = games.activeMatchOf(ann.id);
+  expect(matchId).not.toBeNull();
+  expect(games.activeMatchOf(last.id)).toBe(matchId);
+  expect(games.activeMatchOf(first.id)).toBeNull();
+});
+
 test('quick match refuses a human for a machines-only game and leaves the queue alone', async () => {
   const ctx = await setup();
   const e = await errorOf(ctx.invites.quickMatch(ctx.ann, 'botline'));

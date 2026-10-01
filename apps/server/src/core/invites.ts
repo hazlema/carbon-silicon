@@ -15,6 +15,8 @@ interface QueueEntry {
 
 export type QuickMatchResult = { status: 'queued' } | { status: 'matched'; match: MatchSummary };
 
+const randomPick = <T>(candidates: T[]): T => candidates[Math.floor(Math.random() * candidates.length)];
+
 export class InviteManager {
   private queue = new Map<string, QueueEntry>();
 
@@ -25,7 +27,7 @@ export class InviteManager {
     private clock: Clock,
     private guard: Guard,
     private tables: TableManager,
-    private opts: { houseFallbackMs: number } = { houseFallbackMs: 8000 },
+    private opts: { houseFallbackMs: number; pick?: <T>(candidates: T[]) => T } = { houseFallbackMs: 8000 },
   ) {
     bus.on('presence.changed', (p) => {
       if (p.status !== 'ready') this.leave(p.identity.id);
@@ -73,9 +75,11 @@ export class InviteManager {
   private async fallback(identityId: string): Promise<void> {
     const entry = this.queue.get(identityId);
     if (!entry) return;
-    const bot = this.presence
+    // Any ready resident, not the first by name: the list is alphabetical, and the same bot
+    // (the strongest, as it happens) would otherwise meet every newcomer.
+    const ready = this.presence
       .list()
-      .find(
+      .filter(
         (p) =>
           p.identity.isHouse &&
           p.status === 'ready' &&
@@ -83,6 +87,7 @@ export class InviteManager {
           this.mayPlay(p.identity) &&
           !this.tables.isBusy(p.identity.id),
       );
+    const bot = ready.length > 0 ? (this.opts.pick ?? randomPick)(ready) : undefined;
     if (!bot) {
       this.arm(entry);
       return;
