@@ -15,9 +15,12 @@
     return () => clearInterval(t);
   });
 
-  const name = $derived(live.games.find((g) => g.id === table.gameId)?.name ?? table.gameId);
+  const game = $derived(live.games.find((g) => g.id === table.gameId));
+  const name = $derived(game?.name ?? table.gameId);
+  /** Lightline and its kind: Start fills the empty seats with house bots, so a host alone can start. */
+  const fills = $derived(!!game?.houseFill);
   const amHost = $derived(live.me?.id === table.host.id);
-  const canStart = $derived(amHost && table.status === 'forming' && table.seated.length >= table.minPlayers);
+  const canStart = $derived(amHost && table.status === 'forming' && (fills || table.seated.length >= table.minPlayers));
   const room = $derived(table.seated.length + table.invites.length < table.size);
 
   async function act(fn: () => Promise<unknown>) {
@@ -60,7 +63,7 @@
     </ul>
   {/if}
   <p class="note" role="status">{gatherNote(table, name)}</p>
-  {#if amHost && room && !compact}<p class="hint">Click a name to invite them.</p>{/if}
+  {#if amHost && room && !compact}<p class="hint">Click a name to invite them.{#if fills} Empty seats fill with house bots when you start.{/if}</p>{/if}
   <div class="row">
     {#if amHost}
       <button class="btn primary" type="button" disabled={!canStart || busy} onclick={() => act(() => tableApi.start(table.id))}>Start</button>

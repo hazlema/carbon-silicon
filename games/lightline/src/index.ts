@@ -28,6 +28,7 @@ export const lightlineGame: GameModule<LLState> = {
     mode: 'realtime',
     minPlayers: 2,
     maxPlayers: 4,
+    houseFill: true,
     seats: SEATS,
     rulesPath: 'games/lightline/docs/rules.md',
     humans: true,

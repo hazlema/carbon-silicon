@@ -3,7 +3,7 @@ import type { GameInfo } from '@cs/shared/protocol';
 import { playable, randomGame, remembered } from './play';
 
 const game = (id: string, humans = true): GameInfo => ({
-  id, name: id, tagline: '', mode: 'turn', minPlayers: 2, maxPlayers: 4, seats: [], humans, thumbnail: null,
+  id, name: id, tagline: '', mode: 'turn', minPlayers: 2, maxPlayers: 4, seats: [], humans, houseFill: false, thumbnail: null,
 });
 const cm = game('critical-mass');
 const ll = game('lightline', false);

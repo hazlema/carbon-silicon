@@ -17,6 +17,8 @@ export interface GameMeta {
   humans: boolean;
   /** The game chooser's picture: a file beside the rules (e.g. "thumbnail.jpg"), about 16:10. */
   thumbnail?: string;
+  /** Better crowded: on start, empty seats fill with free house bots up to maxPlayers (humans and bots count the same). */
+  houseFill?: boolean;
 }
 
 /** `winners: []` means a draw. `placement` lists seats best-first; ties share an inner array. */

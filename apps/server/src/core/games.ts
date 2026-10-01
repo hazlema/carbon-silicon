@@ -110,6 +110,7 @@ export class GameManager {
       maxPlayers: meta.maxPlayers,
       seats: meta.seats,
       humans: meta.humans,
+      houseFill: !!meta.houseFill,
       thumbnail: meta.thumbnail ? `/api/games/${meta.id}/files/${meta.thumbnail}` : null,
     }));
   }

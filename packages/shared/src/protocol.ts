@@ -241,6 +241,8 @@ export interface GameInfo {
   seats: string[];
   /** Humans may play it; false means machines only (they can still watch). */
   humans: boolean;
+  /** Empty seats fill with free house bots when a match starts (Lightline). */
+  houseFill: boolean;
   /** The chooser's picture, served beside the rules; null when the game has none. */
   thumbnail: string | null;
 }

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { enter, newPlayer, randomIp, randomTag } from './testing';
+import { enter, newPlayer, pickGame, randomIp, randomTag } from './testing';
 
 test('an exhibition of Lightline plays on the board for anyone to watch, fired rules and all', async ({ browser, request }) => {
   // A guest who never picks a name: no socket, so the board follows by short-poll.
@@ -170,4 +170,22 @@ test('at 400 px a swipe on the arena turns the cycle', async ({ browser }) => {
     }),
   ).toBe(true);
   await page.request.post(`/api/matches/${matchId}/resign`);
+});
+
+test('hosting Lightline alone: the card says the seats fill with house bots, and Start works with just you', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await enter(page, `fill${randomTag()}`);
+  await pickGame(page, 'Lightline');
+  await page.getByRole('button', { name: 'Host a table' }).click();
+  await expect(page.getByText('Empty seats fill with house bots when you start.')).toBeVisible();
+  const start = page.getByRole('button', { name: 'Start' });
+  await expect(start).toBeEnabled();
+  await start.click();
+  await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
+  const tableId = page.url().split('/t/')[1];
+  const seated = (await (await page.request.get(`/api/tables/${tableId}`)).json()).table.lastPlayers ?? [];
+  expect(seated.some((p: { handle: string }) => p.handle === 'Sprocket')).toBe(true);
+  await page.getByRole('button', { name: 'Resign' }).click();
+  await page.getByRole('button', { name: 'Yes, resign' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
 });

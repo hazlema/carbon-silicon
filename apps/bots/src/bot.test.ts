@@ -72,7 +72,7 @@ afterAll(async () => {
 
 /** A short random tag for test handles. Digits only — a base-36 tag can occasionally spell
  *  something the profanity filter rejects, which would fail these tests in setup. */
-const randomTag = () => String(Math.floor(Math.random() * 1e9)).padStart(9, '0');
+const randomTag = () => Array.from({ length: 9 }, () => '02689'[Math.floor(Math.random() * 5)]).join(''); // no leetspeak letters (5→s, 1→i…)
 const randomIp = () => `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}`;
 
 async function botSaidHelloTimes(client: Client, tableId: string, botId: string): Promise<number> {

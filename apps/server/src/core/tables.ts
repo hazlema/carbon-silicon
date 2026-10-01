@@ -402,6 +402,7 @@ export class TableManager {
     const t = this.asHost(identity, tableId);
     this.assertForming(t);
     const meta = this.deps.games.module(t.gameId).meta;
+    this.fillWithHouse(t);
     if (t.seated.length < meta.minPlayers) {
       const short = meta.minPlayers - t.seated.length;
       throw conflict('NOT_ENOUGH', `${meta.name} needs at least ${meta.minPlayers} players — invite ${short} more to start.`);
@@ -521,6 +522,7 @@ export class TableManager {
     };
     this.tables.set(t.id, t);
     for (const p of players) this.seat(t, p);
+    this.fillWithHouse(t);
     try {
       return await this.launch(t);
     } catch (e) {
@@ -634,6 +636,22 @@ export class TableManager {
   private touch(t: Table): void {
     this.deps.clock.clearTimeout(t.timer);
     t.timer = this.deps.clock.setTimeout(() => this.close(t, 'idle'), this.opts.idleMs);
+  }
+
+  /** A houseFill game (Lightline) is better crowded: free house bots take the empty seats, in random order. */
+  private fillWithHouse(t: Table): void {
+    const meta = this.deps.games.module(t.gameId).meta;
+    if (!meta.houseFill) return;
+    const room = meta.maxPlayers - t.seated.length;
+    if (room <= 0) return;
+    const free = this.deps.presence
+      .list()
+      .filter((p) => p.identity.isHouse && !t.seated.some((s) => s.id === p.identity.id) && !this.isBusy(p.identity.id) && this.available(p.identity))
+      .map((p) => p.identity);
+    for (const bot of this.opts.shuffle(free).slice(0, room)) {
+      this.seat(t, bot);
+      this.sat(t, bot);
+    }
   }
 
   private seat(t: Table, identity: IdentityPublic): void {

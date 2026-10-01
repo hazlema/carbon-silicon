@@ -10,10 +10,11 @@ export async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs
   throw new Error(`waitFor timed out after ${timeoutMs}ms`);
 }
 
-/** A short random tag for building test handles, e.g. `ann${randomTag()}`. Digits only — unlike
- *  a base-36 tag, it can never accidentally spell something the profanity filter rejects. */
+/** A short random tag for building test handles, e.g. `ann${randomTag()}`. Only the digits the profanity
+ *  filter doesn't read as letters (it resolves leetspeak: 1→i, 3→e, 4→a, 5→s, 7→t), so `a55…` or
+ *  `p155…` can never turn up and fail a test in setup. */
 export function randomTag(): string {
-  return String(Math.floor(Math.random() * 1e9)).padStart(9, '0');
+  return Array.from({ length: 9 }, () => '02689'[Math.floor(Math.random() * 5)]).join('');
 }
 
 /**

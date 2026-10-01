@@ -583,3 +583,55 @@ describe('machines only (a machines-only game)', () => {
     expect(ctx.tables.list()).toHaveLength(0);
   });
 });
+
+describe('games that fill to the brim (Lightline)', () => {
+  async function moreHouse(ctx: Ctx, n: number) {
+    const bots: IdentityPublic[] = [];
+    for (let i = 0; i < n; i++) {
+      const b = (await ctx.identities.registerAgent({ name: `rider${i}${randomTag()}` }, 'hk')).identity;
+      ctx.presence.agentSeen(b);
+      bots.push(b);
+    }
+    return bots;
+  }
+  test('Start fills the empty seats with free house bots, up to the game’s maximum', async () => {
+    const ctx = await setup();
+    await moreHouse(ctx, 3);
+    const t = await ctx.tables.host(ctx.ann, 'lightline');
+    const match = await ctx.tables.start(ctx.ann, t.id);
+    expect(match.seats).toHaveLength(4);
+    expect(match.seats.filter((s) => s.identity.isHouse)).toHaveLength(3);
+  });
+  test('only as many as are free: one house bot makes it a two-rider match', async () => {
+    const ctx = await setup();
+    const t = await ctx.tables.host(ctx.ann, 'lightline');
+    const match = await ctx.tables.start(ctx.ann, t.id);
+    expect(match.seats.map((s) => s.identity.id).sort()).toEqual([ctx.ann.id, ctx.house.id].sort());
+  });
+  test('humans and bots count the same: two humans get two bots', async () => {
+    const ctx = await setup();
+    await moreHouse(ctx, 2);
+    const t = await ctx.tables.host(ctx.ann, 'lightline', { invite: [ctx.ben.handle] });
+    await ctx.tables.accept(ctx.ben, await inviteOf(ctx, ctx.ben));
+    const match = await ctx.tables.start(ctx.ann, t.id);
+    expect(match.seats).toHaveLength(4);
+    expect(match.seats.filter((s) => !s.identity.isHouse)).toHaveLength(2);
+  });
+  test('a house bot seated at another table is not taken', async () => {
+    const ctx = await setup();
+    const [other] = await moreHouse(ctx, 1);
+    await ctx.tables.host(ctx.ben, 'critical-mass', { invite: [other.handle] });
+    await ctx.tables.accept(other, await inviteOf(ctx, other));
+    const t = await ctx.tables.host(ctx.ann, 'lightline');
+    const match = await ctx.tables.start(ctx.ann, t.id);
+    expect(match.seats.map((s) => s.identity.id)).not.toContain(other.id);
+  });
+  test('quick-match pairs fill too (startNow), and games without the switch never do', async () => {
+    const ctx = await setup();
+    await moreHouse(ctx, 2);
+    const lightline = await ctx.tables.startNow('lightline', [ctx.ann, ctx.ben]);
+    expect(lightline.seats).toHaveLength(4);
+    const cm = await ctx.tables.startNow('critical-mass', [ctx.cat, ctx.dan]);
+    expect(cm.seats).toHaveLength(2);
+  });
+});
