@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { tick, untrack } from 'svelte';
+  import type { CheckersView } from '@cs/checkers';
   import type { CMView } from '@cs/critical-mass';
   import type { LLView } from '@cs/lightline';
   import { dmParticipants, groupOf, railChannel, tableChannel, type MatchEnvelope, type SeatInfo, type TableInfo } from '@cs/shared/protocol';
@@ -13,6 +14,7 @@
   import GatheringCard from '$lib/components/GatheringCard.svelte';
   import IdentityChip from '$lib/components/IdentityChip.svelte';
   import Board from '$lib/games/critical-mass/Board.svelte';
+  import CrownBoard from '$lib/games/checkers/Board.svelte';
   import LightlineBoard from '$lib/games/lightline/Board.svelte';
   import { keyOf, typing, type SteerKey } from '$lib/games/lightline/controls';
   import { live } from '$lib/live.svelte';
@@ -26,6 +28,10 @@
     overload: 'The board went critical.',
     rounds: 'On rounds: two round wins, or the best after three.',
     forfeit: 'By forfeit: everyone else resigned.',
+    'last-piece': 'Every enemy knight has fallen.',
+    'no-moves': 'No legal march remained.',
+    repetition: 'The same position arose three times: an honorable draw.',
+    'quiet-moves': 'Eighty marches without a capture or a crown: an honorable draw.',
   };
 
   let table = $state<TableInfo | null>(null);
@@ -153,6 +159,7 @@
   );
   const view = $derived(env?.match.gameId === 'critical-mass' ? (env.view as CMView) : undefined);
   const ll = $derived(env?.match.gameId === 'lightline' ? (env.view as LLView) : undefined);
+  const ck = $derived(env?.match.gameId === 'checkers' ? (env.view as CheckersView) : undefined);
   const mySeat = $derived(env?.you ?? null);
   /** Knocked out (or resigned) while the others play on. In Lightline a crash ends only the round. */
   const iAmOut = $derived(
@@ -235,7 +242,7 @@
           : anyHuman ? 'Humans steer; machines ride their doctrine.' : 'Machines at work: each rides its own doctrine.';
       return { lead: `Round ${ll.round}`, detail };
     }
-    if (myTurn) return { lead: 'Your move.', detail: 'Place an orb on an empty cell or one of yours.' };
+    if (myTurn) return { lead: 'Your move.', detail: ck ? 'Select a knight, then a gold destination. Captures are mandatory.' : 'Place an orb on an empty cell or one of yours.' };
     return { lead: `Waiting for ${handleOf(match.toMove[0] ?? '')}…` };
   });
   const colors = $derived(tableColors(match?.seats ?? []));
@@ -257,11 +264,15 @@
   });
 
   async function move(cell: string) {
+    return moveCommand({ cell });
+  }
+
+  async function moveCommand(command: unknown) {
     if (!env || busy) return;
     busy = true;
     error = '';
     try {
-      accept(await api<MatchEnvelope>('POST', `/api/matches/${env.match.id}/move`, { revision: env.match.revision, command: { cell } }));
+      accept(await api<MatchEnvelope>('POST', `/api/matches/${env.match.id}/move`, { revision: env.match.revision, command }));
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         try {
@@ -333,7 +344,7 @@
     <p>@{table.host.handle} is inviting players from the lobby.</p>
     <a class="btn primary" href="/">Back to the lobby</a>
   </div>
-{:else if table && env && match && (view || ll)}
+{:else if table && env && match && (view || ll || ck)}
   <div class="table">
     <section class="game panel" aria-labelledby="game-title">
       <header class="bar top">
@@ -342,6 +353,8 @@
           <span class="meta" data-testid="ll-clock">round {ll.round}, {(ll.roundTick / 10).toFixed(1)} s</span>
         {:else if view}
           <span class="meta">turn {view.moveCount + 1} · {view.cols}×{view.rows}</span>
+        {:else if ck}
+          <span class="meta">march {ck.moveCount + 1} · {ck.cols}×{ck.rows}</span>
         {/if}
         <span class="meta watching">Watching: {table.watching}</span>
         <a class="rules" href="/games">Rules</a>
@@ -356,6 +369,14 @@
           {#if steerable && countdown !== null}
             <p class="hint" data-testid="steer-hint">{coarse ? 'Swipe to steer · Tap to boost' : 'Arrows or WASD to steer · Space to boost'}</p>
           {/if}
+        </div>
+      {/if}
+      {#if ck}
+        <div class="stage ck">
+          <div class="boardwrap">
+            <CrownBoard view={ck} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} />
+            {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
+          </div>
         </div>
       {/if}
       {#if view}
@@ -528,6 +549,15 @@
     width: 100%;
     max-width: calc(68dvh * 64 / 40);
     margin-inline: auto;
+  }
+  /* Crown & Steel brings its own army cards and chronicle; give it the whole stage and let it scroll. */
+  .stage.ck {
+    display: block;
+    overflow-y: auto;
+    padding: 0;
+  }
+  .stage.ck .boardwrap {
+    width: 100%;
   }
   .stage {
     display: grid;

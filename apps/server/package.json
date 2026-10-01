@@ -2,7 +2,9 @@
   "name": "@cs/server",
   "private": true,
   "type": "module",
-  "scripts": { "db:generate": "drizzle-kit generate" },
+  "scripts": {
+    "db:generate": "drizzle-kit generate"
+  },
   "exports": {
     "./core": "./src/core/core.ts",
     "./http": "./src/http/app.ts",
@@ -10,6 +12,7 @@
     "./testing": "./src/lib/testing.ts"
   },
   "dependencies": {
+    "@cs/checkers": "workspace:*",
     "@cs/critical-mass": "workspace:*",
     "@cs/game-api": "workspace:*",
     "@cs/lightline": "workspace:*",
@@ -19,5 +22,7 @@
     "hono": "4.13.9",
     "postgres": "3.4.9"
   },
-  "devDependencies": { "drizzle-kit": "0.31.11" }
+  "devDependencies": {
+    "drizzle-kit": "0.31.11"
+  }
 }

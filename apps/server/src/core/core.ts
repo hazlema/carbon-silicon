@@ -1,3 +1,4 @@
+import { checkersGame } from '@cs/checkers';
 import { criticalMassGame } from '@cs/critical-mass';
 import { lightlineGame } from '@cs/lightline';
 import { PUBLIC_CHANNELS } from '@cs/shared/protocol';
@@ -84,7 +85,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   if (opts.doctrineFloorMs !== undefined) gameOpts.doctrineFloorMs = opts.doctrineFloorMs;
   if (opts.realtimeTickMs !== undefined) gameOpts.realtimeTickMs = opts.realtimeTickMs;
   if (opts.realtimeCountdownMs !== undefined) gameOpts.realtimeCountdownMs = opts.realtimeCountdownMs;
-  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame, lightlineGame], guard, gameOpts);
+  const games = new GameManager(database.db, bus, clock, comms, presence, [criticalMassGame, lightlineGame, checkersGame], guard, gameOpts);
   comms.setMatchTable((matchId) => games.tableIdOf(matchId));
   const relations = new RelationManager(database.db, identities);
   const dms = new DmManager(database.db, { comms, identities, relations });

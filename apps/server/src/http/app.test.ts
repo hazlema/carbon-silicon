@@ -64,9 +64,9 @@ describe('discovery', () => {
     const docs = await call('GET', '/api/docs');
     expect(docs.headers.get('content-type')).toContain('text/markdown');
     const games = (await call('GET', '/api/games')).data.games as { id: string; thumbnail: string | null }[];
-    expect(games).toHaveLength(2);
+    expect(games).toHaveLength(3);
     // Each game's chooser picture sits beside its rules and is served from there.
-    expect(games.map((g) => g.thumbnail)).toEqual(['/api/games/critical-mass/files/thumbnail.jpg', '/api/games/lightline/files/thumbnail.png']);
+    expect(games.map((g) => g.thumbnail)).toEqual(['/api/games/critical-mass/files/thumbnail.jpg', '/api/games/lightline/files/thumbnail.png', '/api/games/checkers/files/thumbnail.jpg']);
     for (const g of games) {
       const pic = await app.request(g.thumbnail!);
       expect([pic.status, pic.headers.get('content-type')?.startsWith('image/')]).toEqual([200, true]);

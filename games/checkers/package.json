@@ -1,0 +1,7 @@
+{
+  "name": "@cs/checkers",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./rules": "./src/rules.ts" },
+  "dependencies": { "@cs/game-api": "workspace:*" }
+}

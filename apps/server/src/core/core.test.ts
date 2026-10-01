@@ -47,8 +47,8 @@ describe('createCore', () => {
     expect(await core.diary.announce(core.comms)).toBe(0);
     expect((await core.comms.history('lobby', { limit: 50 })).filter((m) => m.system).map((m) => m.text)).toEqual(lobby);
   });
-  test('the catalog has Critical Mass and Lightline', () => {
-    expect(core.games.catalog().map((g) => g.id)).toEqual(['critical-mass', 'lightline']);
+  test('the catalog has Critical Mass, Lightline and Crown & Steel', () => {
+    expect(core.games.catalog().map((g) => g.id)).toEqual(['critical-mass', 'lightline', 'checkers']);
   });
 });
 
