@@ -14,6 +14,14 @@
     { id: 'lobby', about: 'Everyone, everything' },
   ];
   let channel = $state('lobby');
+  // Name menus offer the chat on screen first.
+  $effect(() => {
+    const ch = channel;
+    live.openConv = ch;
+    return () => {
+      if (live.openConv === ch) live.openConv = null;
+    };
+  });
   let tab = $state<'chat' | 'who'>('chat');
   let focusKey = $state(0);
   /** The conversation on screen, when the chat shows a DM. */

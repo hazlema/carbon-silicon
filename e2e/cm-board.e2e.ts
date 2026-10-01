@@ -217,14 +217,23 @@ test.describe('with motion', () => {
     await startMatch(page);
     await myTurn(page);
     const start = await turnNo(page);
-    await page.locator('button[data-legal="true"]').first().click();
+    // Interior cells: a lone corner orb can be wiped out in two moves, ending the match under the test.
+    const legal = page.locator(['c5', 'd5', 'c4', 'd4', 'c6', 'd6'].map((c) => `button[data-cell="${c}"][data-legal="true"]`).join(', '));
+    await legal.first().click();
     await expect.poll(() => turnNo(page)).toBeGreaterThanOrEqual(start + 1);
     await expect(page.locator('.fx')).toHaveCount(1);
     await page.locator('.fx').evaluate((el) => ((el as any).dataset.mark = 'old'));
     const marked = await turnNo(page);
     // Any later move — Sprocket's reply, or ours if the reply already landed — must rebuild the layer.
-    if (await page.locator('button[data-legal="true"]').count()) await page.locator('button[data-legal="true"]').first().click();
-    await expect.poll(() => turnNo(page), { timeout: 20_000 }).toBeGreaterThan(marked);
+    await expect
+      .poll(
+        async () => {
+          if (await legal.count()) await legal.first().click({ timeout: 1000 }).catch(() => {});
+          return turnNo(page);
+        },
+        { timeout: 20_000 },
+      )
+      .toBeGreaterThan(marked);
     await expect(page.locator('.fx')).toHaveCount(1);
     await expect(page.locator('.fx[data-mark="old"]')).toHaveCount(0);
   });

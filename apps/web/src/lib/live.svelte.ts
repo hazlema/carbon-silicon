@@ -61,6 +61,8 @@ class Live {
   convRequest = $state<{ channel: string; n: number } | null>(null);
   /** A line for the open conversation's notice area (e.g. who a hosted table skipped). */
   convNotice = $state<{ channel: string; text: string } | null>(null);
+  /** The conversation on screen (lobby or table), so a name menu can offer to invite into it first. */
+  openConv = $state<string | null>(null);
   get dmRequest() {
     return this.convRequest;
   }

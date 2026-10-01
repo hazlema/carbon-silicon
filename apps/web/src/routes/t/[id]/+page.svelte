@@ -44,6 +44,14 @@
   let focusedOver = false;
   /** 'table', 'rail', or a dm: channel. */
   let tab = $state<string>('table');
+  // Name menus offer the chat on screen first.
+  $effect(() => {
+    const ch = tab;
+    live.openConv = ch;
+    return () => {
+      if (live.openConv === ch) live.openConv = null;
+    };
+  });
   let focusKey = $state(0);
   let railUnread = $state(0);
 

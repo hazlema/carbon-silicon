@@ -7,7 +7,7 @@ const dmTab = (page: Page, handle: string) => page.getByRole('button', { name: n
 async function messageFromHereNow(page: Page, handle: string) {
   const here = page.getByRole('region', { name: /Here now/ });
   await here.getByRole('button', { name: new RegExp(handle) }).click();
-  await page.getByRole('menuitem', { name: `Message @${handle}` }).click();
+  await page.getByRole('menuitem', { name: `Chat with @${handle}` }).click();
 }
 async function say(page: Page, label: string, text: string) {
   await page.getByLabel(label).fill(text);

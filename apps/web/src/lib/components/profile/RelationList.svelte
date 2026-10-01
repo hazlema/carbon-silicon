@@ -19,7 +19,7 @@
 
 <section class="relations panel" aria-labelledby="relations-title">
   <h2 id="relations-title">Ignored &amp; blocked</h2>
-  <p class="about">Ignore hides messages and mentions; block also stops invites and DMs.</p>
+  <p class="about">Ignore hides messages and mentions; block also stops invites and private chats.</p>
   {#each groups as g (g.kind)}
     <h3>{g.title}</h3>
     {#if g.people.length === 0}
