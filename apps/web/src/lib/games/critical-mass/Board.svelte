@@ -1,7 +1,8 @@
 <script lang="ts">
   import { cellIndex, type CMBoardCell, type CMView } from '@cs/critical-mass';
   import { colorOf, type TableColors } from '$lib/seats';
-  import { boardSize, cellCenter, cellOrder, changedCells, clampTilt, EMPTY, fitScale, flightPlan, ISO, orbSpots, shades, TOP, type Flight } from './iso';
+  import { boardSize, captured, cellCenter, cellOrder, changedCells, clampTilt, EMPTY, fitScale, flightPlan, ISO, orbSpots, shades, TOP, WAVE_MS, type Flight } from './iso';
+  import { createSound } from './sound';
   import { rgba } from './render';
 
   let {
@@ -121,10 +122,18 @@
   });
   $effect(() => () => clearTimeout(clearFx));
 
-  /** Side effects of a move seen live (sound hooks in here). */
+  const sound = typeof window === 'undefined' ? null : createSound();
+  let soundOn = $state(sound?.enabled ?? false);
+  $effect(() => () => sound?.close());
+
+  /** A move seen live: a clink, a pop per explosion wave, a thud if it took an opponent's cell. */
   function onNewMove(before: Plain[], after: Plain[]) {
-    void before;
-    void after;
+    if (!sound?.enabled) return;
+    sound.clink();
+    const waves = view.lastMove?.waves ?? [];
+    waves.forEach((_, k) => sound.pop(k, (k * WAVE_MS) / 1000));
+    const mover = view.lastMove?.seat;
+    if (mover && captured(before, after, mover)) sound.thud((waves.length * WAVE_MS) / 1000);
   }
 
   /** Orbs re-mount (and so re-animate) only in cells this move touched. */
@@ -227,6 +236,7 @@
     <button type="button" aria-label="Isometric view" onclick={() => aim(ISO)}>Iso</button>
     <button type="button" aria-label="Top view" onclick={() => aim(TOP)}>Top</button>
     <button type="button" aria-label="Rotate right 90°" onclick={() => aim({ spin: spin + 90, tilt })}>90° ⟳</button>
+    <button type="button" class="snd" aria-label="Sound" aria-pressed={soundOn} onclick={() => (soundOn = sound?.toggle() ?? false)}>♪</button>
     <span class="hint">drag to swivel</span>
   </div>
 </div>
@@ -411,6 +421,10 @@
   .pill button:hover {
     background: #1a1f35;
     color: #e6e8f2;
+  }
+  .pill .snd[aria-pressed='true'] {
+    color: #e6e8f2;
+    background: #1a1f35;
   }
   .hint {
     padding: 6px 12px 6px 8px;

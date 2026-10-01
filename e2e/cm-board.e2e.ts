@@ -98,3 +98,14 @@ test('every cell is hittable at its own centre, at Iso and from the top', async 
   expect(await misses()).toEqual([]);
   await resign(page);
 });
+
+test('the sound toggle starts off and is remembered', async ({ page }) => {
+  await startMatch(page);
+  const sound = page.getByRole('toolbar', { name: 'Board view' }).getByRole('button', { name: 'Sound' });
+  await expect(sound).toHaveAttribute('aria-pressed', 'false');
+  await sound.click();
+  await expect(sound).toHaveAttribute('aria-pressed', 'true');
+  await page.reload();
+  await expect(page.getByRole('toolbar', { name: 'Board view' }).getByRole('button', { name: 'Sound' })).toHaveAttribute('aria-pressed', 'true');
+  await resign(page);
+});
