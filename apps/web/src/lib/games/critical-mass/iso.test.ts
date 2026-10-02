@@ -2,8 +2,27 @@ import { describe, expect, test } from 'bun:test';
 import { cellIndex } from '@cs/critical-mass';
 import {
   boardSize, captured, cellCenter, cellOrder, changedCells, clampTilt, CELL, EMPTY, fitScale, flightPlan,
-  GAP, MAX_BURSTS, MAX_FLIGHTS, MAX_POPS, mix, popTimes, orbSpots, PAD, shades, WAVE_MS,
+  GAP, MAX_BURSTS, MAX_FLIGHTS, MAX_POPS, mix, nearestTurn, popTimes, orbSpots, PAD, shades, WAVE_MS,
 } from './iso';
+
+describe('nearestTurn', () => {
+  test('a view snap lands on the same heading by the short way round', () => {
+    // Three quarter-turns left from Top, then Iso: 125° back, not 235° forward.
+    expect(nearestTurn(-270, -35)).toBe(-395);
+    expect(nearestTurn(325, -35)).toBe(325);
+    expect(nearestTurn(0, -35)).toBe(-35);
+    expect(nearestTurn(700, 0)).toBe(720);
+  });
+  test('never travels more than half a turn, and keeps the heading', () => {
+    for (let from = -1000; from <= 1000; from += 37) {
+      for (const to of [-35, 0, 90]) {
+        const got = nearestTurn(from, to);
+        expect(Math.abs(got - from)).toBeLessThanOrEqual(180);
+        expect((((got - to) % 360) + 360) % 360).toBe(0);
+      }
+    }
+  });
+});
 
 describe('geometry', () => {
   test('the slab is cells + gaps + padding', () => {

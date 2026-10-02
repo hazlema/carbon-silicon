@@ -21,6 +21,15 @@ const MAX_TOTAL_MS = 3000;
 
 export const clampTilt = (t: number) => Math.min(70, Math.max(0, t));
 
+/** Pointer travel (px) before a press becomes a swivel; anything less is a click, hand wobble included. */
+export const DRAG_THRESHOLD = 12;
+
+/**
+ * The spin that shows `to`'s heading, picked nearest `from`: spin piles up past ±360 with drags and
+ * quarter-turns, and the slab's transition would otherwise whirl the long way round to a view snap.
+ */
+export const nearestTurn = (from: number, to: number) => to + 360 * Math.round((from - to) / 360);
+
 export function boardSize(cols: number, rows: number) {
   return { w: cols * CELL + (cols - 1) * GAP + 2 * PAD, h: rows * CELL + (rows - 1) * GAP + 2 * PAD };
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { cellIndex, type CMBoardCell, type CMView } from '@cs/critical-mass';
   import { colorOf, type TableColors } from '$lib/seats';
-  import { boardSize, captured, cellCenter, cellOrder, changedCells, clampTilt, EMPTY, fitScale, flightPlan, ISO, orbSpots, popTimes, shades, TOP, type Flight } from './iso';
+  import { boardSize, captured, cellCenter, cellOrder, changedCells, clampTilt, DRAG_THRESHOLD, EMPTY, fitScale, flightPlan, ISO, nearestTurn, orbSpots, popTimes, shades, TOP, type Flight } from './iso';
   import { createSound } from './sound';
   import { rgba } from './render';
 
@@ -23,7 +23,7 @@
   let suppress = false;
 
   function aim(next: { spin: number; tilt: number }) {
-    spin = next.spin;
+    spin = nearestTurn(spin, next.spin);
     tilt = clampTilt(next.tilt);
     rest = { spin, tilt };
   }
@@ -39,12 +39,13 @@
     const dx = e.clientX - drag.x;
     const dy = e.clientY - drag.y;
     // Touch swivels only sideways: up and down stay with the page's scroll.
-    if (!drag.moved && Math.abs(dx) + (drag.touch ? 0 : Math.abs(dy)) > 4) {
+    if (!drag.moved && Math.abs(dx) + (drag.touch ? 0 : Math.abs(dy)) > DRAG_THRESHOLD) {
       drag.moved = true;
       dragging = true;
     }
     if (!drag.moved) return;
-    spin = drag.spin + dx * 0.4;
+    // The board's near edge follows the pointer, like turning a lazy Susan by its front rim.
+    spin = drag.spin - dx * 0.4;
     if (!drag.touch) tilt = clampTilt(drag.tilt - dy * 0.3);
   }
   function up() {

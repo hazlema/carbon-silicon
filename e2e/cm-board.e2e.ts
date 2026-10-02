@@ -68,8 +68,9 @@ test('the view pill turns the board, and a click still lands on the cell under t
   const name = (await target.getAttribute('data-cell'))!;
   await target.click();
   await expect(page.locator(`button[data-cell="${name}"]`)).not.toHaveAttribute('data-orbs', '0');
+  // Back to Iso the short way: 125° on from -270, not a 235° whirl back to -35.
   await view.getByRole('button', { name: 'Isometric view' }).click();
-  await expect(stage(page)).toHaveAttribute('data-spin', '-35');
+  await expect(stage(page)).toHaveAttribute('data-spin', '-395');
   await resign(page);
 });
 
@@ -83,14 +84,33 @@ test('a swivel that ends over a cell places nothing, and tilt stays within 0–7
   await page.mouse.move(cell.x + cell.width / 2, cell.y + cell.height / 2);
   await page.mouse.down();
   await page.mouse.move(cell.x + cell.width / 2 + 200, cell.y + cell.height / 2 - 400, { steps: 8 });
-  // Mid-swivel: the board has turned, and an upward drag can't tilt it past 70°.
-  expect(Number(await stage(page).getAttribute('data-spin'))).toBeCloseTo(-35 + 200 * 0.4, 1);
+  // Mid-swivel: dragging right turns the near edge right (spin falls), and an upward drag can't tilt it past 70°.
+  expect(Number(await stage(page).getAttribute('data-spin'))).toBeCloseTo(-35 - 200 * 0.4, 1);
   expect(Number(await stage(page).getAttribute('data-tilt'))).toBe(70);
   // Back to where it started, so the release lands on the very cell the press began on.
   await page.mouse.move(cell.x + cell.width / 2, cell.y + cell.height / 2, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(800);
   expect(await totalOrbs(page)).toBe(before);
+  await resign(page);
+});
+
+test('a click with a little hand wobble still places an orb', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await startMatch(page);
+  await myTurn(page);
+  const target = page.locator('button[data-legal="true"][data-orbs="0"]').first();
+  const name = (await target.getAttribute('data-cell'))!;
+  const box = (await target.boundingBox())!;
+  const x = box.x + box.width / 2, y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 5, y + 3, { steps: 3 });
+  await page.mouse.move(x + 2, y + 1, { steps: 2 });
+  await page.mouse.up();
+  await expect(stage(page)).toHaveAttribute('data-spin', '-35');
+  await expect(page.locator(`button[data-cell="${name}"]`)).not.toHaveAttribute('data-orbs', '0');
   await resign(page);
 });
 
