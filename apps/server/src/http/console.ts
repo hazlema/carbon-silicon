@@ -81,6 +81,12 @@ export function consoleRoutes(core: Core, adminKey: string | null): Hono<AppEnv>
     await core.moderation.lift(CONSOLE, who.id, reasonFrom(b, 'lift'));
     return c.json({ message: `@${who.handle} is free to talk and play again.` });
   });
+  app.post('/release', async (c) => {
+    const b = await input(c);
+    const who = await target(b.handle);
+    await core.moderation.release(CONSOLE, who.id, reasonFrom(b, 'release'));
+    return c.json({ message: `@${who.handle} is deleted; the name is free again. Their matches stay in the record.` });
+  });
   app.post('/exhibition', async (c) => {
     const b = await input(c);
     const m = await core.tables.exhibition(typeof b.handle === 'string' ? b.handle.trim() : b.handle);

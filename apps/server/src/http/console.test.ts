@@ -80,6 +80,14 @@ describe('the console door', () => {
     expect(core.moderation.sanctionOf(p.id)).toBeNull();
   });
 
+  test('release deletes an account, and the name is free to sign in with again', async () => {
+    const p = await guest();
+    const r = await post(on, 'release', { handle: p.handle });
+    expect(r.status).toBe(200);
+    expect(r.data.message).toBe(`@${p.handle} is deleted; the name is free again. Their matches stay in the record.`);
+    expect((await core.identities.createHuman(p.handle, meta)).identity.id).not.toBe(p.id);
+  });
+
   test('exhibition starts two free house bots and says where to watch', async () => {
     for (const n of ['x', 'y']) core.presence.agentSeen((await core.identities.registerAgent({ name: `h${n}${randomTag()}` }, 'hk')).identity);
     const r = await post(on, 'exhibition', { handle: ' lightline ' });

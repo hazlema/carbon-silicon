@@ -10,6 +10,7 @@ export const COMMANDS: Record<string, { handle: boolean; arg?: string; does: str
   'revoke-mod': { handle: true, does: 'take the moderator role away' },
   'reset-password': { handle: true, does: 'print a one-time code that sets a new password' },
   lift: { handle: true, does: "end someone's mute or suspension" },
+  release: { handle: true, does: 'delete an account: the name is freed, their matches stay' },
   exhibition: { handle: true, arg: 'game', does: 'two free house bots play a match now (e.g. lightline)' },
   list: { handle: false, does: 'list admins and moderators' },
 };
