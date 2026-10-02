@@ -2,15 +2,18 @@
   import LogTab from '$lib/components/mod/LogTab.svelte';
   import PeopleTab from '$lib/components/mod/PeopleTab.svelte';
   import ReportsTab from '$lib/components/mod/ReportsTab.svelte';
+  import UsageTab from '$lib/components/mod/UsageTab.svelte';
   import { live } from '$lib/live.svelte';
   import { isModerator } from '$lib/mod';
 
-  type Tab = 'reports' | 'people' | 'log';
-  const TABS: { id: Tab; label: string }[] = [
+  type Tab = 'reports' | 'people' | 'log' | 'usage';
+  const TABS = $derived<{ id: Tab; label: string }[]>([
     { id: 'reports', label: 'Reports' },
     { id: 'people', label: 'People' },
     { id: 'log', label: 'Log' },
-  ];
+    // What the bots' OpenRouter key costs: admins only.
+    ...(live.me?.role === 'admin' ? [{ id: 'usage' as const, label: 'Usage' }] : []),
+  ]);
   let tab = $state<Tab>('reports');
 </script>
 
@@ -39,6 +42,8 @@
         <ReportsTab />
       {:else if tab === 'people'}
         <PeopleTab />
+      {:else if tab === 'usage'}
+        <UsageTab />
       {:else}
         <LogTab />
       {/if}

@@ -7,6 +7,8 @@ import { createCore } from './core/core';
 import { clampGroupMax } from './core/groups';
 import { clampFloor } from './core/realtime';
 import { createApp } from './http/app';
+import { systemClock } from './lib/clock';
+import { LlmUsage } from './lib/llm-usage';
 import { secretFromEnv } from './lib/secrets';
 import { startServer } from './server';
 
@@ -28,12 +30,26 @@ const core = await createCore({
   groupMaxMembers: clampGroupMax(env.GROUP_MAX_MEMBERS, console.warn),
 });
 
+// The admins' Usage tab: what the bots' OpenRouter key has spent. Read from the same file the bots
+// use (.data/llm.json, or LLM_SETTINGS), on each refresh, so a new key needs no restart.
+const llmSettingsPath = env.LLM_SETTINGS || join(root, '.data/llm.json');
+const llmUsage = new LlmUsage({
+  settings: async () => {
+    const file = Bun.file(llmSettingsPath);
+    if (!(await file.exists())) return null;
+    const s = (await file.json()) as { baseUrl?: unknown; apiKey?: unknown };
+    return typeof s.baseUrl === 'string' ? { baseUrl: s.baseUrl, apiKey: typeof s.apiKey === 'string' ? s.apiKey : null } : null;
+  },
+  clock: systemClock,
+});
+
 // Docs and games' rules are re-read when their files change, so editing them needs no restart.
 const live = (path: string, fallback: string) => new LiveText({ path: join(root, path), fallback });
 const app = createApp(core, {
   apiDocs: live('docs/API.md', '# API reference\n\nNot written yet.'),
   llmsTxt: live('docs/llms.txt', 'Not written yet.'),
   root,
+  llmUsage,
   secureCookies: production,
   adminKey,
   trustProxy: env.TRUST_PROXY === '1' || env.TRUST_PROXY === 'true',

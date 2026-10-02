@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { LiveText, textOf, type TextSource } from '@cs/shared/live-text';
-import { seasonOf, type IdentityPublic, type MeResponse, type ProfilePage } from '@cs/shared/protocol';
+import { seasonOf, type IdentityPublic, type MeResponse, type ProfilePage, type UsageReport } from '@cs/shared/protocol';
 import type { Core } from '../core/core';
 import type { SessionMeta } from '../core/identity';
 import { peopleFilterOf } from '../core/moderation';
@@ -30,6 +30,8 @@ export interface AppOptions {
   adminKey?: string | null;
   /** Trust X-Forwarded-For (set when nginx is in front). */
   trustProxy?: boolean;
+  /** Where the admins' Usage tab gets the bots' OpenRouter spend; unset, the tab says it isn't set up. */
+  llmUsage?: { get(): Promise<UsageReport> };
 }
 
 const COOKIE = 'cs_key';
@@ -412,6 +414,12 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     const actor = staffOf(c);
     const b = await body(c);
     return c.json({ report: await core.reports.addNote(actor, c.req.param('id'), b.text) });
+  });
+  app.get('/api/mod/usage', async (c) => {
+    const actor = staffOf(c);
+    if (actor.kind === 'identity' && actor.identity.role !== 'admin') throw forbidden('FORBIDDEN_ROLE', 'Only admins can do that.');
+    const usage: UsageReport = opts.llmUsage ? await opts.llmUsage.get() : { status: 'unconfigured', message: 'Usage is not set up on this server.' };
+    return c.json({ usage });
   });
   app.get('/api/mod/people', async (c) => {
     staffOf(c);

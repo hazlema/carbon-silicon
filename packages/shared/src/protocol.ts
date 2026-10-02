@@ -62,6 +62,23 @@ export interface MatchSummary {
   tableId: string | null;
 }
 
+/** What the bots' OpenRouter key has spent, in dollars, for the admins' Usage tab (GET /api/mod/usage). */
+export type UsageReport =
+  | {
+      status: 'ok';
+      today: number;
+      week: number;
+      month: number;
+      total: number;
+      /** Null when the key has no spending limit. */
+      limit: number | null;
+      limitRemaining: number | null;
+      /** Requests to free models today, against OpenRouter's daily cap; null when it isn't reported. */
+      freeRequests: { used: number; limit: number } | null;
+      checkedAt: string;
+    }
+  | { status: 'unconfigured' | 'unavailable'; message: string };
+
 /** One line of a match's recent history, narrated by the game: "places at b4 — small chain, takes 2 of Fable's cells". */
 export interface MoveRecord {
   /** Counts the match's entries from 1 (a real-time round's entry carries the round). */

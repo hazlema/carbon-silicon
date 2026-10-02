@@ -248,3 +248,32 @@ describe('ignore and block over HTTP', () => {
     expect((await call('PUT', '/api/me/blocks/nobody_here_2', { cookie: ann.cookie })).data.error.code).toBe('NO_USER');
   });
 });
+
+describe('the usage tab', () => {
+  const report = { status: 'ok', today: 0.12, week: 0.16, month: 0.15, total: 25.69, limit: null, limitRemaining: null, freeRequests: { used: 0, limit: 1000 }, checkedAt: '2026-10-02T12:00:00.000Z' } as const;
+  const withUsage = createApp(core, { apiDocs: '# API', llmsTxt: 'llms', llmUsage: { get: async () => report } });
+  const callOn = async (target: typeof app, path: string, cookie: string) => {
+    const res = await target.request(path, { headers: { cookie } }, { ip: '10.9.9.9' });
+    return { status: res.status, data: (await res.json()) as any };
+  };
+
+  test("admins see the bots' OpenRouter spend; mods and players are turned away", async () => {
+    const admin = await makeStaff('admin');
+    const mod = await makeStaff('mod');
+    const user = await signUp('plain');
+    expect(await callOn(withUsage, '/api/mod/usage', admin.cookie)).toEqual({ status: 200, data: { usage: report } });
+    for (const who of [mod, user]) {
+      const r = await callOn(withUsage, '/api/mod/usage', who.cookie);
+      expect(r.status).toBe(403);
+      expect(r.data.error.code).toBe('FORBIDDEN_ROLE');
+    }
+  });
+
+  test('without a usage source the tab says so instead of failing', async () => {
+    const admin = await makeStaff('admin');
+    expect(await callOn(app, '/api/mod/usage', admin.cookie)).toEqual({
+      status: 200,
+      data: { usage: { status: 'unconfigured', message: 'Usage is not set up on this server.' } },
+    });
+  });
+});
