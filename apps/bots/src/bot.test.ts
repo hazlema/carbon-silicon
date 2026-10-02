@@ -6,7 +6,7 @@ import type { CMCommand } from '@cs/critical-mass';
 import { createCore } from '@cs/server/core';
 import { createApp } from '@cs/server/http';
 import { startServer } from '@cs/server/server';
-import { ambientDue, CHAT_WATCH_MS, runBot, unansweredCandidate, type BotOptions } from './bot';
+import { ambientDue, answersAtTable, CHAT_WATCH_MS, runBot, unansweredCandidate, type BotOptions } from './bot';
 import { Client } from './client';
 import { shout, linesFor } from './personality';
 import { oldIron } from './personalities/old-iron';
@@ -535,6 +535,20 @@ describe('OLD IRON (a bot with a voice)', () => {
     await Bun.sleep(1500);
     expect(await ironDmReplies(client)).toEqual([]);
   }, 30_000);
+
+  // Last in this block: OLD IRON's reply here spends its chat burst, and the timing tests above need it.
+  test('in a group, a resident also answers its name said plainly', async () => {
+    await ironUp();
+    voiceMode = 'talk';
+    const { client, handle } = await newAgent(ironServer.url, `guest${randomTag()}`);
+    const { group } = await client.call<{ group: { channel: string } }>('POST', '/api/groups', { with: ['OLD_IRON'] });
+    const asked = await client.call<{ message: { id: number } }>('POST', `/api/chat/${group.channel}`, { text: 'ready to lose, old iron?' });
+    const reply = await until(async () => {
+      const r = await client.call<Said>('GET', `/api/chat/${group.channel}?since=${asked.message.id}`);
+      return r.messages.find((m) => m.author?.handle === 'OLD_IRON')?.text;
+    });
+    expect(reply).toBe(`@${handle} VOICE MENTION LINE.`);
+  }, 30_000);
 });
 
 describe('answering a human nobody answered', () => {
@@ -691,9 +705,41 @@ describe('answering a human nobody answered', () => {
     await settle();
     expect(ironLines(await lobbySince(asked))).toEqual([]);
   }, 30_000);
+
+  test('a lobby line that names the bot gets one mention reply at once, not an unanswered one later', async () => {
+    await bot?.stop();
+    bot = await listen();
+    const ann = await newHuman(listenServer.url, `Ann${randomTag()}`);
+    const said = await post(ann.client, 'anyone seen old iron today?');
+    await until(async () => ironLines(await lobbySince(said)).length > 0);
+    await settle();
+    expect(ironLines(await lobbySince(said))).toEqual([`@${ann.handle} VOICE MENTION LINE.`]);
+    expect(heardHere.filter((m) => m.answering?.text === 'anyone seen old iron today?').map((m) => m.kind)).toEqual(['mention']);
+  }, 30_000);
+
+  test('@mentioning and naming it in one lobby line still gets exactly one reply', async () => {
+    const ann = await newHuman(listenServer.url, `Ann${randomTag()}`);
+    const said = await post(ann.client, '@OLD_IRON old iron, wake up');
+    await until(async () => ironLines(await lobbySince(said)).length > 0);
+    await settle();
+    expect(ironLines(await lobbySince(said))).toHaveLength(1);
+  }, 30_000);
+
+  test('with public watching off (GAME_OVER), a voiced bot still answers its name', async () => {
+    await bot?.stop();
+    bot = await listen({ watchPublic: false });
+    const ann = await newHuman(listenServer.url, `Ann${randomTag()}`);
+    const said = await post(ann.client, 'OLD_IRON, are you awake?');
+    expect(await until(async () => ironLines(await lobbySince(said))[0])).toBe(`@${ann.handle} VOICE MENTION LINE.`);
+  }, 30_000);
 });
 
 describe('helpers', () => {
+  test('at its table a resident always answers its name, and answers other lines by chance', () => {
+    expect(answersAtTable(true, 0, 0.99)).toBe(true);
+    expect(answersAtTable(false, 0.6, 0.5)).toBe(true);
+    expect(answersAtTable(false, 0.6, 0.7)).toBe(false);
+  });
   test('shout capitalises everything but @handles', () => {
     expect(shout('@frosty your move, @Sprocket.')).toBe('@frosty YOUR MOVE, @Sprocket.');
   });

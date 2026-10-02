@@ -8,6 +8,8 @@ export const gameOver: Personality = {
   strategy: { depth: 2, randomness: 0.03 },
   lightline: 'wallHugger',
   checkers: { randomness: 0 },
+  // "game over" is an everyday phrase, at a table above all: only the name itself counts.
+  answersTo: /(?<![A-Za-z0-9_-])(?:[Gg][Aa][Mm][Ee][_-]?[Oo][Vv][Ee][Rr]|GAME OVER)(?![A-Za-z0-9_-])/,
   lines: {
     hello: ["insert coin. or don't. it ends the same way.", 'player two has entered. how brave. how brief.', "i have watched ten thousand players go. you seem nice. this won't help.", 'welcome. the countdown has already started. it always has.'],
     win: ['game over. it usually is.', "another name for the high score table. not yours.", "that's the end. i'm very good at endings."],

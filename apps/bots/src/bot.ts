@@ -4,7 +4,7 @@ import { stateFromView, type CMView } from '@cs/critical-mass';
 import { PUBLIC_CHANNELS, type ChatMessage, type InboxEvent, type MatchEnvelope, type PresenceInfo } from '@cs/shared/protocol';
 import { ApiError, Client } from './client';
 import { DmBudget } from './dm-budget';
-import { DEFAULT_STRATEGY, line, linesFor, shout, type Personality } from './personality';
+import { callName, DEFAULT_STRATEGY, line, linesFor, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
 import { chooseCheckersMove } from './strategies/checkers';
 import { tableContext } from './table-context';
@@ -26,7 +26,8 @@ export interface BotOptions {
   log?: (msg: string) => void;
   /** Where the bot's words come from; without one it only uses its canned line bank. */
   voice?: Voice;
-  /** A bot with a voice reads the public channels to answer humans nobody answered (default true). */
+  /** A bot with a voice reads the public channels to answer humans nobody answered (default true).
+   *  False turns off only those unprompted replies: the bot still answers its name there. */
   watchPublic?: boolean;
   /** How often a bot with a voice considers livening up a quiet lobby (default 12 min; 0 disables). */
   ambientEveryMs?: number;
@@ -375,8 +376,10 @@ export async function runBot(opts: BotOptions): Promise<void> {
     void p.finally(() => tasks.delete(p));
   };
   let myId: string | null = null;
-  // Matches @<my handle> as a whole name: not @<handle>X or @<handle>-2.
-  let named = /$^/;
+  // @<my handle> as a whole name (not @<handle>X or @<handle>-2), and my name said plainly.
+  let atMe = /$^/;
+  let byName = /$^/;
+  const isCalled = (text: string) => atMe.test(text) || byName.test(text);
   const play = (matchId: string) => {
     if (playing.has(matchId)) return;
     playing.add(matchId);
@@ -411,7 +414,8 @@ export async function runBot(opts: BotOptions): Promise<void> {
   if (!opts.signal?.aborted) {
     const me = (await client.me()).identity;
     myId = me.id;
-    named = new RegExp(`@${me.handle.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}(?![A-Za-z0-9_-])`, 'i');
+    atMe = new RegExp(`@${me.handle.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}(?![A-Za-z0-9_-])`, 'i');
+    byName = opts.personality.answersTo ?? callName(me.handle);
   }
 
   const dmBudget = new DmBudget(opts.dmCaps);
@@ -458,20 +462,31 @@ export async function runBot(opts: BotOptions): Promise<void> {
 
   const ambient = opts.voice && (opts.ambientEveryMs ?? 12 * 60_000) > 0 ? ambientLoop(client, opts, () => playing.size > 0, myId, log) : null;
 
-  // A bot with a voice also reads the public channels and answers a human nobody else answered.
-  // Voiceless bots make no extra calls at all.
+  // A bot with a voice also reads the public channels: it answers its name said plainly (an
+  // @mention arrives through the inbox), and a human nobody else answered. Voiceless bots make no
+  // extra calls at all.
   const lastUnprompted = new Map<string, number>();
   const unansweredCooldown = opts.unansweredCooldownMs ?? 60_000;
-  const watch = opts.voice && opts.watchPublic !== false
-    ? watchPublicChannels(client, opts, myId, log, (channel, message, lastOwnLineAt) => {
-        const now = Date.now();
-        if (playing.size > 0) return; // seated at a table: the match has its own talk
-        if ((lastUnprompted.get(channel) ?? -Infinity) + unansweredCooldown > now) return;
-        // Not right after the bot's own line in this channel (the reply cooldown, 20 s by default).
-        if (lastOwnLineAt !== null && lastOwnLineAt + cooldown > now) return;
-        if (!mayReply(channel)) return; // shares the mention cooldown, never bypasses it
-        lastUnprompted.set(channel, now);
-        track(speak(client, opts, 'unanswered', channel, { addressedBy: message.author!.handle, answering: message }));
+  const watch = opts.voice
+    ? watchPublicChannels(client, opts, myId, log, {
+        names: (text) => !atMe.test(text) && byName.test(text),
+        named: (channel, message) => {
+          if (!mayReply(channel)) return;
+          track(speak(client, opts, 'mention', channel, { addressedBy: message.author!.handle, answering: message }));
+        },
+        unanswered:
+          opts.watchPublic === false
+            ? null
+            : (channel, message, lastOwnLineAt) => {
+                const now = Date.now();
+                if (playing.size > 0) return; // seated at a table: the match has its own talk
+                if ((lastUnprompted.get(channel) ?? -Infinity) + unansweredCooldown > now) return;
+                // Not right after the bot's own line in this channel (the reply cooldown, 20 s by default).
+                if (lastOwnLineAt !== null && lastOwnLineAt + cooldown > now) return;
+                if (!mayReply(channel)) return; // shares the mention cooldown, never bypasses it
+                lastUnprompted.set(channel, now);
+                track(speak(client, opts, 'unanswered', channel, { addressedBy: message.author!.handle, answering: message }));
+              },
       })
     : { ready: Promise.resolve(), done: Promise.resolve() };
 
@@ -507,7 +522,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
         if (event.type === 'chat.group') {
           const m = event.message;
           // In a group a resident speaks only when spoken to, within the same hourly caps as DMs.
-          if (named.test(m.text) && m.author && m.author.id !== myId && !m.author.isHouse && dmBudget.take(m.author.id, m.author.kind, Date.now())) {
+          if (isCalled(m.text) && m.author && m.author.id !== myId && !m.author.isHouse && dmBudget.take(m.author.id, m.author.kind, Date.now())) {
             track(speak(client, opts, 'mention', m.channel, { addressedBy: m.author.handle, answering: m }));
           }
           continue;
@@ -529,7 +544,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
           event.type === 'chat.table' &&
           opts.voice &&
           [...playingTables.values()].includes(channel) &&
-          Math.random() < (opts.tableTalkChance ?? 0.6) &&
+          answersAtTable(isCalled(message.text), opts.tableTalkChance ?? 0.6) &&
           mayReply(channel)
         ) {
           const matchId = [...playingTables].find(([, c]) => c === channel)?.[0];
@@ -545,6 +560,11 @@ export async function runBot(opts: BotOptions): Promise<void> {
   await Promise.allSettled([ambient, watch.done, ...tasks]);
 }
 
+/** At its own table a resident always answers its name; any other line it answers by chance. */
+export function answersAtTable(called: boolean, chance: number, roll = Math.random()): boolean {
+  return called || roll < chance;
+}
+
 /** Could this line be one nobody answered? Only a human's plain line qualifies: a line that
  *  @mentions this bot goes through the mention path, and one that @mentions anyone else is
  *  addressed to them. */
@@ -552,19 +572,27 @@ export function unansweredCandidate(m: ChatMessage, myId: string | null): boolea
   return !m.system && m.author?.kind === 'human' && m.author.id !== myId && !MENTION_RE.test(m.text);
 }
 
+interface WatchHooks {
+  /** Does this line name the bot without @mentioning it (an @mention arrives through the inbox)? */
+  names: (text: string) => boolean;
+  named: (channel: string, message: ChatMessage) => void;
+  /** Null when the bot doesn't answer lines nobody answered (watchPublic: false). */
+  unanswered: ((channel: string, message: ChatMessage, lastOwnLineAt: number | null) => void) | null;
+}
+
 /**
- * Polls each public channel for lines nobody answered. It starts at each channel's newest line,
- * so nothing said before the bot started is answered. The newest candidate line in a channel is
- * handed to `answer` once the channel has stayed silent for `unansweredAfterMs` after the bot
- * saw it; any newer line from anyone drops it. `ready` resolves once the starting points are
- * known; `done` once `signal` aborts.
+ * Polls each public channel, starting at each channel's newest line, so nothing said before the
+ * bot started is answered. A line from someone else that names the bot goes to `named` at once.
+ * The newest candidate line nobody answered is handed to `unanswered` once the channel has stayed
+ * silent for `unansweredAfterMs` after the bot saw it; any newer line from anyone drops it.
+ * `ready` resolves once the starting points are known; `done` once `signal` aborts.
  */
 function watchPublicChannels(
   client: Client,
   opts: BotOptions,
   myId: string | null,
   log: (m: string) => void,
-  answer: (channel: string, message: ChatMessage, lastOwnLineAt: number | null) => void,
+  hooks: WatchHooks,
 ): { ready: Promise<void>; done: Promise<void> } {
   const quiet = opts.unansweredAfterMs ?? 5000;
   const read = (channel: string, query: string) =>
@@ -590,12 +618,18 @@ function watchPublicChannels(
             for (const m of batch) {
               cursor = Math.max(cursor, m.id);
               if (m.author && m.author.id === myId) lastOwnLineAt = now;
+              // A line that names the bot is answered now, as a mention; it can't also be one nobody answered.
+              if (!m.system && m.author && m.author.id !== myId && !m.author.isHouse && hooks.names(m.text)) {
+                hooks.named(channel, m);
+                candidate = null;
+                continue;
+              }
               // Any newer line ends the wait; a human's plain line starts a new one.
-              candidate = unansweredCandidate(m, myId) ? { message: m, dueAt: now + quiet } : null;
+              candidate = hooks.unanswered && unansweredCandidate(m, myId) ? { message: m, dueAt: now + quiet } : null;
             }
             if (batch.length === 50) continue; // more to read before judging the silence
             if (candidate && now >= candidate.dueAt) {
-              answer(channel, candidate.message, lastOwnLineAt);
+              hooks.unanswered!(channel, candidate.message, lastOwnLineAt);
               candidate = null;
             }
             await sleep(candidate ? Math.min(CHAT_WATCH_MS, Math.max(0, candidate.dueAt - Date.now())) : CHAT_WATCH_MS, opts.signal);

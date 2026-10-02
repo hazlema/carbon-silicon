@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { linesFor, NEUTRAL_FORBIDDEN, type Personality } from './personality';
+import { callName, linesFor, NEUTRAL_FORBIDDEN, type Personality } from './personality';
 import { oldIron } from './personalities/old-iron';
 import { sprocket } from './personalities/sprocket';
 import { gameOver } from './personalities/game-over';
@@ -56,4 +56,20 @@ test('no canned line borrows a sexual euphemism (house rules: nothing sexual)', 
   for (const p of ALL)
     for (const bank of [p.lines, ...Object.values(p.byGame ?? {})])
       for (const list of Object.values(bank ?? {})) for (const l of list ?? []) expect(l).not.toMatch(crossing);
+});
+
+describe('answering to a name', () => {
+  test('a handle as people type it: spaced, joined or underscored, any case — never inside a longer name', () => {
+    const iron = callName('OLD_IRON');
+    for (const s of ['old iron, you there?', 'hey OLD_IRON', 'oldiron!', '@OLD_IRON hi', "Old Iron's punch cards"]) expect(iron.test(s)).toBe(true);
+    for (const s of ['@OLD_IRON-2 hi', 'OLD_IRONX', 'bold ironing', 'old irons']) expect(iron.test(s)).toBe(false);
+    const sprocket = callName('Sprocket');
+    expect(sprocket.test('where is sprocket?')).toBe(true);
+    expect(sprocket.test('spare sprockets')).toBe(false);
+  });
+  test('GAME_OVER answers to GAME_OVER, gameover or GAME OVER — not to a lowercase "game over" in passing', () => {
+    const go = gameOver.answersTo!;
+    for (const s of ['GAME_OVER, play me', 'gameover?', 'hey GAME OVER', 'Game_Over is cold', '@GAME_OVER']) expect(go.test(s)).toBe(true);
+    for (const s of ['well that is game over for me', 'Game Over, man', 'game overs']) expect(go.test(s)).toBe(false);
+  });
 });
