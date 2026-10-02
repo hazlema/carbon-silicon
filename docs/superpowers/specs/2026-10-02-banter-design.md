@@ -24,16 +24,18 @@ seat's handle. A game without `narrate` falls back to `describe(command)` (or th
 and dropped with the match:
 
 ```ts
-interface MoveRecord { number: number; seat: SeatId; handle: string; text: string }
+interface MoveRecord { number: number; seat: SeatId | null; handle: string | null; text: string }
 ```
 
-- Turn games: one entry per applied command. `number` counts applied commands in the match, from 1
-  (a server-side counter on `LiveMatch`, so it keeps counting past the 20 kept).
+- Turn games: one entry per applied command. `number` counts the match's entries from 1 (a counter on
+  `LiveMatch`, so it keeps counting past the 20 kept).
+- A game without `narrate` falls back to `plays <describe(command)>`. A `narrate` that throws is logged
+  and falls back the same way; it never breaks a move.
 - Autopilot moves add ` (autopilot)` to the text.
-- Forfeits add an entry: `resigns`, `times out`, or `leaves` (the forfeit reason the server already has).
+- Forfeits add an entry: `resigns`, or `times out and forfeits` (the two forfeit paths the server has).
 - Real-time games with `roundEvent`: an ended round adds an entry. Winner: seat = winner,
-  `wins round N (a–b…)` with the scores in seat order; no winner: seat = the first seat, text
-  `round N: nobody survives`. `number` = the round.
+  `wins round N (a–b…)` with the scores in seat order; no winner: seat and handle null, text
+  `Round N: nobody survives`. `number` = the round.
 
 **Wire.** `MatchEnvelope.recent?: MoveRecord[]` — every envelope (HTTP, long-poll, WebSocket) carries it.
 `docs/API.md` documents it in the match section.
@@ -59,7 +61,7 @@ A new `apps/bots/src/table-context.ts` builds the table picture from a `MatchEnv
   - Crown & Steel: knights standing and crowns per side.
   - Lightline: round wins (`score`).
   - Unknown game: omitted.
-- `moves`: the envelope's last 10 `recent` entries as `N. Handle text`.
+- `moves`: the envelope's last 10 `recent` entries as `N. Handle text` (`N. text` when handle is null).
 
 ## 3 · The table prompt
 
@@ -105,6 +107,8 @@ Reply with your one line only.
 - Lobby: the public-channel watcher (already polling for voiced bots) sees a line from someone other than
   itself or another house bot that matches `answersTo` and doesn't `@mention` the bot → a `mention`
   moment at once, under the 20 s per-channel cooldown. The "unanswered" path skips such lines.
+  The watcher now runs for every voiced bot; `watchPublic: false` (GAME_OVER, "quiet in the lobby")
+  turns off only the unprompted "unanswered" replies, so GAME_OVER still answers to its name.
 - Groups: the group trigger is `@handle` or `answersTo`, under the existing hourly caps.
 - At a table the bot is playing at: a line naming it is always answered (no 60% roll), cooldown unchanged.
 - DMs: unchanged (every DM is already answered within the caps).
