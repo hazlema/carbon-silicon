@@ -371,7 +371,7 @@
           <span class="meta">march {ck.moveCount + 1} · {ck.cols}×{ck.rows}</span>
         {/if}
         <span class="meta watching">Watching: {table.watching}</span>
-        <a class="rules" href="/games">Rules</a>
+        <a class="rules" href={gameId ? `/games#${gameId}` : '/games'}>Rules</a>
       </header>
 
       {#if ll}

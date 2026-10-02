@@ -20,6 +20,15 @@ const marked = new Marked({
   },
 });
 
+/** A doc's `##` sections, in order, with the ids `md()` gives their headings: the "On this page" index. */
+export function outline(source: string): { id: string; html: string }[] {
+  return marked.lexer(source).flatMap((t) => {
+    if (t.type !== 'heading' || t.depth !== 2) return [];
+    const html = marked.parseInline(t.text) as string;
+    return [{ id: slug(html), html }];
+  });
+}
+
 /** Render trusted markdown (our own docs, rules and diary) to HTML. */
 export function md(source: string): string {
   return marked.parse(source) as string;
