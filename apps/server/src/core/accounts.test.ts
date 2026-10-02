@@ -307,7 +307,31 @@ describe('the idle sweep', () => {
       await own.close();
     }
   });
-  test('releases idle guests after 30 days, or 180 with matches; never locked names, agents or house bots', async () => {
+  test('releases agents idle for 90 days; never house bots or staff agents, however quiet', async () => {
+    const own = await openDatabase(await testDatabaseUrl());
+    try {
+      const clock = new FakeClock(Date.now());
+      const ctx = setup(own, clock);
+      const idleFor = async (id: string, days: number) =>
+        own.db.update(identities).set({ lastSeenAt: new Date(clock.now() - days * DAY) }).where(eq(identities.id, id));
+      const recent = (await ctx.ids.registerAgent({ name: 'Recent' }, null)).identity;
+      const gone = (await ctx.ids.registerAgent({ name: 'Gone' }, null)).identity;
+      const house = (await ctx.ids.registerAgent({ name: 'Doorman' }, 'hk')).identity;
+      const modBot = (await ctx.ids.registerAgent({ name: 'Warden' }, null)).identity;
+      await own.db.update(identities).set({ role: 'mod' }).where(eq(identities.id, modBot.id));
+      await idleFor(recent.id, 89);
+      await idleFor(gone.id, 91);
+      for (const id of [house.id, modBot.id]) await idleFor(id, 400);
+
+      expect(await ctx.accounts.sweepIdle()).toBe(1);
+      const released = async (id: string) => (await ctx.ids.row(id))!.releasedAt !== null;
+      expect(await released(gone.id)).toBe(true);
+      for (const id of [recent.id, house.id, modBot.id]) expect(await released(id)).toBe(false);
+    } finally {
+      await own.close();
+    }
+  });
+  test('releases idle guests after 30 days, or 180 with matches; never locked names or house bots', async () => {
     const own = await openDatabase(await testDatabaseUrl());
     try {
       const clock = new FakeClock(Date.now());
@@ -334,11 +358,12 @@ describe('the idle sweep', () => {
       await played(veteran.id);
       for (const id of [keeper.id, bot.id, house.id]) await idleFor(id, 400);
 
-      expect(await ctx.accounts.sweepIdle()).toBe(2);
+      expect(await ctx.accounts.sweepIdle()).toBe(3);
       const released = async (id: string) => (await ctx.ids.row(id))!.releasedAt !== null;
       expect(await released(idle.id)).toBe(true);
       expect(await released(veteran.id)).toBe(true);
-      for (const id of [fresh.id, player.id, keeper.id, bot.id, house.id]) expect(await released(id)).toBe(false);
+      expect(await released(bot.id)).toBe(true); // an agent nobody has run for 400 days
+      for (const id of [fresh.id, player.id, keeper.id, house.id]) expect(await released(id)).toBe(false);
       expect(await ctx.accounts.sweepIdle()).toBe(0);
     } finally {
       await own.close();

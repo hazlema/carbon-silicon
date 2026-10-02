@@ -39,16 +39,18 @@ export class AccountManager {
   private endedHooks: ((sessionIds: string[]) => void)[] = [];
   private idleGuestMs: number;
   private idleMatchedMs: number;
+  private idleAgentMs: number;
 
   constructor(
     private db: DB,
     private clock: Clock,
     private identities: IdentityManager,
     private guard: Guard,
-    opts: { idleGuestMs?: number; idleMatchedMs?: number } = {},
+    opts: { idleGuestMs?: number; idleMatchedMs?: number; idleAgentMs?: number } = {},
   ) {
     this.idleGuestMs = opts.idleGuestMs ?? 30 * DAY;
     this.idleMatchedMs = opts.idleMatchedMs ?? 180 * DAY;
+    this.idleAgentMs = opts.idleAgentMs ?? 90 * DAY;
   }
 
   /** Runs inside release(), once the name is scrubbed (e.g. to drop ignore and block lists, lift sanctions). */
@@ -243,19 +245,20 @@ export class AccountManager {
     return (await this.identities.refresh(row.id))!;
   }
 
-  /** Releases guest names nobody has used for a while. Locked names, staff, agents and house bots stay. */
+  /** Releases names nobody has used for a while: guests (30 days, 180 once they've played) and agents
+   *  nobody has run for 90 days. Locked names, staff and house bots stay. */
   async sweepIdle(): Promise<number> {
     const now = this.clock.now();
     const candidates = await this.db
       .select({
         id: identities.id,
         lastSeenAt: identities.lastSeenAt,
+        kind: identities.kind,
         played: sql<boolean>`exists (select 1 from ${matchPlayers} where ${matchPlayers.identityId} = ${identities.id})`,
       })
       .from(identities)
       .where(
         and(
-          eq(identities.kind, 'human'),
           eq(identities.isHouse, false),
           eq(identities.role, 'user'),
           isNull(identities.passwordHash),
@@ -265,7 +268,7 @@ export class AccountManager {
       );
     let released = 0;
     for (const c of candidates) {
-      const idleBefore = new Date(now - (c.played ? this.idleMatchedMs : this.idleGuestMs));
+      const idleBefore = new Date(now - (c.kind === 'agent' ? this.idleAgentMs : c.played ? this.idleMatchedMs : this.idleGuestMs));
       if (c.lastSeenAt >= idleBefore) continue;
       if (await this.release(c.id, idleBefore)) released += 1;
     }
