@@ -499,15 +499,23 @@ export class GameManager {
     if (m.recent.length > RECENT_MOVES) m.recent.shift();
   }
 
-  /** The game's own sentence for a move, or "plays <describe>"; a broken narrator never breaks a move. */
+  /** The game's own sentence for a move, else "plays <describe>", else the command as JSON: nothing a
+   *  module does wrong here may break a move (the autopilot narrates before it advances). */
   private narrateMove(m: LiveMatch, before: unknown, after: unknown, seat: SeatId, command: unknown): string {
     const turn = m.module.turn!;
-    try {
-      if (turn.narrate) return turn.narrate(before, after, seat, command);
-    } catch (e) {
-      console.error(`[games] narrating a move in ${m.id} failed`, e);
-    }
-    return `plays ${turn.describe ? turn.describe(command) : JSON.stringify(command)}`;
+    const attempt = (what: string, fn: () => unknown): string | null => {
+      try {
+        const text = fn();
+        return typeof text === 'string' && text.trim() ? text : null;
+      } catch (e) {
+        console.error(`[games] ${what} a move in ${m.id} failed`, e);
+        return null;
+      }
+    };
+    return (
+      attempt('narrating', () => turn.narrate?.(before, after, seat, command)) ??
+      `plays ${attempt('describing', () => turn.describe?.(command)) ?? attempt('serializing', () => JSON.stringify(command)) ?? 'a move'}`
+    );
   }
 
   setDoctrine(matchId: string, identity: IdentityPublic, raw: unknown): DoctrineAck {

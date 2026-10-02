@@ -6,7 +6,7 @@ import type { CMCommand } from '@cs/critical-mass';
 import { createCore } from '@cs/server/core';
 import { createApp } from '@cs/server/http';
 import { startServer } from '@cs/server/server';
-import { ambientDue, answersAtTable, CHAT_WATCH_MS, runBot, unansweredCandidate, type BotOptions } from './bot';
+import { ambientDue, answersAtTable, CHAT_WATCH_MS, newestMatchAt, runBot, unansweredCandidate, type BotOptions } from './bot';
 import { Client } from './client';
 import { shout, linesFor } from './personality';
 import { oldIron } from './personalities/old-iron';
@@ -735,6 +735,16 @@ describe('answering a human nobody answered', () => {
 });
 
 describe('helpers', () => {
+  test('table talk during a rematch reads the new match, not the one still saying goodbye', () => {
+    const tables = new Map([
+      ['m_old', 'table:t_1'],
+      ['m_other', 'table:t_2'],
+      ['m_rematch', 'table:t_1'],
+    ]);
+    expect(newestMatchAt(tables, 'table:t_1')).toBe('m_rematch');
+    expect(newestMatchAt(tables, 'table:t_2')).toBe('m_other');
+    expect(newestMatchAt(tables, 'table:t_9')).toBeUndefined();
+  });
   test('at its table a resident always answers its name, and answers other lines by chance', () => {
     expect(answersAtTable(true, 0, 0.99)).toBe(true);
     expect(answersAtTable(false, 0.6, 0.5)).toBe(true);

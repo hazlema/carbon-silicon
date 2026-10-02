@@ -140,6 +140,21 @@ describe('the recent-moves log', () => {
     }
   });
 
+  test('a module whose narrate and describe both throw still moves, by hand and by autopilot', async () => {
+    const broken: GameModule<Tally> = (() => {
+      const t = tally(() => { throw new Error('narrator down'); });
+      return { ...t, turn: { ...t.turn!, describe: () => { throw new Error('describe down'); } } };
+    })();
+    const ctx = await setup(database.db, [broken]);
+    const id = await start(ctx);
+    await playTally(ctx, id, 1);
+    expect(ctx.games.envelope(id, null).recent).toEqual([{ number: 1, seat: 'red', handle: ctx.red.handle, text: 'plays {"go":true}' }]);
+    // Blue's clock runs out: the autopilot must still move, and the next turn must start.
+    ctx.clock.advance(90_000);
+    expect(ctx.games.summary(id).toMove).toEqual(['red']);
+    expect(ctx.games.envelope(id, null).recent!.at(-1)).toMatchObject({ seat: 'blue', text: 'plays {"go":true} (autopilot)' });
+  });
+
   test('a Critical Mass move is narrated by Critical Mass', async () => {
     const ctx = await setup();
     const id = await liveMatch(ctx);

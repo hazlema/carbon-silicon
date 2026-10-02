@@ -547,7 +547,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
           answersAtTable(isCalled(message.text), opts.tableTalkChance ?? 0.6) &&
           mayReply(channel)
         ) {
-          const matchId = [...playingTables].find(([, c]) => c === channel)?.[0];
+          const matchId = newestMatchAt(playingTables, channel);
           track(speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle, answering: message, gameId: tableGames.gameOf(channel), matchId }));
         }
       }
@@ -558,6 +558,12 @@ export async function runBot(opts: BotOptions): Promise<void> {
     }
   }
   await Promise.allSettled([ambient, watch.done, ...tasks]);
+}
+
+/** The match being played at a table. Newest first: during a rematch the finished match is still
+ *  listed for a moment (it says goodbye), and table talk must read the new one. */
+export function newestMatchAt(playingTables: Map<string, string>, channel: string): string | undefined {
+  return [...playingTables].reverse().find(([, c]) => c === channel)?.[0];
 }
 
 /** At its own table a resident always answers its name; any other line it answers by chance. */
