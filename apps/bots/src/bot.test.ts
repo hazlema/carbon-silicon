@@ -6,7 +6,7 @@ import type { CMCommand } from '@cs/critical-mass';
 import { createCore } from '@cs/server/core';
 import { createApp } from '@cs/server/http';
 import { startServer } from '@cs/server/server';
-import { ambientDue, answersAtTable, CHAT_WATCH_MS, newestMatchAt, runBot, unansweredCandidate, type BotOptions } from './bot';
+import { ambientDue, answersAtTable, CHAT_WATCH_MS, newestMatchAt, replyCooldownFor, TABLE_TALK_CHANCE, runBot, unansweredCandidate, type BotOptions } from './bot';
 import { Client } from './client';
 import { shout, linesFor } from './personality';
 import { oldIron } from './personalities/old-iron';
@@ -28,11 +28,13 @@ const ironCore = await createCore({ databaseUrl: await testDatabaseUrl(), houseK
 const ironServer = startServer(ironCore, createApp(ironCore, { apiDocs: '', llmsTxt: '', trustProxy: true }), { port: 0, hostname: '127.0.0.1', webDir: null, allowedOrigins: [] });
 const ironController = new AbortController();
 const heard: Moment[] = [];
-let voiceMode: 'talk' | 'silent' | 'hang' = 'talk';
+let voiceMode: 'talk' | 'silent' | 'hang' | 'slow' = 'talk';
 const fakeVoice: Voice = {
   say(m) {
     heard.push(m);
     if (voiceMode === 'hang') return new Promise<string | null>(() => {}); // ignores its signal, too
+    // A real model takes seconds: slower than the short table deadline the hello gets.
+    if (voiceMode === 'slow') return Bun.sleep(VOICE_DEADLINE_MS * 3).then(() => `VOICE ${m.kind.toUpperCase()} LINE.`);
     return Promise.resolve(voiceMode === 'silent' ? null : `VOICE ${m.kind.toUpperCase()} LINE.`);
   },
 };
@@ -45,6 +47,7 @@ const ironDone = runBot({
   voice: fakeVoice,
   tableTalkChance: 1,
   replyCooldownMs: 0, // tests talk to it back to back
+  tableCooldownMs: 0,
   voiceDeadlineMs: VOICE_DEADLINE_MS,
   ambientEveryMs: 0,
   onReady: () => ironReady(),
@@ -536,7 +539,26 @@ describe('OLD IRON (a bot with a voice)', () => {
     expect(await ironDmReplies(client)).toEqual([]);
   }, 30_000);
 
-  // Last in this block: OLD IRON's reply here spends its chat burst, and the timing tests above need it.
+  // These two go last in this block: OLD IRON's replies here spend its chat burst, and the timing tests above need it.
+  test('table talk waits for a slow voice: the taunt still lands, though the hello deadline has long passed', async () => {
+    await ironUp();
+    const { client } = await guest();
+    let matchId: string | null = null;
+    try {
+      expect((await client.quickMatch('critical-mass')).status).toBe('queued');
+      matchId = await until(async () => (await client.me()).activeMatch);
+      const seated = await client.match(matchId);
+      const table = seated.match.tableId ? `table:${seated.match.tableId}` : `match:${matchId}`;
+      await ironSaid(client, table, () => true); // the hello, whatever it was
+      voiceMode = 'slow';
+      await client.chat(table, 'slowpoke, your move took a decade');
+      expect(await ironSaid(client, table, (t) => t === 'VOICE TABLETALK LINE.')).toBe('VOICE TABLETALK LINE.');
+    } finally {
+      voiceMode = 'talk';
+      if (matchId) await client.call('POST', `/api/matches/${matchId}/resign`).catch(() => {});
+    }
+  }, 30_000);
+
   test('in a group, a resident also answers its name said plainly', async () => {
     await ironUp();
     voiceMode = 'talk';
@@ -744,6 +766,14 @@ describe('helpers', () => {
     expect(newestMatchAt(tables, 'table:t_1')).toBe('m_rematch');
     expect(newestMatchAt(tables, 'table:t_2')).toBe('m_other');
     expect(newestMatchAt(tables, 'table:t_9')).toBeUndefined();
+  });
+  test('at its own table a resident answers almost every line, a few seconds apart; the lobby keeps its long cooldown', () => {
+    expect(TABLE_TALK_CHANCE).toBeGreaterThanOrEqual(0.9);
+    expect(replyCooldownFor('table:t_1', {})).toBe(4000);
+    expect(replyCooldownFor('match:m_1', {})).toBe(4000);
+    expect(replyCooldownFor('lobby', {})).toBe(20_000);
+    expect(replyCooldownFor('table:t_1', { tableCooldownMs: 0, replyCooldownMs: 99 })).toBe(0);
+    expect(replyCooldownFor('lobby', { tableCooldownMs: 0, replyCooldownMs: 99 })).toBe(99);
   });
   test('at its table a resident always answers its name, and answers other lines by chance', () => {
     expect(answersAtTable(true, 0, 0.99)).toBe(true);

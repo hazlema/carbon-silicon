@@ -31,14 +31,20 @@ export interface BotOptions {
   watchPublic?: boolean;
   /** How often a bot with a voice considers livening up a quiet lobby (default 12 min; 0 disables). */
   ambientEveryMs?: number;
-  /** Chance that a bot with a voice answers its opponent's table talk (default 0.6). */
+  /** Chance that a bot with a voice answers a line at its own table (default TABLE_TALK_CHANCE);
+   *  a line that names it is always answered. */
   tableTalkChance?: number;
-  /** At most one mention or table-talk reply per channel per this long (default 20 s). */
+  /** At most one mention reply per public or group channel per this long (default 20 s). */
   replyCooldownMs?: number;
+  /** At most one table-talk reply per table per this long (default 4 s): taunts are the fun part. */
+  tableCooldownMs?: number;
+  /** How long table talk may wait for the voice (default 15 s). It runs beside play, so a slow model
+   *  delays only the taunt; table talk has no canned answer, so a deadline that cuts it off silences it. */
+  tableTalkDeadlineMs?: number;
   /** DM replies per person per hour (default 3 to agents, 30 to humans). */
   dmCaps?: { agent: number; human: number };
-  /** How long a line at a match table may wait for the voice before the canned bank answers
-   *  instead (default 4 s), so a slow or hanging model never holds up a match. */
+  /** How long the other lines at a match table (hello, cascades, the verdict) may wait for the voice
+   *  before the canned bank answers instead (default 4 s), so a slow or hanging model never holds up a match. */
   voiceDeadlineMs?: number;
   /** A bot with a voice answers a human's public line that nobody answered after this much
    *  silence in the channel (default 5 s). */
@@ -164,9 +170,10 @@ async function speak(
         ...(game ? { game } : {}),
         ...(table ? { table } : {}),
       };
-      // At a table the game clock is running, so the voice gets a short deadline; everywhere, the
-      // bot's own shutdown signal cuts it off.
-      const deadline = /^(match|table):/.test(channel) ? AbortSignal.timeout(opts.voiceDeadlineMs ?? 4000) : undefined;
+      // At a table the game clock is running, so the voice gets a short deadline (table talk, which
+      // runs beside play, gets a long one); everywhere, the bot's own shutdown signal cuts it off.
+      const deadlineMs = kind === 'tableTalk' ? (opts.tableTalkDeadlineMs ?? 15_000) : (opts.voiceDeadlineMs ?? 4000);
+      const deadline = /^(match|table):/.test(channel) ? AbortSignal.timeout(deadlineMs) : undefined;
       const stops = [opts.signal, deadline].filter((x): x is AbortSignal => x !== undefined);
       const signal = stops.length > 0 ? AbortSignal.any(stops) : undefined;
       text = await untilAborted(opts.voice.say(moment, signal), signal).catch(() => null);
@@ -420,11 +427,11 @@ export async function runBot(opts: BotOptions): Promise<void> {
 
   const dmBudget = new DmBudget(opts.dmCaps);
 
-  /** One reply per channel per cooldown; claims the slot if it's free. */
+  /** One reply per channel per cooldown (see replyCooldownFor); claims the slot if it's free. */
   const cooldown = opts.replyCooldownMs ?? 20_000;
   const mayReply = (channel: string) => {
     const now = Date.now();
-    if (lastReply.has(channel) && lastReply.get(channel)! + cooldown > now) return false;
+    if (lastReply.has(channel) && lastReply.get(channel)! + replyCooldownFor(channel, opts) > now) return false;
     lastReply.set(channel, now);
     return true;
   };
@@ -544,7 +551,7 @@ export async function runBot(opts: BotOptions): Promise<void> {
           event.type === 'chat.table' &&
           opts.voice &&
           [...playingTables.values()].includes(channel) &&
-          answersAtTable(isCalled(message.text), opts.tableTalkChance ?? 0.6) &&
+          answersAtTable(isCalled(message.text), opts.tableTalkChance ?? TABLE_TALK_CHANCE) &&
           mayReply(channel)
         ) {
           const matchId = newestMatchAt(playingTables, channel);
@@ -558,6 +565,14 @@ export async function runBot(opts: BotOptions): Promise<void> {
     }
   }
   await Promise.allSettled([ambient, watch.done, ...tasks]);
+}
+
+/** How often a resident answers lines at its own table: almost always. */
+export const TABLE_TALK_CHANCE = 0.9;
+
+/** The reply cooldown for a channel: a few seconds at a table, longer everywhere else. */
+export function replyCooldownFor(channel: string, opts: Pick<BotOptions, 'replyCooldownMs' | 'tableCooldownMs'>): number {
+  return /^(match|table):/.test(channel) ? (opts.tableCooldownMs ?? 4000) : (opts.replyCooldownMs ?? 20_000);
 }
 
 /** The match being played at a table. Newest first: during a rematch the finished match is still
