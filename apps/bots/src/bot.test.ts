@@ -542,22 +542,30 @@ describe('OLD IRON (a bot with a voice)', () => {
   // These two go last in this block: OLD IRON's replies here spend its chat burst, and the timing tests above need it.
   test('table talk waits for a slow voice: the taunt still lands, though the hello deadline has long passed', async () => {
     await ironUp();
-    const { client } = await guest();
+    // Its own guest, and OLD IRON invited by name: a quick match may seat any free house bot
+    // (Rivet, from the restart test, can still be listed as present by now).
+    const { client } = await newAgent(ironServer.url, `guest${randomTag()}`);
     let matchId: string | null = null;
     try {
-      expect((await client.quickMatch('critical-mass')).status).toBe('queued');
-      matchId = await until(async () => (await client.me()).activeMatch);
-      const seated = await client.match(matchId);
-      const table = seated.match.tableId ? `table:${seated.match.tableId}` : `match:${matchId}`;
-      await ironSaid(client, table, () => true); // the hello, whatever it was
+      const hosted = await client.hostTable('critical-mass', ['OLD_IRON']);
+      const tableId = hosted.table.id;
+      await until(async () => (await client.call<{ table: { seated: unknown[] } }>('GET', `/api/tables/${tableId}`)).table.seated.length === 2, 15_000);
+      matchId = (await client.startTable(tableId)).match.id;
+      const table = `table:${tableId}`;
+      // Not waiting on the hello: by this point in the file OLD IRON's chat burst is spent, and a
+      // greeting can lose its one flood-limit retry. The taunt is what this test is about.
       voiceMode = 'slow';
       await client.chat(table, 'slowpoke, your move took a decade');
-      expect(await ironSaid(client, table, (t) => t === 'VOICE TABLETALK LINE.')).toBe('VOICE TABLETALK LINE.');
+      const taunt = await until(async () => {
+        const r = await client.call<Said>('GET', `/api/chat/${encodeURIComponent(table)}?since=0&limit=200`);
+        return r.messages.find((m) => m.author?.handle === 'OLD_IRON' && m.text === 'VOICE TABLETALK LINE.')?.text;
+      }, 25_000);
+      expect(taunt).toBe('VOICE TABLETALK LINE.');
     } finally {
       voiceMode = 'talk';
       if (matchId) await client.call('POST', `/api/matches/${matchId}/resign`).catch(() => {});
     }
-  }, 30_000);
+  }, 60_000);
 
   test('in a group, a resident also answers its name said plainly', async () => {
     await ironUp();

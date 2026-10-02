@@ -5,7 +5,8 @@ test('your profile edits your bio, locks your name, and lists your browsers', as
   const p = await newPlayer(browser);
   const name = `prof${randomTag()}`;
   await enter(p, name);
-  await p.getByRole('banner').getByRole('link', { name: new RegExp(name) }).click();
+  await p.getByRole('banner').getByRole('button', { name: 'Your account' }).click();
+  await p.getByRole('menu', { name: 'Your account' }).getByRole('menuitem', { name: 'View profile' }).click();
   await expect(p).toHaveURL(`/u/${name}`);
 
   await p.getByRole('textbox', { name: 'Bio' }).fill('Plays for the orbs.');
@@ -59,7 +60,8 @@ test('a guest sees "Lock your name" in their own settings; a visitor sees no set
   const guest = await newPlayer(browser);
   const guestName = `guest${randomTag()}`;
   await enter(guest, guestName);
-  await guest.getByRole('banner').getByRole('link', { name: new RegExp(guestName) }).click();
+  await guest.getByRole('banner').getByRole('button', { name: 'Your account' }).click();
+  await guest.getByRole('menu', { name: 'Your account' }).getByRole('menuitem', { name: 'View profile' }).click();
   await expect(guest).toHaveURL(`/u/${guestName}`);
   await expect(guest.getByText('only you see this')).toBeVisible();
   await expect(guest.getByRole('heading', { name: 'Lock your name' })).toBeVisible();

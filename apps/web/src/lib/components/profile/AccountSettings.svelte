@@ -131,9 +131,6 @@
           {#if pwNote}<p class="note" role="status">{pwNote}</p>{/if}
           {#if pwError}<p class="error" role="alert">{pwError}</p>{/if}
         </form>
-        <div class="signout">
-          <button class="btn quiet" type="button" onclick={() => live.signOut()}>Sign out of this browser</button>
-        </div>
       {/if}
     </section>
   {/if}
@@ -220,8 +217,5 @@
     font-family: var(--font-silicon);
     overflow-wrap: anywhere;
     user-select: all;
-  }
-  .signout {
-    margin-top: 1rem;
   }
 </style>

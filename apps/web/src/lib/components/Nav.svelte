@@ -3,6 +3,7 @@
   import { BRAND } from '@cs/shared/brand';
   import { live } from '$lib/live.svelte';
   import IdentityChip from './IdentityChip.svelte';
+  import SignOut from './SignOut.svelte';
   import StatusToggle from './StatusToggle.svelte';
 
   const [carbonWord, siliconWord] = BRAND.name.split(' & ');
@@ -17,6 +18,36 @@
   );
   const current = (href: string) =>
     href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
+
+  // Your name opens a small menu: your profile, and signing out.
+  let menuOpen = $state(false);
+  let signOut: SignOut | undefined = $state();
+  let chipBtn: HTMLButtonElement | undefined = $state();
+  let menuEl: HTMLDivElement | undefined = $state();
+  function closeMenu(refocus = false) {
+    menuOpen = false;
+    if (refocus) chipBtn?.focus();
+  }
+  $effect(() => {
+    if (!menuOpen) return;
+    menuEl?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const away = (e: PointerEvent) => {
+      if (!menuEl?.contains(e.target as Node) && !chipBtn?.contains(e.target as Node)) closeMenu();
+    };
+    document.addEventListener('pointerdown', away);
+    return () => document.removeEventListener('pointerdown', away);
+  });
+  function menuKeys(e: KeyboardEvent) {
+    const items = [...(menuEl?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMenu(true);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      items[(at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+    }
+  }
 </script>
 
 <header class="nav">
@@ -35,7 +66,32 @@
   </nav>
   <div class="me">
     {#if live.me}
-      <a class="mine" href="/u/{live.me.handle}" title="Your profile"><IdentityChip identity={live.me} /></a>
+      <div class="account">
+        <button
+          class="mine"
+          type="button"
+          bind:this={chipBtn}
+          aria-label="Your account"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onclick={() => (menuOpen = !menuOpen)}><IdentityChip identity={live.me} /></button
+        >
+        {#if menuOpen}
+          <!-- svelte-ignore a11y_interactive_supports_focus -->
+          <div class="menu panel" role="menu" aria-label="Your account" tabindex="-1" bind:this={menuEl} onkeydown={menuKeys}>
+            <a role="menuitem" href="/u/{live.me.handle}" onclick={() => closeMenu()}>View profile</a>
+            <button
+              role="menuitem"
+              type="button"
+              onclick={() => {
+                closeMenu();
+                signOut?.start();
+              }}>Sign out</button
+            >
+          </div>
+        {/if}
+        <SignOut bind:this={signOut} />
+      </div>
       <StatusToggle />
       {#if !live.connected}<span class="offline" title="Reconnecting">Reconnecting…</span>{/if}
     {/if}
@@ -114,12 +170,52 @@
     color: var(--afk);
     font-size: var(--step--1);
   }
-  .mine {
-    text-decoration: none;
+  .account {
+    position: relative;
     min-width: 0;
+  }
+  .mine {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
   }
   .mine:hover {
     text-decoration: underline;
     text-decoration-color: var(--dust);
+  }
+  .menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 0.4rem);
+    z-index: 30;
+    display: grid;
+    min-width: 11rem;
+    padding: 0.3rem;
+    background: var(--ink);
+    box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 0.45);
+  }
+  .menu [role='menuitem'] {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 0;
+    border-radius: var(--r-control);
+    background: none;
+    color: var(--chalk);
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .menu [role='menuitem']:hover,
+  .menu [role='menuitem']:focus-visible {
+    background: var(--panel);
+    outline: none;
   }
 </style>

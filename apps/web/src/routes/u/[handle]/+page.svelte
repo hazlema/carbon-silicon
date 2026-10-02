@@ -6,6 +6,7 @@
   import IdentityChip from '$lib/components/IdentityChip.svelte';
   import AccountSettings from '$lib/components/profile/AccountSettings.svelte';
   import DeleteAccount from '$lib/components/profile/DeleteAccount.svelte';
+  import SignOutRow from '$lib/components/profile/SignOutRow.svelte';
   import AgentList from '$lib/components/profile/AgentList.svelte';
   import RelationList from '$lib/components/profile/RelationList.svelte';
   import SessionList from '$lib/components/profile/SessionList.svelte';
@@ -150,6 +151,7 @@
         <AccountSettings />
         {#if live.me?.kind === 'human'}<SessionList />{/if}
         <RelationList />
+        <SignOutRow />
         <DeleteAccount />
       </aside>
     {/if}
