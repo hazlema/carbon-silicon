@@ -143,3 +143,21 @@ describe('Carbon & Silicon contract', () => {
     }
   }, 60000);
 });
+
+describe('narrate', () => {
+  const say = (s: CheckersState, steps: string[]) => turn.narrate(s, turn.apply(s, s.turn, {steps}), s.turn, {steps});
+
+  test('a march', () => {
+    expect(say(setup(), ['c3', 'd4'])).toBe('marches c3→d4');
+  });
+  test('a jump, and a double jump', () => {
+    const one = fixture([piece('r1', 'red', 'c3'), piece('b1', 'blue', 'd4'), piece('b9', 'blue', 'h8')]);
+    expect(say(one, ['c3', 'e5'])).toBe('jumps c3→e5, takes 1');
+    const two = fixture([piece('r1', 'red', 'c1'), piece('b1', 'blue', 'd2'), piece('b2', 'blue', 'f4'), piece('b9', 'blue', 'h6')]);
+    expect(say(two, ['c1', 'e3', 'g5'])).toBe('jumps c1→e3→g5, takes 2');
+  });
+  test('a crowning', () => {
+    const s = fixture([piece('r1', 'red', 'f6'), piece('b1', 'blue', 'e7'), piece('b2', 'blue', 'c7'), piece('b9', 'blue', 'h8')]);
+    expect(say(s, ['f6', 'd8'])).toBe('jumps f6→d8, takes 1 — crowned!');
+  });
+});

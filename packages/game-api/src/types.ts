@@ -59,6 +59,12 @@ export interface TurnRules<S> {
   apply(state: S, seat: SeatId, command: unknown): S;
   /** Short human text for a command, e.g. "c4". */
   describe?(command: unknown): string;
+  /**
+   * The move as a phrase whose subject is the mover, for the match's recent-moves log and the
+   * residents' table talk: "places at b4 — small chain, takes 2 of {blue}'s cells". Write other
+   * seats as {seat}; the server swaps in their handles. Optional: without it the log says "plays <describe>".
+   */
+  narrate?(before: S, after: S, seat: SeatId, command: unknown): string;
 }
 
 // ── Doctrine (standing orders for real-time games, rule 11). Validated and evaluated in doctrine.ts. ──

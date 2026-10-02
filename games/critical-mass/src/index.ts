@@ -217,6 +217,22 @@ export function stateFromView(v: CMView): CMState {
   };
 }
 
+/** The move for the recent-moves log: the chain's size, whose cells it took, who it knocked out. */
+function narrate(before: CMState, after: CMState, seat: SeatId, command: unknown): string {
+  const cell = String((command as CMCommand).cell);
+  const waves = after.lastMove?.waves.length ?? 0;
+  const parts: string[] = [];
+  if (waves >= 3) parts.push('big chain!');
+  else if (waves > 0) parts.push('small chain');
+  const taken = before.seats
+    .filter((x) => x !== seat)
+    .map((x) => ({ x, n: after.cells.filter((c, i) => c.owner === seat && before.cells[i].owner === x).length }))
+    .filter((t) => t.n > 0);
+  if (taken.length > 0) parts.push(`takes ${taken.map((t, k) => (k === 0 ? `${t.n} of {${t.x}}'s cells` : `${t.n} of {${t.x}}'s`)).join(' and ')}`);
+  for (const x of after.eliminated) if (x !== seat && !before.eliminated.includes(x)) parts.push(`knocks {${x}} out`);
+  return parts.length > 0 ? `places at ${cell} — ${parts.join(', ')}` : `places at ${cell}`;
+}
+
 export const criticalMassGame: GameModule<CMState> = {
   meta: {
     id: 'critical-mass',
@@ -264,6 +280,7 @@ export const criticalMassGame: GameModule<CMState> = {
     },
     apply,
     describe: (command) => String((command as CMCommand).cell),
+    narrate,
   },
 };
 

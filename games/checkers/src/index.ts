@@ -69,6 +69,14 @@ function apply(state: CheckersState, seat: SeatId, command: unknown): CheckersSt
   return {...game, revision: state.revision + 1, moveCount: state.moveCount + 1, endReason};
 }
 
+/** The turn for the recent-moves log: the path, what it took, and a crown if one was won. */
+function narrate(before: CheckersState, after: CheckersState, _seat: SeatId, command: unknown): string {
+  const path = (command as CheckersCommand).steps.join('→');
+  const taken = before.pieces.length - after.pieces.length;
+  const crowned = after.history.slice(before.history.length).some(entry => entry.crowned);
+  return `${taken > 0 ? `jumps ${path}, takes ${taken}` : `marches ${path}`}${crowned ? ' — crowned!' : ''}`;
+}
+
 export const checkersGame = {
   meta: {
     id: 'checkers', name: 'Crown & Steel', tagline: 'Two houses. One throne. Let strategy decide.',
@@ -104,6 +112,7 @@ export const checkersGame = {
     toMove: (state: CheckersState): SeatId[] => state.winner ? [] : [state.turn],
     legal, apply,
     describe: (command: unknown): string => isCheckersCommand(command) ? command.steps.join('→') : 'move',
+    narrate,
   },
 } satisfies GameModule<CheckersState>;
 

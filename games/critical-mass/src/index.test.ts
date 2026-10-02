@@ -165,3 +165,43 @@ describe('random playouts', () => {
     }
   });
 });
+
+describe('narrate', () => {
+  /** A position where every seat has moved, so eliminations are live. */
+  const opened = (n = 2) => {
+    const s = fresh(n);
+    s.moved = [...s.seats];
+    return s;
+  };
+  const say = (before: CMState, seat: string, cell: string) => turn.narrate!(before, play(before, seat, cell), seat, { cell });
+
+  test('a quiet placement', () => {
+    expect(say(fresh(), 'red', 'c3')).toBe('places at c3');
+  });
+  test('a small chain that takes a cell', () => {
+    const s = opened();
+    put(s, 'a1', 'red', 1);
+    put(s, 'a2', 'blue', 1);
+    put(s, 'f9', 'blue', 1); // blue keeps a cell, so nobody is knocked out
+    expect(say(s, 'red', 'a1')).toBe("places at a1 — small chain, takes 1 of {blue}'s cells");
+  });
+  test('a big chain (three waves or more)', () => {
+    const s = opened();
+    put(s, 'a1', 'red', 1);
+    put(s, 'a2', 'red', 2);
+    put(s, 'a3', 'red', 2);
+    put(s, 'b2', 'blue', 1);
+    put(s, 'f9', 'blue', 1);
+    const after = play(s, 'red', 'a3');
+    expect(after.lastMove!.waves.length).toBeGreaterThanOrEqual(3);
+    expect(turn.narrate!(s, after, 'red', { cell: 'a3' })).toBe("places at a3 — big chain!, takes 1 of {blue}'s cells");
+  });
+  test('taking cells from two seats, and knocking one out', () => {
+    const s = opened(3);
+    put(s, 'a1', 'red', 1);
+    put(s, 'a2', 'blue', 1);
+    put(s, 'b1', 'green', 1);
+    put(s, 'h10', 'green', 1); // green survives; blue's only cell is taken
+    expect(say(s, 'red', 'a1')).toBe("places at a1 — small chain, takes 1 of {blue}'s cells and 1 of {green}'s, knocks {blue} out");
+  });
+});
