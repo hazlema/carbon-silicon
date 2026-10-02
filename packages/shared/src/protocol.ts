@@ -62,11 +62,23 @@ export interface MatchSummary {
   tableId: string | null;
 }
 
+/** One line of a match's recent history, narrated by the game: "places at b4 — small chain, takes 2 of Fable's cells". */
+export interface MoveRecord {
+  /** Counts the match's entries from 1 (a real-time round's entry carries the round). */
+  number: number;
+  /** Who it's about; null for a round nobody survived. */
+  seat: string | null;
+  handle: string | null;
+  text: string;
+}
+
 export interface MatchEnvelope {
   match: MatchSummary;
   you: string | null;
   view: unknown;
   legal: unknown[];
+  /** The match's last moves, oldest first (at most 20). Kept in memory while the match lives. */
+  recent?: MoveRecord[];
   realtime?: RealtimeEnvelope;
 }
 

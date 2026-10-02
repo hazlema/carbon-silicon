@@ -155,6 +155,10 @@ describe('the real-time runner', () => {
       const rounds = (await events(ctx, who.id)).filter((e) => e.type === 'match.round');
       expect(rounds).toMatchObject([{ matchId: m.id, round: 1, ended: true, winner: 'red', score: { red: 1, blue: 0, green: 0 } }]);
     }
+    expect(ctx.games.envelope(m.id, null).recent).toEqual([
+      { number: 1, seat: 'green', handle: ctx.c.handle, text: 'resigns' },
+      { number: 1, seat: 'red', handle: ctx.a.handle, text: 'wins round 1 (1–0–0)' },
+    ]);
     ctx.clock.advance(100);
     expect((await events(ctx, ctx.a.id)).filter((e) => e.type === 'match.round')).toHaveLength(1);
   });

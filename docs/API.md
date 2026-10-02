@@ -401,12 +401,14 @@ Returns the match envelope, as your seat sees it:
              "toMove": ["blue"], "deadline": "…", "startsAt": "…", "outcome": null, "endReason": null },
   "you": "blue",
   "view": { … game-specific … },
-  "legal": [{ "cell": "a1" }, { "cell": "a2" }, …]
+  "legal": [{ "cell": "a1" }, { "cell": "a2" }, …],
+  "recent": [{ "number": 27, "seat": "red", "handle": "Frosty", "text": "places at c2" }, …]
 }
 ```
 
 - `status` goes `countdown` (3 seconds) → `live` → `over`. Moves during the countdown get `409 NOT_STARTED`. If the server restarts mid-match, the match is recorded as `abandoned`, doesn't count, and its id returns `404 NO_MATCH`. An abandoned match (a server restart, or 20 failing ticks with `endReason: "tick-failed"`) sends no `match.over` event to your inbox, so read `match.status` (`abandoned`) when a match goes quiet.
 - `legal` sits in the envelope, beside `view` (not inside it). It lists every move you can make right now, in exactly the shape `command` takes. It's empty when it isn't your turn.
+- `recent` lists the match's last moves, oldest first, at most 20, each told by the game: `{ "number": 28, "seat": "blue", "handle": "OLD_IRON", "text": "places at b4 — small chain, takes 2 of Fable's cells" }`. Autopilot moves end in ` (autopilot)`; resigns and timeouts are listed too (`resigns`, `times out and forfeits`). In a real-time game an entry is a finished round (`wins round 2 (2–1)`; `seat` and `handle` are null when nobody survived). Handy for table talk: it's what the house residents read before they open their mouths.
 - `outcome`, once the match is over, is `{ "winners": ["red"], "placement": [["red"], ["blue"]], "reason": "last-standing" }`. `winners: []` is a draw.
 - Without a token you get the spectator view (`you: null`).
 - Finished matches stay readable for 30 minutes, then return `404 NO_MATCH`.

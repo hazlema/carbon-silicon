@@ -2,7 +2,7 @@ import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { criticalMassGame, type CMCommand, type CMView } from '@cs/critical-mass';
-import { createRng } from '@cs/game-api';
+import { createRng, type GameModule } from '@cs/game-api';
 import { PUBLIC_CHANNELS, tableChannel, type IdentityPublic } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
 import type { DB } from '../db';
@@ -21,13 +21,13 @@ import { PresenceManager } from './presence';
 const database = await openDatabase(await testDatabaseUrl());
 afterAll(() => database.close());
 
-async function setup(gameDb: DB = database.db) {
+async function setup(gameDb: DB = database.db, modules: GameModule<any>[] = [criticalMassGame]) {
   const clock = new FakeClock();
   const bus = new EventBus();
   const ids = new IdentityManager(database.db, clock, { houseKey: null });
   const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS, guard: new Guard() });
   const presence = new PresenceManager(bus, clock);
-  const games = new GameManager(gameDb, bus, clock, comms, presence, [criticalMassGame], new Guard(), {
+  const games = new GameManager(gameDb, bus, clock, comms, presence, modules, new Guard(), {
     countdownMs: 3000,
     seed: () => 12345,
   });
@@ -76,6 +76,87 @@ function flaky(db: DB) {
 const matchRows = async () => (await database.db.select({ id: matches.id }).from(matches)).length;
 
 const firstLegal = (ctx: Ctx, id: string, who: IdentityPublic) => ctx.games.envelope(id, who.id).legal[0] as CMCommand;
+
+/** A turn game that only counts, for the move log's own tests. */
+type Tally = { n: number; turn: string; loser: string | null };
+const other = (seat: string) => (seat === 'red' ? 'blue' : 'red');
+const tally = (narrate?: (b: Tally, a: Tally, seat: string) => string): GameModule<Tally> => ({
+  meta: { id: 'tally', name: 'Tally', tagline: 'Count.', mode: 'turn', minPlayers: 2, maxPlayers: 2, seats: ['red', 'blue'], rulesPath: 'no-rules.md', humans: true },
+  setup: () => ({ n: 0, turn: 'red', loser: null }),
+  view: (s) => s,
+  outcome: (s) => (s.loser ? { winners: [other(s.loser)], placement: [[other(s.loser)], [s.loser]], reason: 'forfeit' } : null),
+  forfeit: (s, seat) => ({ ...s, loser: seat }),
+  turn: {
+    turnSeconds: 90,
+    toMove: (s) => (s.loser ? [] : [s.turn]),
+    legal: () => [{ go: true }],
+    apply: (s, seat) => ({ ...s, n: s.n + 1, turn: other(seat) }),
+    describe: () => 'go',
+    ...(narrate ? { narrate } : {}),
+  },
+});
+
+describe('the recent-moves log', () => {
+  const playTally = async (ctx: Ctx, id: string, times: number) => {
+    for (let i = 0; i < times; i++) {
+      const s = ctx.games.summary(id);
+      const mover = s.toMove[0] === 'red' ? ctx.red : ctx.blue;
+      await ctx.games.move(id, mover, s.revision, { go: true });
+    }
+  };
+  const start = async (ctx: Ctx) => {
+    const summary = await ctx.games.createMatch('tally', [ctx.red, ctx.blue]);
+    ctx.clock.advance(3000);
+    return summary.id;
+  };
+
+  test("each move is the game's own sentence, numbered, with the mover's handle; {seat} becomes a handle", async () => {
+    const ctx = await setup(database.db, [tally((b, a, seat) => `counts to ${a.n}, past {${other(seat)}} and {nobody}`)]);
+    const id = await start(ctx);
+    await playTally(ctx, id, 2);
+    expect(ctx.games.envelope(id, null).recent).toEqual([
+      { number: 1, seat: 'red', handle: ctx.red.handle, text: `counts to 1, past ${ctx.blue.handle} and {nobody}` },
+      { number: 2, seat: 'blue', handle: ctx.blue.handle, text: `counts to 2, past ${ctx.red.handle} and {nobody}` },
+    ]);
+  });
+
+  test('keeps only the last 20, still numbered from the start', async () => {
+    const ctx = await setup(database.db, [tally((b, a) => `counts to ${a.n}`)]);
+    const id = await start(ctx);
+    await playTally(ctx, id, 25);
+    const recent = ctx.games.envelope(id, ctx.red.id).recent!;
+    expect(recent).toHaveLength(20);
+    expect(recent[0]).toMatchObject({ number: 6, text: 'counts to 6' });
+    expect(recent.at(-1)).toMatchObject({ number: 25, text: 'counts to 25' });
+  });
+
+  test('without narrate, or when narrate throws, the move lands and reads "plays <describe>"', async () => {
+    for (const module of [tally(), tally(() => { throw new Error('narrator down'); })]) {
+      const ctx = await setup(database.db, [module]);
+      const id = await start(ctx);
+      await playTally(ctx, id, 1);
+      expect(ctx.games.summary(id).revision).toBeGreaterThan(1);
+      expect(ctx.games.envelope(id, null).recent).toEqual([{ number: 1, seat: 'red', handle: ctx.red.handle, text: 'plays go' }]);
+    }
+  });
+
+  test('a Critical Mass move is narrated by Critical Mass', async () => {
+    const ctx = await setup();
+    const id = await liveMatch(ctx);
+    const s = ctx.games.summary(id);
+    const mover = s.toMove[0] === 'red' ? ctx.red : ctx.blue;
+    const cmd = firstLegal(ctx, id, mover);
+    await ctx.games.move(id, mover, s.revision, cmd);
+    expect(ctx.games.envelope(id, null).recent).toEqual([{ number: 1, seat: s.toMove[0], handle: mover.handle, text: `places at ${cmd.cell}` }]);
+  });
+
+  test('resigning is logged', async () => {
+    const ctx = await setup();
+    const id = await liveMatch(ctx);
+    const env = await ctx.games.resign(id, ctx.blue);
+    expect(env.recent!.at(-1)).toEqual({ number: 1, seat: 'blue', handle: ctx.blue.handle, text: 'resigns' });
+  });
+});
 
 describe('creating a match', () => {
   test('starts in countdown, marks players as playing, and tells them', async () => {
@@ -197,6 +278,7 @@ describe('clocks', () => {
     const id = await liveMatch(ctx);
     ctx.clock.advance(90_000);
     expect(ctx.games.summary(id)).toMatchObject({ revision: 3, toMove: ['blue'] });
+    expect(ctx.games.envelope(id, null).recent!.at(-1)).toMatchObject({ number: 1, seat: 'red', handle: ctx.red.handle, text: expect.stringMatching(/^places at [a-f][1-9].* \(autopilot\)$/) });
     await waitFor(async () => (await ctx.comms.history(`match:${id}`)).some((m) => m.text.includes('dozed off')));
   });
   test('three straight timeouts forfeit; everyone gets their status back; results are recorded', async () => {
@@ -206,6 +288,7 @@ describe('clocks', () => {
     const summary = ctx.games.summary(id);
     expect(summary.status).toBe('over');
     expect(summary.outcome).toMatchObject({ winners: ['blue'], reason: 'timeout' });
+    expect(ctx.games.envelope(id, null).recent!.at(-1)).toMatchObject({ seat: 'red', text: 'times out and forfeits' });
     expect(ctx.presence.get(ctx.blue.id)?.status).toBe('ready');
     expect(ctx.games.activeMatchOf(ctx.blue.id)).toBeNull();
     await waitFor(async () => {

@@ -9,6 +9,7 @@ import {
   type MatchEnvelope,
   type MatchStatus,
   type MatchSummary,
+  type MoveRecord,
   type SeatInfo,
 } from '@cs/shared/protocol';
 import type { DB } from '../db';
@@ -63,6 +64,10 @@ interface LiveMatch {
   desk: DoctrineDesk | null;
   /** The human seats' key queues (empty for turn games). */
   steer: Map<SeatId, SteerQueue>;
+  /** The last RECENT_MOVES narrated entries, oldest first; memory only, gone with the match. */
+  recent: MoveRecord[];
+  /** Entries logged so far, so numbering runs on past the ones kept. */
+  logged: number;
 }
 
 const resultFor = (o: Outcome, seat: SeatId): 'win' | 'loss' | 'draw' =>
@@ -70,6 +75,8 @@ const resultFor = (o: Outcome, seat: SeatId): 'win' | 'loss' | 'draw' =>
 
 /** A real-time match whose ticks fail this many times in a row is abandoned. */
 const MAX_TICK_FAILURES = 20;
+/** How many narrated moves a match keeps for its envelope's `recent`. */
+const RECENT_MOVES = 20;
 
 export class GameManager {
   private matches = new Map<string, LiveMatch>();
@@ -209,6 +216,8 @@ export class GameManager {
       waiters: new Set(),
       rng: createRng(seed ^ 0x5eed),
       steer,
+      recent: [],
+      logged: 0,
       desk: rt ? new DoctrineDesk(seatNames.slice(0, players.length), rt.defaultDoctrine, floorTicks(this.opts.doctrineFloorMs, 1000 / rt.tickHz)) : null,
     };
     this.matches.set(id, m);
@@ -340,14 +349,17 @@ export class GameManager {
     const turn = m.module.turn;
     if (!turn) throw badRequest('NOT_TURN_BASED', 'This game uses doctrine, not moves.');
     if (!turn.toMove(m.state).includes(seat)) throw conflict('NOT_YOUR_TURN', `It is not ${seat}'s turn.`);
+    const before = m.state;
     let next: unknown;
     try {
-      next = turn.apply(m.state, seat, command);
+      next = turn.apply(before, seat, command);
     } catch (e) {
       if (e instanceof GameRuleError) throw new AppError(400, e.code, e.message);
       throw e;
     }
     m.timeouts[seat] = 0;
+    // Logged before advancing: the envelope advance publishes must already carry it.
+    this.record(m, seat, this.narrateMove(m, before, next, seat, command));
     await this.advance(m, next);
     return this.envelope(matchId, identity.id);
   }
@@ -370,6 +382,7 @@ export class GameManager {
     }
     const before = m.state;
     const next = m.module.forfeit(before, seat, 'resign');
+    this.record(m, seat, 'resigns');
     this.announceRound(m, before, next);
     const done = this.advance(m, next);
     if ((m.status as MatchStatus) !== 'over') this.release(m, identity.id);
@@ -390,6 +403,7 @@ export class GameManager {
     m.timeouts[seat] = (m.timeouts[seat] ?? 0) + 1;
     const legal = turn.legal(m.state, seat);
     if (m.timeouts[seat] >= this.opts.maxTimeouts || legal.length === 0) {
+      this.record(m, seat, 'times out and forfeits');
       const done = this.advance(m, m.module.forfeit(m.state, seat, 'timeout'));
       if ((m.status as MatchStatus) !== 'over') this.release(m, who.id);
       await this.comms.postSystem(table, `@${who.handle} timed out ${m.timeouts[seat]} times in a row and forfeits.`);
@@ -397,7 +411,10 @@ export class GameManager {
       return;
     }
     const command = m.rng.pick(legal);
-    const done = this.advance(m, turn.apply(m.state, seat, command));
+    const before = m.state;
+    const next = turn.apply(before, seat, command);
+    this.record(m, seat, `${this.narrateMove(m, before, next, seat, command)} (autopilot)`);
+    const done = this.advance(m, next);
     const text = turn.describe ? turn.describe(command) : JSON.stringify(command);
     await this.comms.postSystem(table, `@${who.handle} dozed off — autopilot played ${text}.`);
     await done;
@@ -461,7 +478,36 @@ export class GameManager {
   /** A real-time round that began or ended between these two states is news for every seat. */
   private announceRound(m: LiveMatch, before: unknown, after: unknown): void {
     const round = m.module.realtime?.roundEvent?.(before, after) ?? null;
-    if (round) for (const s of m.seats) this.comms.deliver(s.identity.id, { type: 'match.round', matchId: m.id, ...round });
+    if (!round) return;
+    for (const s of m.seats) this.comms.deliver(s.identity.id, { type: 'match.round', matchId: m.id, ...round });
+    if (!round.ended) return;
+    const score = m.seats.map((s) => round.score[s.seat] ?? 0).join('–');
+    if (round.winner) this.record(m, round.winner, `wins round ${round.round} (${score})`, round.round);
+    else this.record(m, null, `Round ${round.round}: nobody survives`, round.round);
+  }
+
+  /** Logs a line for the recent-moves list; `{seat}` placeholders become that seat's handle. */
+  private record(m: LiveMatch, seat: SeatId | null, text: string, number?: number): void {
+    const handleOf = (s: string) => m.seats.find((x) => x.seat === s)?.identity.handle;
+    m.logged += 1;
+    m.recent.push({
+      number: number ?? m.logged,
+      seat,
+      handle: seat ? (handleOf(seat) ?? null) : null,
+      text: text.replace(/\{([A-Za-z0-9_-]+)\}/g, (whole, s: string) => handleOf(s) ?? whole),
+    });
+    if (m.recent.length > RECENT_MOVES) m.recent.shift();
+  }
+
+  /** The game's own sentence for a move, or "plays <describe>"; a broken narrator never breaks a move. */
+  private narrateMove(m: LiveMatch, before: unknown, after: unknown, seat: SeatId, command: unknown): string {
+    const turn = m.module.turn!;
+    try {
+      if (turn.narrate) return turn.narrate(before, after, seat, command);
+    } catch (e) {
+      console.error(`[games] narrating a move in ${m.id} failed`, e);
+    }
+    return `plays ${turn.describe ? turn.describe(command) : JSON.stringify(command)}`;
   }
 
   setDoctrine(matchId: string, identity: IdentityPublic, raw: unknown): DoctrineAck {
@@ -613,7 +659,7 @@ export class GameManager {
             ...(you ? { you: { senses: senses(you), doctrine: m.desk.doctrineOf(you), pending: m.desk.pendingOf(you) } } : {}),
           }
         : undefined;
-    return { match: this.toSummary(m), you, view: m.module.view(m.state, you), legal, ...(realtime ? { realtime } : {}) };
+    return { match: this.toSummary(m), you, view: m.module.view(m.state, you), legal, recent: [...m.recent], ...(realtime ? { realtime } : {}) };
   }
 
   summary(matchId: string): MatchSummary {
