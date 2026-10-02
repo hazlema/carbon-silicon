@@ -51,7 +51,8 @@ test('changing your mind after "Play again" does not start another match behind 
   await expect(page).toHaveURL('/');
   await page.waitForTimeout(4500);
   await expect(page).toHaveURL('/');
-  await expect(page.getByRole('button', { name: 'Find a match' })).toBeVisible();
+  // No match behind your back, and the Play panel starts fresh after the one you played.
+  await expect(page.getByRole('region', { name: 'Play' }).getByRole('button', { name: 'Select game' })).toBeVisible();
 });
 
 test('keyboard players can reach every cell, and only legal cells act', async ({ page }) => {

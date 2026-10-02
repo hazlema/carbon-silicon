@@ -36,3 +36,21 @@ test('the Play panel: choose a game (it is remembered), cancel it, or take a ran
   await page.getByRole('button', { name: 'Yes, resign' }).click();
   await expect(page.getByRole('heading', { name: 'You lose.' })).toBeVisible();
 });
+
+test('starting a match clears the pick: back in the lobby, the Play panel starts fresh', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await enter(page, `pc${randomTag()}`);
+  const play = page.getByRole('region', { name: 'Play' });
+  await pickGame(page);
+  await play.getByRole('button', { name: 'Find a match' }).click();
+  await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
+  await page.getByRole('button', { name: 'Resign' }).click();
+  await page.getByRole('button', { name: 'Yes, resign' }).click();
+  await expect(page.getByRole('heading', { name: 'You lose.' })).toBeVisible();
+  await page.getByRole('link', { name: 'Back to the lobby' }).click();
+  await expect(page).toHaveURL('/');
+  await expect(play.getByRole('button', { name: 'Select game' })).toBeVisible();
+  // And it stays cleared after a reload: the browser forgot it too.
+  await page.reload();
+  await expect(play.getByRole('button', { name: 'Select game' })).toBeVisible();
+});

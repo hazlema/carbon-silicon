@@ -11,6 +11,10 @@
   let pickId = $state<string | null>(null);
   onMount(() => (pickId = loadPick()));
   const game = $derived(remembered(games, pickId));
+  // A match of yours started (here or anywhere): the pick was for it, so the panel starts fresh.
+  $effect(() => {
+    if (live.activeMatch) pickId = null;
+  });
   let choosing = $state(false);
   let error = $state('');
   let busy = $state(false);

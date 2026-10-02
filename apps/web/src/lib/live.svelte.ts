@@ -22,6 +22,7 @@ import { api, ApiError } from './api';
 import type { SteerKey } from './games/lightline/controls';
 import { unreadTotal, withMessage } from './dms';
 import { withGroupMessage } from './groups';
+import { savePick } from './play';
 import type { AgentNoticeEvent } from './owners';
 
 type Listener<T> = (value: T) => void;
@@ -184,6 +185,7 @@ class Live {
     } else {
       this.queued = null;
       this.activeMatch = r.match.id;
+      savePick(null);
     }
   }
 
@@ -443,6 +445,8 @@ class Live {
         if (msg.event.type === 'match.started') {
           this.activeMatch = msg.event.match.id;
           this.queued = null;
+          // The lobby's game pick was for this match; once it starts, the Play panel starts fresh.
+          savePick(null);
         }
         if (msg.event.type === 'match.over' && this.activeMatch === msg.event.matchId) this.activeMatch = null;
         // A sanction started or ended: the server may also have resigned a match or dropped a queue entry.
