@@ -7,6 +7,7 @@ import { DmBudget } from './dm-budget';
 import { DEFAULT_STRATEGY, line, linesFor, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
 import { chooseCheckersMove } from './strategies/checkers';
+import { tableContext } from './table-context';
 import { TableGames } from './table-games';
 import type { CheckersState } from '@cs/checkers';
 import { lightlineDoctrine } from './strategies/lightline';
@@ -129,7 +130,7 @@ async function gameInfo(client: Client, id: string): Promise<{ name: string; tag
 }
 
 async function recentLines(client: Client, channel: string): Promise<ChatMessage[]> {
-  const r = await client.call<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(channel)}?limit=8`);
+  const r = await client.call<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(channel)}?limit=10`);
   return r.messages;
 }
 
@@ -143,14 +144,16 @@ async function speak(
   opts: BotOptions,
   kind: MomentKind,
   channel: string,
-  extra: { opponent?: string; addressedBy?: string; answering?: ChatMessage; gameId?: string } = {},
+  extra: { opponent?: string; addressedBy?: string; answering?: ChatMessage; gameId?: string; matchId?: string } = {},
 ): Promise<void> {
   try {
     let text: string | null = null;
     if (opts.voice) {
       const recent = await recentLines(client, channel).catch(() => [] as ChatMessage[]);
-      const { answering, gameId, ...who } = extra;
+      const { answering, gameId, matchId, ...who } = extra;
       const game = gameId ? await gameInfo(client, gameId) : undefined;
+      // The table as it stands; a failed fetch just means a reply without it.
+      const table = matchId ? await client.match(matchId).then(tableContext).catch(() => undefined) : undefined;
       const moment: Moment = {
         kind,
         channel,
@@ -158,6 +161,7 @@ async function speak(
         ...who,
         ...(answering ? { answering: toChatLine(answering) } : {}),
         ...(game ? { game } : {}),
+        ...(table ? { table } : {}),
       };
       // At a table the game clock is running, so the voice gets a short deadline; everywhere, the
       // bot's own shutdown signal cuts it off.
@@ -296,7 +300,7 @@ async function playMatch(
   const table = env.match.tableId ? `table:${env.match.tableId}` : `match:${matchId}`;
   onTable(table, env.match.gameId);
   const opponent = env.match.seats.find((s) => s.seat !== env.you)?.identity.handle;
-  const say = (kind: MomentKind) => speak(client, opts, kind, table, { opponent, gameId: env.match.gameId });
+  const say = (kind: MomentKind) => speak(client, opts, kind, table, { opponent, gameId: env.match.gameId, matchId });
   if (!(await alreadyGreeted(client, table, identityId))) await say('hello');
   // Cascade commentary is spaced out: in a fast game every other move is a chain reaction, and
   // narrating each one would spam the table and spend the parlor's chat allowance (a short burst,
@@ -528,7 +532,8 @@ export async function runBot(opts: BotOptions): Promise<void> {
           Math.random() < (opts.tableTalkChance ?? 0.6) &&
           mayReply(channel)
         ) {
-          track(speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle, answering: message, gameId: tableGames.gameOf(channel) }));
+          const matchId = [...playingTables].find(([, c]) => c === channel)?.[0];
+          track(speak(client, opts, 'tableTalk', channel, { opponent: message.author.handle, answering: message, gameId: tableGames.gameOf(channel), matchId }));
         }
       }
     } catch (e) {

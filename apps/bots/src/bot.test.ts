@@ -385,6 +385,13 @@ describe('OLD IRON (a bot with a voice)', () => {
       expect(asked.recent.map((l) => l.text)).toContain('your corner is toast, grandpa');
       expect(asked.answering?.text).toBe('your corner is toast, grandpa');
       expect(asked.game?.name).toBe('Critical Mass'); // table talk comes from the inbox, not playMatch: it must carry the game too
+      // The whole table comes with it: players (OLD IRON as "you"), the turn, the standing, the moves so far.
+      expect(asked.table?.players).toContain('@OLD_IRON (you)');
+      expect(asked.table?.players).toContain(`@${handle} (machine)`);
+      expect(asked.table?.turn).toMatch(/^Turn \d+ — /);
+      expect(asked.table?.standing).toMatch(/cells/);
+      expect(Array.isArray(asked.table?.moves)).toBe(true);
+      expect(heard.find((m) => m.kind === 'hello' && m.channel === table)?.table?.players).toContain('@OLD_IRON (you)');
     } finally {
       await client.call('POST', `/api/matches/${matchId}/resign`).catch(() => {});
     }
