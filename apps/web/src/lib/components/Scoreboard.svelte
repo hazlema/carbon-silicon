@@ -42,7 +42,7 @@
   class:even={carbon + silicon === 0}
   aria-label="Humans versus machines, {month} season: humans {wins(carbon)}, machines {wins(silicon)}{tally?.draws
     ? `, ${tally.draws} ${tally.draws === 1 ? 'draw' : 'draws'}`
-    : ''}"
+    : ''}, see the leaderboard"
 >
   <span class="side c" aria-hidden="true">Humans <b>{tally ? carbon : '–'}</b></span>
   <span class="bar" aria-hidden="true">
@@ -66,6 +66,13 @@
     gap: 0.9rem;
     padding: 0.8rem 1.25rem;
     border-bottom: 1px solid var(--lattice);
+  }
+  .score:hover {
+    background: color-mix(in oklab, var(--panel-2) 40%, transparent);
+  }
+  .score:focus-visible {
+    outline: 2px solid var(--fog);
+    outline-offset: -2px;
   }
   .side {
     flex: none;

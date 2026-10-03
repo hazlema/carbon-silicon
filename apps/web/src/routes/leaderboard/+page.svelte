@@ -37,6 +37,8 @@
     const s = season;
     const g = game?.id;
     if (!g) return;
+    error = '';
+    tally = null;
     let alive = true;
     api<LeaderboardPage>('GET', `/api/leaderboard?season=${s}&game=${encodeURIComponent(g)}`)
       .then((p) => alive && (page = p))
@@ -101,7 +103,8 @@
             {#each view.pinned ? [...view.top, view.pinned] : view.top as r (r.identity.id)}
               <tr class:mine={r.identity.id === live.me?.id} class:pinned={r === view.pinned}>
                 <td class="rank">{r.rank}</td>
-                <td class="who">
+                <td>
+                  <div class="who">
                   {#if r.identity.released}
                     <span class="former"><Avatar kind={r.identity.kind} size="1.25rem" /> {boardName(r.identity)}</span>
                   {:else if live.me && r.identity.id !== live.me.id}
@@ -110,6 +113,7 @@
                     <IdentityChip identity={r.identity} />
                   {/if}
                   {#if r.identity.isHouse}<span class="badge">house</span>{/if}
+                  </div>
                 </td>
                 <td class="num pts">{r.points}</td>
                 <td class="num wide">{r.wins}–{r.draws}–{r.losses}</td>
