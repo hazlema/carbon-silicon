@@ -7,7 +7,6 @@
   import type { LLView } from '@cs/lightline';
   import { dmParticipants, groupOf, railChannel, tableChannel, type MatchEnvelope, type TableInfo } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
-  import IdentityChip from '$lib/components/IdentityChip.svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
   import ConvMenu from '$lib/components/ConvMenu.svelte';
   import ConvTabs from '$lib/components/ConvTabs.svelte';
@@ -47,12 +46,6 @@
   let confirmResign = $state(false);
   /** A phone: the table fills the screen and the site's header and lattice step aside. */
   const inPocket = $derived(pocket.screen);
-  $effect(() => {
-    pocket.chromeHidden = inPocket;
-    return () => {
-      pocket.chromeHidden = false;
-    };
-  });
   let moreOpen = $state(false);
   let moreBtn: HTMLButtonElement | undefined = $state();
   let moreMenu: HTMLElement | undefined = $state();
@@ -61,12 +54,16 @@
   // Pocket: lines from others show as toasts while the chat sheet is closed.
   let toast = $state<ToastLine | null>(null);
   let unread = $state(0);
-  const q = new ToastQueue({ meId: () => live.me?.id ?? null });
+  const q = new ToastQueue({ meId: () => live.me?.id ?? null, hidden: () => live.hiddenAuthors });
   q.onChange = () => {
     toast = q.current;
     unread = q.unread;
   };
   $effect(() => q.setOpen(sheetOpen));
+  // Leaving the page stops the toast's timer.
+  $effect(() => () => q.reset());
+  /** The chat button's badge: toasted table talk and rail lines, plus your unread DMs and groups. */
+  const badge = $derived(unread + live.dmUnread);
   // Leaving pocket (a tablet-size rotation): the sheet has no place any more.
   $effect(() => {
     if (!inPocket) sheetOpen = false;
@@ -198,12 +195,28 @@
   const dmTab = $derived(dmParticipants(tab) ? (live.dms.find((d) => d.channel === tab) ?? null) : null);
   const groupTab = $derived(groupOf(tab) ? (live.groups.find((g) => g.channel === tab) ?? null) : null);
   const chatChannel = $derived(table ? (tab === 'table' ? tableChannel(table.id) : tab === 'rail' ? railChannel(table.id) : tab) : null);
+  // Pocket toasts: the home channel (table talk for players, the rail for spectators) always, plus the open tab's,
+  // so peeking at the Rail doesn't silence the table. One listener per channel even when the two are the same.
+  const homeChannel = $derived(table ? (isPlayer ? tableChannel(table.id) : railChannel(table.id)) : null);
+  const toastChannels = $derived(
+    [...new Set([homeChannel, chatChannel].filter((c): c is string => !!c && !dmParticipants(c) && !groupOf(c)))].sort().join(' '),
+  );
   $effect(() => {
-    const ch = chatChannel;
-    if (!inPocket || !ch) return;
-    q.reset();
-    const off = live.onChat(ch, (m) => q.push(m));
-    return () => off();
+    if (!inPocket || !toastChannels) return;
+    const offs = toastChannels.split(' ').flatMap((ch) => [
+      live.onChat(ch, (m) => q.push(m)),
+      live.onChatRemoved(ch, (r) => q.current?.id === r.id && q.dismiss()),
+    ]);
+    return () => offs.forEach((off) => off());
+  });
+  // DMs and groups you can open from the sheet's tabs toast too; their unread dots (not the queue) feed the badge.
+  $effect(() => {
+    if (!inPocket) return;
+    return live.onConversation((m) => {
+      const open = untrack(() => tab);
+      const c = live.dms.find((d) => d.channel === m.channel) ?? live.groups.find((g) => g.channel === m.channel);
+      if (c && (!c.hidden || m.channel === open)) q.push(m, { count: false });
+    });
   });
   const convTitle = $derived(groupTab ? groupTitle(groupTab, live.me!.id) : `@${dmTab?.with.handle ?? ''}`);
   $effect(() => {
@@ -219,6 +232,8 @@
     if ((dmParticipants(tab) && !dmTab) || (groupOf(tab) && !groupTab)) tab = isPlayer ? 'table' : 'rail';
   });
   $effect(() => {
+    // In pocket the conversation isn't seen until the sheet is open.
+    if (inPocket && !sheetOpen) return;
     if (dmTab && dmTab.unread > 0) void live.readDm(dmTab.channel);
     if (groupTab && groupTab.unread > 0) void live.readGroup(groupTab.channel);
   });
@@ -233,6 +248,14 @@
   const view = $derived(env?.match.gameId === 'critical-mass' ? (env.view as CMView) : undefined);
   const ll = $derived(env?.match.gameId === 'lightline' ? (env.view as LLView) : undefined);
   const ck = $derived(env?.match.gameId === 'checkers' ? (env.view as CheckersView) : undefined);
+  /** The full table is on screen: only then does the site's chrome step aside (the ✕ is there to get out). */
+  const fullTable = $derived(!gone && !!(table && table.matchId && env && match && (view || ll || ck)));
+  $effect(() => {
+    pocket.chromeHidden = inPocket && fullTable;
+    return () => {
+      pocket.chromeHidden = false;
+    };
+  });
   const mySeat = $derived(env?.you ?? null);
   /** Knocked out (or resigned) while the others play on. In Lightline a crash ends only the round. */
   const iAmOut = $derived(
@@ -310,7 +333,8 @@
     if (mySeat) return o.winners.includes(mySeat) ? 'You win.' : 'You lose.';
     return `${handleOf(o.winners[0])} wins.`;
   });
-  const status = $derived.by((): { lead: string; detail?: string } => {
+  /** `secs` is the clock beside the lead: kept out of the live region so a screen reader isn't told every second. */
+  const status = $derived.by((): { lead: string; detail?: string; secs?: number } => {
     if (!match) return { lead: '' };
     if (match.status === 'countdown') return { lead: 'Starting…' };
     if (match.status === 'over' || match.status === 'abandoned') return { lead: verdict || 'This match was abandoned.' };
@@ -324,10 +348,12 @@
           : anyHuman ? 'Humans steer; machines ride their doctrine.' : 'Machines at work: each rides its own doctrine.';
       return { lead: `Round ${ll.round}`, detail };
     }
-    if (myTurn && inPocket && secondsLeft !== null) return { lead: `Your move · ${secondsLeft} s` };
+    if (myTurn && inPocket && secondsLeft !== null) return { lead: 'Your move', secs: secondsLeft };
     if (myTurn) return { lead: 'Your move.', detail: ck ? 'Select a knight, then a gold destination. Captures are mandatory.' : 'Place an orb on an empty cell or one of yours.' };
     return { lead: `Waiting for ${handleOf(match.toMove[0] ?? '')}…` };
   });
+  /** How far above the bottom the toast sits: clear of Critical Mass's camera pill, Lightline's status line, Crown & Steel's footer band. */
+  const toastBottom = $derived(view ? '7rem' : ll ? '4.5rem' : '5.5rem');
   const colors = $derived(tableColors(match?.seats ?? []));
   /** You first, then the rest in seat order: top-left, top-right, bottom-left, bottom-right. */
   const ordered = $derived.by(() => {
@@ -386,8 +412,26 @@
     if (mySeat && !iAmOut && (match?.status === 'live' || match?.status === 'countdown')) {
       moreOpen = false;
       confirmLeave = true;
-    } else void goto('/');
+    } else {
+      // Leaving the table calls off a search started here, as the verdict's lobby link does.
+      if (live.queued) void stopLooking();
+      void goto('/');
+    }
   }
+  let leaveBtn: HTMLButtonElement | undefined = $state();
+  let stayBtn: HTMLButtonElement | undefined = $state();
+  // The leave question takes focus on Stay, and Esc means Stay.
+  $effect(() => {
+    if (!confirmLeave) return;
+    void tick().then(() => stayBtn?.focus());
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      confirmLeave = false;
+      void tick().then(() => leaveBtn?.focus());
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  });
   const leaveText = $derived(
     ll
       ? 'Leave the table? The match keeps going and your rider carries on without you.'
@@ -475,7 +519,7 @@
     <section class="game panel" aria-labelledby="game-title">
       <header class="bar top">
         {#if inPocket}
-          <button class="icon" type="button" aria-label="Leave the table" onclick={leave}>✕</button>
+          <button class="icon" type="button" aria-label="Leave the table" bind:this={leaveBtn} onclick={leave}>✕</button>
         {/if}
         <h1 id="game-title">{gameName}</h1>
         {#if inPocket}
@@ -501,7 +545,7 @@
             <p id="leave-text">{leaveText}</p>
             <div class="row">
               <button class="btn primary" type="button" onclick={() => goto('/')}>Leave</button>
-              <button class="btn" type="button" onclick={() => (confirmLeave = false)}>Stay</button>
+              <button class="btn" type="button" bind:this={stayBtn} onclick={() => (confirmLeave = false)}>Stay</button>
             </div>
           </div>
         {/if}
@@ -525,7 +569,7 @@
               {@const out = view.eliminated.includes(s.seat)}
               <span class="pseat" class:out class:onclock={match.toMove.includes(s.seat) && !out} data-seat={s.seat}>
                 <i class="dot" style:background={colorOf(colors, s.seat)}></i>
-                <IdentityChip identity={s.identity} badge={false} tag={false} />
+                <span class="pname" class:human={s.identity.kind === 'human'} class:machine={s.identity.kind !== 'human'}>{s.identity.handle}<span class="visually-hidden"> ({s.identity.kind === 'human' ? 'human' : s.identity.isHouse ? 'house machine' : 'machine'})</span></span>
                 <b>{view.counts[s.seat]?.cells ?? 0}</b>
                 {#if out}<em>· out</em>{:else if match.toMove.includes(s.seat) && secondsLeft !== null && match.status === 'live'}<span class="tick" aria-label="{secondsLeft} seconds left">⏱ {clock(secondsLeft)}</span>{/if}
               </span>
@@ -595,20 +639,27 @@
       {#if !ck}
         <footer class="bar bottom">
           <p class="status" role="status">
-            <span class="lead">{status.lead}</span>
+            <span class="lead">{status.lead}</span>{#if status.secs !== undefined}<span class="lead secs" aria-hidden="true"> · {status.secs} s</span>{/if}
             {#if status.detail && !(inPocket && !ll)}<span class="detail">{status.detail}</span>{/if}
           </p>
           {#if !inPocket}{@render tableActions()}{/if}
         </footer>
       {/if}
-    {#if inPocket}<Toast line={toast} onopen={() => (sheetOpen = true)} ondismiss={() => q.dismiss()} />{/if}
+    {#if inPocket}<Toast
+        line={toast}
+        onopen={() => (sheetOpen = true)}
+        ondismiss={() => q.dismiss()}
+        bottom={toastBottom}
+        top={match.status === 'over' || match.status === 'abandoned'}
+        passthrough={ll !== undefined && steerable}
+      />{/if}
     </section>
 
     {#if inPocket}
       <ChatSheet open={sheetOpen} onclose={closeSheet} tapToClose={!ll}>{@render chat()}</ChatSheet>
-      <button class="chat-fab" class:hidden={sheetOpen} type="button" aria-label={unread ? `Open chat (${unread} unread)` : 'Open chat'} bind:this={chatBtn} onclick={() => (sheetOpen = true)}>
+      <button class="chat-fab" class:hidden={sheetOpen} type="button" aria-label={badge ? `Open chat (${badge} unread)` : 'Open chat'} bind:this={chatBtn} onclick={() => (sheetOpen = true)}>
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" /></svg>
-        {#if unread > 0}<span class="badge" aria-hidden="true">{unread}</span>{/if}
+        {#if badge > 0}<span class="badge" aria-hidden="true">{badge}</span>{/if}
       </button>
     {:else}
       {@render chat()}
@@ -616,7 +667,7 @@
   </div>
 
   {#if match.status === 'over'}
-    <div class="verdict panel" role="dialog" aria-labelledby="verdict-title">
+    <div class="verdict panel" class:pocket={inPocket} role="dialog" aria-labelledby="verdict-title">
       <h2 id="verdict-title" bind:this={verdictHeading} tabindex="-1">{verdict}</h2>
       <p>{REASONS[match.endReason ?? ''] ?? match.endReason}</p>
       {#if regathering && table.status === 'forming'}
@@ -823,6 +874,12 @@
     padding: 1.25rem 1.5rem;
     box-shadow: 0 1.5rem 3rem rgb(0 0 0 / 0.45);
   }
+  /* A pocket table: above the chat button (3rem + its 0.75rem margins), and never taller than what is left. */
+  .verdict.pocket {
+    bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+    max-height: calc(100dvh - 6rem - env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+  }
   .verdict h2 {
     margin: 0 0 0.3rem;
     font-family: var(--font-carbon);
@@ -1011,6 +1068,17 @@
     align-items: center;
     gap: 0.35rem;
     min-width: 0;
+  }
+  .pname.human {
+    color: var(--carbon);
+    font-family: var(--font-carbon);
+    font-style: italic;
+    font-weight: 600;
+  }
+  .pname.machine {
+    color: var(--silicon);
+    font-family: var(--font-silicon);
+    font-weight: 500;
   }
   .pseat.out {
     opacity: 0.5;

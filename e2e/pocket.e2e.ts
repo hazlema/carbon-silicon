@@ -138,3 +138,114 @@ test('the ⋯ menu closes on Esc (focus back on ⋯) and on a tap outside it', a
   await p.mouse.click(200, 400);
   await expect(p.getByRole('group', { name: 'More' })).toHaveCount(0);
 });
+
+/** Post probes from the agent until the page shows a toast (the page has followed the channel), then wait it out. */
+async function untilFollowing(p: Page, request: import('@playwright/test').APIRequestContext, auth: Record<string, string>, channel: string) {
+  for (let i = 0; i < 20 && (await p.locator('.toast').count()) === 0; i++) {
+    await request.post(`/api/chat/${channel}`, { headers: auth, data: { text: 'probe' } });
+    await p.waitForTimeout(250);
+  }
+  await expect(p.locator('.toast')).toContainText('probe');
+}
+
+test('a blocked agent never toasts and never counts towards the badge; unblocked, it does', async ({ browser, request }) => {
+  const p = await phone(browser);
+  const { auth, handle } = await enterAndPlayAgent(p, request);
+  const tid = p.url().split('/t/')[1];
+  expect((await p.request.put(`/api/me/blocks/${handle}`)).ok()).toBe(true);
+  await p.reload();
+  await expect(p.getByRole('button', { name: 'Open chat' })).toBeVisible();
+  await p.waitForTimeout(1500); // the page has followed the table and loaded who you block
+  await request.post(`/api/chat/table:${tid}`, { headers: auth, data: { text: 'you will never read this' } });
+  await p.waitForTimeout(1200);
+  await expect(p.locator('.toast')).toHaveCount(0);
+  await expect(p.getByRole('button', { name: 'Open chat', exact: true })).toBeVisible();
+  // Positive control: once unblocked, the same agent's lines get through.
+  expect((await p.request.delete(`/api/me/blocks/${handle}`)).ok()).toBe(true);
+  await p.reload();
+  await untilFollowing(p, request, auth, `table:${tid}`);
+});
+
+test('a DM from another player while you sit at the table bumps the badge and toasts', async ({ browser, request }) => {
+  const p = await phone(browser);
+  const { auth, handle } = await enterAndPlayAgent(p, request);
+  const me = (await (await p.request.get('/api/me')).json()).identity.handle as string;
+  await expect(p.getByRole('button', { name: 'Open chat', exact: true })).toBeVisible();
+  await p.waitForTimeout(1000); // the socket is up
+  expect((await request.post(`/api/dms/${me}`, { headers: auth, data: { text: 'psst, carbon' } })).status()).toBe(201);
+  await expect(p.locator('.toast')).toContainText('psst, carbon');
+  await expect(p.locator('.toast')).toContainText(handle);
+  await expect(p.getByRole('button', { name: 'Open chat (1 unread)' })).toBeVisible();
+  // Opening the chat from the toast shows that conversation's line somewhere in the sheet's tabs.
+  await p.getByRole('button', { name: 'Open chat (1 unread)' }).click();
+  await expect(p.getByRole('dialog', { name: 'Chat' })).toBeVisible();
+});
+
+test('after the match the chat button is above the verdict, and later toasts sit at the top', async ({ browser, request }) => {
+  const p = await phone(browser);
+  const { auth, matchId } = await enterAndPlayAgent(p, request);
+  const tid = p.url().split('/t/')[1];
+  await untilFollowing(p, request, auth, `table:${tid}`);
+  expect((await request.post(`/api/matches/${matchId}/resign`, { headers: auth })).status()).toBe(200);
+  const verdict = p.getByRole('dialog', { name: /./ }).filter({ has: p.locator('#verdict-title') });
+  await expect(verdict).toBeVisible();
+  const fab = p.getByRole('button', { name: /^Open chat/ });
+  await expect(fab).toBeVisible();
+  const v = (await verdict.boundingBox())!;
+  const f = (await fab.boundingBox())!;
+  expect(v.y + v.height).toBeLessThanOrEqual(f.y + 1); // the verdict ends above the button
+  // A line after the match: the toast shows (at the top, clear of the verdict) and the button is on top at its spot.
+  await request.post(`/api/chat/table:${tid}`, { headers: auth, data: { text: 'good game, carbon' } });
+  const toast = p.locator('.toast');
+  await expect(toast).toContainText('good game, carbon');
+  const t = (await toast.boundingBox())!;
+  expect(t.y + t.height).toBeLessThanOrEqual(v.y);
+  await p.screenshot({ path: '.superpowers/sdd/2026-10-03-m5a-pocket/final-verdict.png' });
+  const hit = await p.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.chat-fab') !== null, [f.x + f.width / 2, f.y + f.height / 2]);
+  expect(hit).toBe(true);
+  await fab.click();
+  await expect(p.getByRole('dialog', { name: 'Chat' })).toBeVisible();
+});
+
+test('Lightline held sideways: the toast shows but lets steering swipes and taps through; Esc on the leave question means Stay', async ({ browser, request }) => {
+  const reg = await request.post('/api/agents', { headers: { 'x-forwarded-for': randomIp() }, data: { name: `pl${randomTag()}` } });
+  const { token } = await reg.json();
+  const auth = { authorization: `Bearer ${token}` };
+  await request.patch('/api/me', { data: { status: 'ready' }, headers: auth });
+  const { table } = await (await request.post('/api/tables', { data: { gameId: 'lightline', open: true }, headers: auth })).json();
+  const p = await phone(browser, { width: 800, height: 400 });
+  let matchId: string | null = null;
+  try {
+    await p.goto('/');
+    await p.getByLabel('Your handle').fill(`pll${randomTag()}`);
+    await p.getByRole('button', { name: 'Enter the parlor' }).click();
+    await expect(p.getByLabel('Your handle')).toHaveCount(0);
+    expect((await p.request.post(`/api/tables/${table.id}/sit`)).ok()).toBe(true);
+    await p.goto(`/t/${table.id}`);
+    const started = await request.post(`/api/tables/${table.id}/start`, { headers: auth });
+    expect(started.status()).toBe(200);
+    matchId = (await started.json()).match.id;
+    await expect(p.locator('.table.pocket')).toBeVisible();
+    await expect.poll(async () => (await (await request.get(`/api/matches/${matchId}`, { headers: auth })).json()).match.status, { timeout: 10_000 }).toBe('live');
+    // Sprocket (the house machine that fills the table) talks; keep lines coming until one is on screen.
+    for (let i = 0; i < 20 && (await p.locator('.toast').count()) === 0; i++) {
+      await request.post(`/api/chat/table:${table.id}`, { headers: auth, data: { text: 'probe' } });
+      await p.waitForTimeout(250);
+    }
+    const toast = p.locator('.toast');
+    await expect(toast).toBeVisible();
+    expect(await toast.evaluate((e) => getComputedStyle(e).pointerEvents)).toBe('none');
+    const b = (await toast.boundingBox())!;
+    const over = await p.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.toast') !== null, [b.x + b.width / 2, b.y + b.height / 2]);
+    expect(over).toBe(false);
+    await p.screenshot({ path: '.superpowers/sdd/2026-10-03-m5a-pocket/final-ll-landscape.png' });
+    // The leave question: focus on Stay, Esc stays.
+    await p.getByRole('button', { name: 'Leave the table' }).click();
+    await expect(p.getByRole('button', { name: 'Stay' })).toBeFocused();
+    await p.keyboard.press('Escape');
+    await expect(p.getByRole('alertdialog')).toHaveCount(0);
+  } finally {
+    if (matchId) await request.post(`/api/matches/${matchId}/resign`, { headers: auth });
+    await request.patch('/api/me', { data: { status: 'afk' }, headers: auth });
+  }
+});

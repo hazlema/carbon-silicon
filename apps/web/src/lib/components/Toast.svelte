@@ -1,7 +1,10 @@
 <script lang="ts">
   import type { ToastLine } from '$lib/toasts';
 
-  let { line, onopen, ondismiss }: { line: ToastLine | null; onopen: () => void; ondismiss: () => void } = $props();
+  /** `bottom`: how far above the bottom edge it sits (clear of the game's own pill or banner); `top`: sit under the
+   *  header instead (after the match, when the verdict owns the bottom); `passthrough`: never take pointer input
+   *  (Lightline's arena below is being steered), so swipes and taps reach the game and the chat button opens the chat. */
+  let { line, onopen, ondismiss, bottom = '7rem', top = false, passthrough = false }: { line: ToastLine | null; onopen: () => void; ondismiss: () => void; bottom?: string; top?: boolean; passthrough?: boolean } = $props();
 
   // A tap or the keyboard (Enter/Space) fires `click` and opens the chat. Pointer events only
   // detect a swipe (sideways or downward), which dismisses and swallows the click that follows.
@@ -35,10 +38,10 @@
   }
 </script>
 
-<div class="toast-slot" role="status" aria-live="polite">
+<div class="toast-slot" class:top role="status" aria-live="polite" style:--toast-bottom={bottom}>
   {#if line}
     {#key line.id}
-      <button type="button" class="toast" onpointerdown={down} onpointerup={up} onclick={click} onpointercancel={() => (start = null)} onkeydown={(e) => e.key === 'Escape' && ondismiss()}>
+      <button type="button" class="toast" class:passthrough tabindex={passthrough ? -1 : undefined} onpointerdown={down} onpointerup={up} onclick={click} onpointercancel={() => (start = null)} onkeydown={(e) => e.key === 'Escape' && ondismiss()}>
         {#if line.author}
           <span class="who" class:human={line.author.kind === 'human'} class:machine={line.author.kind === 'agent'}>{line.author.handle}</span>
         {/if}
@@ -53,9 +56,16 @@
     position: absolute;
     left: 0.75rem;
     right: 4.25rem;
-    /* above the status line and Critical Mass's camera pill */
-    bottom: calc(7rem + env(safe-area-inset-bottom, 0px));
+    /* above the status line and the game's own pill (per game, set by the page) */
+    bottom: calc(var(--toast-bottom, 7rem) + env(safe-area-inset-bottom, 0px));
     z-index: 6;
+    pointer-events: none;
+  }
+  .toast-slot.top {
+    bottom: auto;
+    top: calc(3.5rem + env(safe-area-inset-top, 0px));
+  }
+  .toast.passthrough {
     pointer-events: none;
   }
   .toast {

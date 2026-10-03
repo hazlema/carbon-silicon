@@ -5,12 +5,14 @@
 
   let sheet: HTMLDivElement | undefined = $state();
   let kb = $state(0);
+  let vvh = $state<number | null>(null);
   let drag = $state<{ y: number; dy: number } | null>(null);
 
   // On open, put the cursor in the chat box; the page returns focus to its chat button on close.
   $effect(() => {
     if (!open) return;
-    const t = setTimeout(() => sheet?.querySelector<HTMLElement>('textarea, input')?.focus({ preventScroll: true }), 50);
+    // No composer (a read-only tab, a muted person): the dialog itself takes focus, so it isn't lost on the page behind.
+    const t = setTimeout(() => (sheet?.querySelector<HTMLElement>('textarea, input') ?? sheet)?.focus({ preventScroll: true }), 50);
     return () => clearTimeout(t);
   });
 
@@ -18,11 +20,16 @@
   $effect(() => {
     if (!open) {
       kb = 0;
+      vvh = null;
       return;
     }
     const vv = window.visualViewport;
     if (!vv) return;
-    const update = () => (kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)));
+    // Lift only for the keyboard: a pinched-in page (scale ≠ 1) also shrinks the visual viewport.
+    const update = () => {
+      vvh = Math.round(vv.height);
+      kb = vv.scale === 1 ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
+    };
     update();
     vv.addEventListener('resize', update);
     vv.addEventListener('scroll', update);
@@ -70,9 +77,11 @@
   class:dragging={drag !== null}
   role="dialog"
   aria-label="Chat"
+  tabindex="-1"
   inert={!open}
   bind:this={sheet}
   style:--kb="{kb}px"
+  style:--vvh={vvh === null ? undefined : `${vvh}px`}
   style:--drag="{drag?.dy ?? 0}px"
 >
   <button
@@ -100,8 +109,10 @@
     left: 0;
     right: 0;
     bottom: var(--kb, 0px);
-    height: 55dvh;
+    height: min(55dvh, calc(var(--vvh, 100dvh) - 1rem));
     z-index: 20;
+    outline: none;
+    overscroll-behavior: contain;
     display: flex;
     flex-direction: column;
     background: var(--panel);
@@ -141,6 +152,11 @@
   .body {
     flex: 1;
     min-height: 0;
+    overscroll-behavior: contain;
+  }
+  .body :global([role='log']),
+  .body :global(.tabs) {
+    overscroll-behavior: contain;
   }
   @media (prefers-reduced-motion: reduce) {
     .sheet {

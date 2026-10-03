@@ -84,6 +84,7 @@ class Live {
   #retry = 0;
   #everOpened = false;
   #chat = new Map<string, Set<Listener<ChatMessage>>>();
+  #conv = new Set<Listener<ChatMessage>>();
   #removed = new Map<string, Set<Listener<Removal>>>();
   #tableWatch = new Map<string, Set<Listener<TableInfo | null>>>();
   #matches = new Map<string, Set<Listener<MatchEnvelope>>>();
@@ -436,6 +437,7 @@ class Live {
       case 'chat':
         if (dmParticipants(msg.message.channel)) this.#dmMessage(msg.message);
         else if (groupOf(msg.message.channel)) this.#groupMessage(msg.message);
+        if (dmParticipants(msg.message.channel) || groupOf(msg.message.channel)) for (const fn of this.#conv) fn(msg.message);
         for (const fn of this.#chat.get(msg.message.channel) ?? []) fn(msg.message);
         break;
       case 'chat.removed':
@@ -528,6 +530,12 @@ class Live {
         if (!dmParticipants(channel) && !groupOf(channel)) this.#send({ type: 'unsubscribe', channel });
       }
     };
+  }
+
+  /** Every incoming line of any DM or group (after the lists took it in), including conversations that had no tab yet. */
+  onConversation(fn: Listener<ChatMessage>): () => void {
+    this.#conv.add(fn);
+    return () => this.#conv.delete(fn);
   }
 
   /** Messages a mod removed in a channel you already follow with `onChat`. */

@@ -23,15 +23,17 @@ export class ToastQueue {
   readonly #set: (fn: () => void, ms: number) => unknown;
   readonly #clear: (h: unknown) => void;
 
-  constructor(private readonly opts: { meId: () => string | null; setTimeout?: (fn: () => void, ms: number) => unknown; clearTimeout?: (h: unknown) => void }) {
+  constructor(private readonly opts: { meId: () => string | null; /** Authors you ignore or block: their lines never toast or count. */ hidden?: () => Set<string>; setTimeout?: (fn: () => void, ms: number) => unknown; clearTimeout?: (h: unknown) => void }) {
     this.#set = opts.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.#clear = opts.clearTimeout ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
   }
 
-  push(m: ChatMessage): void {
+  /** `count: false` toasts a line without adding to `unread` (DMs and groups have their own unread counts). */
+  push(m: ChatMessage, o: { count?: boolean } = {}): void {
     if (this.open || m.removed) return;
     if (m.author && m.author.id === this.opts.meId()) return;
-    this.unread += 1;
+    if (m.author && this.opts.hidden?.().has(m.author.id)) return;
+    if (o.count !== false) this.unread += 1;
     this.current = { id: m.id, text: m.text, author: m.author ? { handle: m.author.handle, kind: m.author.kind } : null };
     this.#clear(this.#timer);
     this.#timer = this.#set(() => {

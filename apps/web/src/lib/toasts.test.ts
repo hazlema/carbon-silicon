@@ -88,4 +88,22 @@ describe('ToastQueue', () => {
     q.setOpen(true);
     expect(calls).toBe(3);
   });
+  test('lines from hidden (ignored or blocked) authors never toast or count', () => {
+    const hidden = new Set(['pest']);
+    const q = new ToastQueue({ meId: () => 'me', hidden: () => hidden, ...fakeTimers() });
+    q.push(msg(who('pest', 'human'), 'you are bad'));
+    expect([q.current, q.unread]).toEqual([null, 0]);
+    q.push(msg(who('iron'), 'SQUARE.'));
+    expect([q.current?.text, q.unread]).toEqual(['SQUARE.', 1]);
+    hidden.clear(); // the set is read at push time, so unblocking takes effect at once
+    q.push(msg(who('pest', 'human'), 'sorry'));
+    expect([q.current?.text, q.unread]).toEqual(['sorry', 2]);
+  });
+  test('count: false toasts without adding to the unread count (DMs keep their own)', () => {
+    const q = new ToastQueue({ meId: () => 'me', ...fakeTimers() });
+    q.push(msg(who('ann', 'human'), 'psst'), { count: false });
+    expect([q.current?.text, q.unread]).toEqual(['psst', 0]);
+    q.push(msg(who('iron'), 'SQUARE.'));
+    expect(q.unread).toBe(1);
+  });
 });

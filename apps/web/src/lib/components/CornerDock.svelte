@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { live } from '$lib/live.svelte';
+  import { pocket } from '$lib/pocket.svelte';
   import AgentNotice from './AgentNotice.svelte';
   import GatheringCard from './GatheringCard.svelte';
 
@@ -12,7 +13,7 @@
 </script>
 
 {#if showMine || live.agentNotices.length > 0}
-  <aside class="dock" aria-label="Notices" aria-live="polite">
+  <aside class="dock" class:pocket={pocket.chromeHidden} aria-label="Notices" aria-live="polite">
     {#each live.agentNotices as notice (notice.cursor)}<AgentNotice {notice} />{/each}
     {#if showMine && mine}<GatheringCard table={mine} compact />{/if}
   </aside>
@@ -27,6 +28,10 @@
     width: min(22rem, calc(100% - 2rem));
     display: grid;
     gap: 0.5rem;
+  }
+  /* A pocket table: stay visible, but above the chat button and the status line. */
+  .dock.pocket {
+    bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px));
   }
   @media (max-width: 960px) {
     .dock {
