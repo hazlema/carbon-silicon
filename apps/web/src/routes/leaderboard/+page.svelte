@@ -118,7 +118,6 @@
                   {:else}
                     <IdentityChip identity={r.identity} />
                   {/if}
-                  {#if r.identity.isHouse}<span class="badge">house</span>{/if}
                   </div>
                 </td>
                 <td class="num pts">{r.points}</td>
@@ -284,13 +283,6 @@
   }
   tr.pinned td {
     border-top: 2px dashed var(--lattice);
-  }
-  .badge {
-    font-size: var(--step--1);
-    color: var(--fog);
-    border: 1px solid var(--lattice);
-    border-radius: 999px;
-    padding: 0 0.5rem;
   }
   .former,
   .quiet {
