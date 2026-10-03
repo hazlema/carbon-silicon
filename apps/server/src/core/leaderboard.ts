@@ -1,4 +1,4 @@
-import { and, asc, count, eq } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, lt } from 'drizzle-orm';
 import { seasonOf, type Champion, type ProfileGlory, type SeasonInfo, type StandingRow, type Tally } from '@cs/shared/protocol';
 import type { DB } from '../db';
 import { identities, matches, matchPlayers, seasonClosings } from '../db/schema';
@@ -15,6 +15,16 @@ export interface LeaderboardDeps {
 }
 
 /** Seasons, Elo, standings, the hall of fame and the Carbon-vs-Silicon tally, all derived from match results (M4). */
+/** Whoever posts the closing line: the CommunicationManager in production, a fake in tests. */
+export interface Announcer {
+  postSystem(channel: string, text: string): Promise<unknown>;
+}
+
+/** "2026-09" → "September". */
+export function monthName(season: string): string {
+  return new Date(`${season}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+}
+
 export class LeaderboardManager {
   /** `${season}:${gameId}` → standings. Closed seasons stay forever; open ones go on `match.finished`. */
   private cache = new Map<string, StandingRow[]>();
@@ -142,6 +152,50 @@ export class LeaderboardManager {
       .where(and(eq(matchPlayers.identityId, identityId), eq(matches.status, 'over')));
     const titles = (await this.hallOfFame()).filter((c) => c.row.identity.id === identityId).map((c) => ({ season: c.season, gameId: c.gameId }));
     return { rankedAt, ranked, season, matchesPlayed: Number(n), titles };
+  }
+
+  /**
+   * Closes every past season that has matches, none of them still in countdown or live, and no
+   * closing row yet. The insert is the guard: only the call whose insert lands announces, so a restart
+   * or a second server never announces a season twice.
+   */
+  async closeSeasons(announcer: Announcer): Promise<string[]> {
+    const now = this.deps.clock.now();
+    const current = seasonOf(now);
+    const closed = await this.closedSeasons();
+    const past = (await this.db.selectDistinct({ season: matches.season }).from(matches).where(lt(matches.season, current)))
+      .map((r) => r.season)
+      .filter((s) => !closed.has(s))
+      .sort();
+    const done: string[] = [];
+    for (const season of past) {
+      const [busy] = await this.db
+        .select({ id: matches.id })
+        .from(matches)
+        .where(and(eq(matches.season, season), inArray(matches.status, ['countdown', 'live'])))
+        .limit(1);
+      if (busy) continue;
+      const inserted = await this.db
+        .insert(seasonClosings)
+        .values({ season, closedAt: new Date(now) })
+        .onConflictDoNothing()
+        .returning({ season: seasonClosings.season });
+      closed.add(season);
+      if (inserted.length === 0) continue;
+      await announcer.postSystem('lobby', await this.announcement(season, current));
+      done.push(season);
+    }
+    return done;
+  }
+
+  private async announcement(season: string, current: string): Promise<string> {
+    const champions: string[] = [];
+    for (const g of this.deps.games()) {
+      const [top] = await this.standings(season, g.id);
+      if (top) champions.push(`${g.name} — ${top.identity.released ? 'a former player' : `@${top.identity.handle}`}`);
+    }
+    const middle = champions.length > 0 ? `Champions: ${champions.join(' · ')}.` : 'No ranked games were played.';
+    return `${monthName(season)} is in the books. ${middle} ${monthName(current)} is open; every rating is back to 1000.`;
   }
 
   protected async closedSeasons(): Promise<Set<string>> {

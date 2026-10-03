@@ -38,6 +38,8 @@ export interface CoreOptions {
   realtimeCountdownMs?: number;
   /** How often idle guest names are swept (default 6 h; 0 disables the timer). The boot sweep always runs. */
   sweepEveryMs?: number;
+  /** How often past seasons are checked for closing (default 60 s; 0 disables the timer). The boot check always runs. */
+  seasonCheckMs?: number;
   /** The most people in a group chat (GROUP_MAX_MEMBERS; default 8). */
   groupMaxMembers?: number;
 }
@@ -137,9 +139,27 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   await sweep();
   schedule();
 
+  let seasonTimer: unknown = null;
+  const closeSeasons = async () => {
+    try {
+      const done = await leaderboard.closeSeasons(comms);
+      if (done.length > 0) console.log(`[core] closed season(s) ${done.join(', ')}`);
+    } catch (e) {
+      console.error('[core] season closing failed', e);
+    }
+  };
+  const seasonEvery = opts.seasonCheckMs ?? 60_000;
+  const scheduleSeasons = () => {
+    if (closed || seasonEvery <= 0) return;
+    seasonTimer = clock.setTimeout(() => void closeSeasons().finally(scheduleSeasons), seasonEvery);
+  };
+  await closeSeasons();
+  scheduleSeasons();
+
   const drain = () => {
     closed = true;
     clock.clearTimeout(sweepTimer);
+    clock.clearTimeout(seasonTimer);
     games.close();
     comms.close();
   };

@@ -1,4 +1,5 @@
 import { testDatabaseUrl } from '@cs/server/testing';
+import { eq } from 'drizzle-orm';
 import { afterAll, describe, expect, test } from 'bun:test';
 import type { IdentityPublic } from '@cs/shared/protocol';
 import { openDatabase, type DB } from '../db';
@@ -176,5 +177,52 @@ describe('glory', () => {
     const g = await lb.glory(fresh.id);
     expect(g.ranked).toBe(false);
     expect(Date.parse(g.rankedAt!)).toBe(clock.now() + 7 * 86_400_000);
+  });
+});
+
+describe('closing a season', () => {
+  const posted: string[] = [];
+  const announcer = { postSystem: async (channel: string, text: string) => void posted.push(`${channel}|${text}`) };
+
+  test('waits for a live match, announces once, and a second server never announces it again', async () => {
+    const own = await openDatabase(await testDatabaseUrl());
+    try {
+      posted.length = 0;
+      const clock = new FakeClock(Date.UTC(2026, 9, 1, 0, 5)); // 2026-10-01
+      const [a, b, c] = await agents(own.db, 3);
+      await play(own.db, '2026-09', 'critical-mass', [[a], [b]]);
+      await play(own.db, '2026-09', 'checkers', [[c], [a]]);
+      await play(own.db, '2026-09', 'lightline', [[a], [b]], { rated: false });
+      const live = await play(own.db, '2026-09', 'critical-mass', [[b], [c]], { status: 'live' });
+      const one = board(own.db, clock).lb;
+      expect(await one.closeSeasons(announcer)).toEqual([]);
+      await own.db.update(matches).set({ status: 'abandoned' }).where(eq(matches.id, live));
+      expect(await one.closeSeasons(announcer)).toEqual(['2026-09']);
+      expect(posted).toEqual([
+        `lobby|September is in the books. Champions: Critical Mass — @${a.handle} · Crown & Steel — @${c.handle}. October is open; every rating is back to 1000.`,
+      ]);
+      const two = board(own.db, clock).lb;
+      expect(await two.closeSeasons(announcer)).toEqual([]);
+      expect(await one.closeSeasons(announcer)).toEqual([]);
+      expect(posted).toHaveLength(1);
+      expect(await two.seasons()).toContainEqual({ season: '2026-09', closed: true });
+    } finally {
+      await own.close();
+    }
+  });
+
+  test('a month with no ranked games says so; the current month never closes', async () => {
+    const own = await openDatabase(await testDatabaseUrl());
+    try {
+      posted.length = 0;
+      const clock = new FakeClock(Date.UTC(2026, 9, 15));
+      const [a, b] = await agents(own.db, 2);
+      await play(own.db, '2026-08', 'critical-mass', [[a], [b]], { rated: false });
+      await play(own.db, '2026-10', 'critical-mass', [[a], [b]]);
+      expect(await board(own.db, clock).lb.closeSeasons(announcer)).toEqual(['2026-08']);
+      expect(posted).toEqual(['lobby|August is in the books. No ranked games were played. October is open; every rating is back to 1000.']);
+    } finally {
+      await own.close();
+    }
   });
 });
