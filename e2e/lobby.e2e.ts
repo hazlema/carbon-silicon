@@ -27,13 +27,14 @@ test('the composer is a one-line textarea (not a login-looking input): Enter sen
   await expect(box).toHaveAttribute('maxlength', '500');
   await expect(box).toHaveAttribute('enterkeyhint', 'send');
   await expect(box).toHaveAttribute('autocomplete', 'off');
+  await expect(box).toHaveAttribute('autocorrect', 'on');
   await box.fill('one');
   await box.press('Shift+Enter');
   await box.pressSequentially('two');
   await expect(box).toHaveValue('onetwo');
   await box.fill('');
   await box.evaluate((e) => {
-    (e as HTMLTextAreaElement).value = 'pasted\nacross\r\nlines';
+    (e as unknown as { value: string }).value = 'pasted\nacross\r\nlines';
     e.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await expect(box).toHaveValue('pasted across lines');

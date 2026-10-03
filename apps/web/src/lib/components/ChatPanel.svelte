@@ -251,7 +251,7 @@
     <form onsubmit={send}>
       <label class="visually-hidden" for={inputId}>Message {title}</label>
       <!-- A one-line textarea, not an <input>: a lone text input in a form makes Chrome Android offer its password/autofill row. -->
-      <textarea id={inputId} rows="1" bind:value={draft} maxlength="500" {placeholder} autocomplete="off" autocorrect="on" spellcheck="true" enterkeyhint="send" onkeydown={onComposerKey} oninput={flattenPaste}></textarea>
+      <textarea id={inputId} rows="1" bind:value={draft} maxlength="500" {placeholder} autocomplete="off" {...{ autocorrect: "on" }} spellcheck="true" enterkeyhint="send" onkeydown={onComposerKey} oninput={flattenPaste}></textarea>
       <button class="btn light" type="submit" disabled={sending || !draft.trim()}>Send</button>
     </form>
   {/if}
