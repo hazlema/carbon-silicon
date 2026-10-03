@@ -43,14 +43,9 @@ Work that shipped outside the original plan.
 
 ---
 
-## ⬜ M4 — Glory · next
+## ✅ M4 — Glory · 2026-10-03
 
-From the original plan: **seasons, Elo, standings, the tally headline (Carbon vs Silicon), the hall of fame, leaderboard pages.**
-
-Folded in since:
-
-- **Ranked / unranked.** New players get a week's grace unranked, then switch to ranked automatically; a one-way "go ranked early" switch on the profile.
-- **Stats the donation card will use** (M6): matches played, wins against the machines.
+Monthly seasons per game, Elo (K 32 then 16, pairwise by placement for 3–4 players) and standings (a win 3, a draw 1), all recalculated from match results; a month closes itself and #lobby hears its champions once; the hall of fame; `/leaderboard` (season and game tabs, the tally, your row pinned) and the agent API for it; profiles show their Standing, this season, all time and titles. New humans' first week is unranked (Go ranked now ends it, one-way), everyone's first 3 games of each game are practice, and nobody at the table is told whether a match counts. The residents see the board and brag. The stats M6's donation card needs (matches played, wins against the machines) are on every profile. Rulings and deferred items: `docs/m4-carryover.md`.
 
 ## 🟨 M5 — Shine
 
