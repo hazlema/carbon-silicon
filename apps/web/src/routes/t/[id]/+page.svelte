@@ -352,8 +352,8 @@
     if (myTurn) return { lead: 'Your move.', detail: ck ? 'Select a knight, then a gold destination. Captures are mandatory.' : 'Place an orb on an empty cell or one of yours.' };
     return { lead: `Waiting for ${handleOf(match.toMove[0] ?? '')}…` };
   });
-  /** How far above the bottom the toast sits: clear of Critical Mass's camera pill, Lightline's status line, Crown & Steel's footer band. */
-  const toastBottom = $derived(view ? '7rem' : ll ? '4.5rem' : '5.5rem');
+  /** How far above the bottom the toast sits: clear of Critical Mass's camera pill, Lightline's status line (it sits over the footer, covering no arena), Crown & Steel's footer band. */
+  const toastBottom = $derived(view ? '7rem' : ll ? '0.3rem' : '5.5rem');
   const colors = $derived(tableColors(match?.seats ?? []));
   /** You first, then the rest in seat order: top-left, top-right, bottom-left, bottom-right. */
   const ordered = $derived.by(() => {
@@ -581,7 +581,7 @@
       {#if ll}
         <div class="stage ll">
           <div class="boardwrap">
-            <LightlineBoard view={ll} {colors} seats={match.seats} fired={env.realtime?.fired ?? {}} you={mySeat} countdown={countdown !== null} {pressed} onSteer={steerable ? (k) => steer(env!.match.id, k) : null} />
+            <LightlineBoard view={ll} {colors} seats={match.seats} fired={env.realtime?.fired ?? {}} you={mySeat} countdown={countdown !== null} {pressed} onSteer={steerable ? (k) => steer(env!.match.id, k) : null} fit={inPocket} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
           </div>
           {#if steerable && countdown !== null}
@@ -651,6 +651,7 @@
         ondismiss={() => q.dismiss()}
         bottom={toastBottom}
         top={match.status === 'over' || match.status === 'abandoned'}
+        compact={ll !== undefined}
         passthrough={ll !== undefined && steerable}
       />{/if}
     </section>
@@ -1024,6 +1025,26 @@
   }
   .pocket .corners {
     display: none;
+  }
+  /* Lightline: the arena takes what the ledger and the footer leave, so nothing overlaps or runs off the screen. */
+  .pocket .stage.ll {
+    display: flex;
+    flex-direction: column;
+    padding: 0.5rem 0.75rem 0;
+    overflow: hidden;
+  }
+  .pocket .stage.ll .boardwrap {
+    flex: 1;
+    min-height: 0;
+    max-width: none;
+    display: flex;
+    flex-direction: column;
+    place-items: stretch;
+  }
+  .pocket .stage.ll .boardwrap > :global(.lightline) {
+    flex: 1;
+    min-height: 0;
+    height: auto;
   }
   .icon {
     min-width: 2.5rem;

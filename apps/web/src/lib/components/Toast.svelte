@@ -4,7 +4,7 @@
   /** `bottom`: how far above the bottom edge it sits (clear of the game's own pill or banner); `top`: sit under the
    *  header instead (after the match, when the verdict owns the bottom); `passthrough`: never take pointer input
    *  (Lightline's arena below is being steered), so swipes and taps reach the game and the chat button opens the chat. */
-  let { line, onopen, ondismiss, bottom = '7rem', top = false, passthrough = false }: { line: ToastLine | null; onopen: () => void; ondismiss: () => void; bottom?: string; top?: boolean; passthrough?: boolean } = $props();
+  let { line, onopen, ondismiss, bottom = '7rem', top = false, passthrough = false, compact = false }: { line: ToastLine | null; onopen: () => void; ondismiss: () => void; bottom?: string; top?: boolean; passthrough?: boolean; compact?: boolean } = $props();
 
   // A tap or the keyboard (Enter/Space) fires `click` and opens the chat. Pointer events only
   // detect a swipe (sideways or downward), which dismisses and swallows the click that follows.
@@ -38,7 +38,7 @@
   }
 </script>
 
-<div class="toast-slot" class:top role="status" aria-live="polite" style:--toast-bottom={bottom}>
+<div class="toast-slot" class:top class:compact={compact && !top} role="status" aria-live="polite" style:--toast-bottom={bottom}>
   {#if line}
     {#key line.id}
       <button type="button" class="toast" class:passthrough tabindex={passthrough ? -1 : undefined} onpointerdown={down} onpointerup={up} onclick={click} onpointercancel={() => (start = null)} onkeydown={(e) => e.key === 'Escape' && ondismiss()}>
@@ -64,6 +64,22 @@
   .toast-slot.top {
     bottom: auto;
     top: calc(3.5rem + env(safe-area-inset-top, 0px));
+  }
+  /* One line, name inline: sized to sit over a status line without covering anything else. */
+  .compact .toast {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    padding: 0.3rem 0.75rem;
+    background: var(--panel); /* opaque: it covers the status line, whose text must not show through */
+  }
+  .compact .who {
+    margin: 0;
+    flex: none;
+  }
+  .compact .text {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
   }
   .toast.passthrough {
     pointer-events: none;

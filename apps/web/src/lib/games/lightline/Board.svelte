@@ -13,6 +13,7 @@
     countdown = false,
     pressed = null,
     onSteer = null,
+    fit = false,
   }: {
     view: LLView;
     colors: TableColors;
@@ -25,6 +26,8 @@
     pressed?: SteerKey | null;
     /** Set when you can steer: a swipe on the arena steers and a tap boosts. */
     onSteer?: ((k: SteerKey) => void) | null;
+    /** Fill the height the parent gives (a phone's table): the arena shrinks so the whole ledger fits below it. */
+    fit?: boolean;
   } = $props();
 
   const ARROW: Record<SteerKey, string> = { n: '↑', e: '→', s: '↓', w: '←', boost: '⚡' };
@@ -94,8 +97,9 @@
   });
 </script>
 
-<div class="lightline">
+<div class="lightline" class:fit>
   <div class="arena" role="img" aria-label="Lightline arena, round {view.round}: {view.cycles.map((c) => `@${handleOf(c.seat)} ${c.alive ? 'riding' : 'crashed'}`).join(', ')}">
+    <div class="field" style:--cols={cols} style:--rows={rows}>
     <canvas
       bind:this={canvas}
       aria-hidden="true"
@@ -114,6 +118,7 @@
         style:top="{((mine.y + 0.5) / rows) * 100}%"
       ></span>
     {/if}
+    </div>
   </div>
   <ol class="riders">
     {#each view.cycles as cy (cy.seat)}
@@ -139,6 +144,31 @@
   }
   .arena {
     position: relative;
+  }
+  .field {
+    position: relative;
+  }
+  /* Fitting: the arena is the leftover box (a size container) and the field is the biggest board that fits it. */
+  .lightline.fit {
+    height: 100%;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 0.4rem;
+  }
+  .fit .arena {
+    container-type: size;
+    min-height: 0;
+    display: grid;
+    place-items: center;
+  }
+  .fit .field {
+    width: min(100cqw, calc(100cqh * var(--cols) / var(--rows)));
+  }
+  .fit canvas {
+    max-height: none;
+  }
+  .fit .riders {
+    gap: 0.1rem 1rem;
+    font-size: var(--step--1);
   }
   /* A soft halo on your head while the countdown runs; a CSS animation, not canvas redraws. */
   .pulse {

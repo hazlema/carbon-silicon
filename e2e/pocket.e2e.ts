@@ -238,6 +238,38 @@ test('Lightline held sideways: the toast shows but lets steering swipes and taps
     const b = (await toast.boundingBox())!;
     const over = await p.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.toast') !== null, [b.x + b.width / 2, b.y + b.height / 2]);
     expect(over).toBe(false);
+    const fits = async () => {
+      const vp = p.viewportSize()!;
+      const rows = p.locator('.riders li');
+      const last = (await rows.last().boundingBox())!;
+      const foot = (await p.locator('footer.bottom').boundingBox())!;
+      const arena = (await p.locator('.arena').boundingBox())!;
+      expect(await rows.count()).toBeGreaterThanOrEqual(2);
+      expect(last.y).toBeGreaterThanOrEqual(0);
+      expect(last.y + last.height).toBeLessThanOrEqual(vp.height);
+      expect(last.y + last.height).toBeLessThanOrEqual(foot.y + 1); // the ledger ends before the footer starts
+      expect(foot.y + foot.height).toBeLessThanOrEqual(vp.height + 1);
+      expect(arena.y + arena.height).toBeLessThanOrEqual(last.y + 1);
+    };
+    const toastClearsArena = async () => {
+      for (let i = 0; i < 20 && (await p.locator('.toast').count()) === 0; i++) {
+        await request.post(`/api/chat/table:${table.id}`, { headers: auth, data: { text: 'probe' } });
+        await p.waitForTimeout(250);
+      }
+      const t = (await p.locator('.toast').boundingBox())!;
+      const field = (await p.locator('.field').boundingBox())!;
+      expect(t.y).toBeGreaterThanOrEqual(field.y + field.height - 1); // below the arena: it covers none of it
+    };
+    await fits();
+    await toastClearsArena();
+    await p.setViewportSize({ width: 400, height: 800 });
+    await p.waitForTimeout(300);
+    await fits();
+    await toastClearsArena();
+    await p.screenshot({ path: '.superpowers/sdd/2026-10-03-m5a-pocket/final-ll-portrait.png' });
+    await p.setViewportSize({ width: 800, height: 400 });
+    await p.waitForTimeout(300);
+    await toastClearsArena();
     await p.screenshot({ path: '.superpowers/sdd/2026-10-03-m5a-pocket/final-ll-landscape.png' });
     // The leave question: focus on Stay, Esc stays.
     await p.getByRole('button', { name: 'Leave the table' }).click();
