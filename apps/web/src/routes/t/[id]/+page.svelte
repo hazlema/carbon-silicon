@@ -278,10 +278,15 @@
   );
   const view = $derived(env?.match.gameId === 'critical-mass' ? (env.view as CMView) : undefined);
   const ll = $derived(env?.match.gameId === 'lightline' ? (env.view as LLView) : undefined);
-  // Lightline's toast sits over a one-line footer: one at a time, each up for at least 2.5 s. After the match it moves to the top and stacks again.
+  // During a Lightline match the toasts rise from the status line over the rider ledger, never the arena: two
+  // at a time on an upright phone, one on a sideways one (less room under the arena). After the match they move
+  // to the top and stack again.
+  let vw = $state(0);
+  let vh = $state(0);
   $effect(() => {
     const footer = !!ll && env?.match.status !== 'over' && env?.match.status !== 'abandoned';
-    q.setLimits(footer ? 1 : 3, footer ? 2500 : 0);
+    const sideways = vw > vh;
+    q.setLimits(footer ? (sideways ? 1 : 2) : 3, footer && sideways ? 2500 : 0);
   });
   const ck = $derived(env?.match.gameId === 'checkers' ? (env.view as CheckersView) : undefined);
   /** The full table is on screen: only then does the site's chrome step aside (the ✕ is there to get out). */
@@ -510,6 +515,7 @@
 </script>
 
 <svelte:head><title>{gameName}</title></svelte:head>
+<svelte:window bind:innerWidth={vw} bind:innerHeight={vh} />
 
 {#if gone}
   <div class="gone panel">

@@ -71,7 +71,8 @@
     bottom: auto;
     top: calc(3.5rem + env(safe-area-inset-top, 0px));
   }
-  /* One line, name inline: sized to sit over a status line without covering anything else. */
+  /* Lightline during play: opaque over the status line and the rider ledger (never the arena), name inline,
+     up to two lines so a taunt reads in full. */
   .compact .toast {
     display: flex;
     gap: 0.5rem;
@@ -84,8 +85,8 @@
     flex: none;
   }
   .compact .text {
-    -webkit-line-clamp: 1;
-    line-clamp: 1;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
   }
   .toast.passthrough {
     pointer-events: none;
