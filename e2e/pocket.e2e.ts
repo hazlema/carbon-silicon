@@ -75,11 +75,11 @@ test('a line from the other player pops up as a toast; tapping it opens the chat
   await expect(p.getByRole('button', { name: 'Open chat' })).toBeVisible();
   // Probe until the page has followed the channel (a toast shows), then clear it and send the line under test.
   const tid = p.url().split('/t/')[1];
-  for (let i = 0; i < 20 && (await p.locator('.toast', { hasText: 'probe' }).count()) === 0; i++) {
+  for (let i = 0; i < 20 && (await p.locator('.toast').count()) === 0; i++) {
     await request.post(`/api/chat/table:${tid}`, { headers: auth, data: { text: 'probe' } });
     await p.waitForTimeout(250);
   }
-  await expect(p.locator('.toast', { hasText: 'probe' }).last()).toBeVisible();
+  await expect(p.locator('.toast').last()).toContainText('probe');
   await request.post(`/api/chat/table:${p.url().split('/t/')[1]}`, { headers: auth, data: { text: 'Your move, carbon.' } });
   const toast = p.locator('.toast').last();
   await expect(toast).toContainText('Your move, carbon.');
@@ -152,11 +152,11 @@ test('the ⋯ menu closes on Esc (focus back on ⋯) and on a tap outside it', a
 
 /** Post probes from the agent until the page shows a toast (the page has followed the channel), then wait it out. */
 async function untilFollowing(p: Page, request: import('@playwright/test').APIRequestContext, auth: Record<string, string>, channel: string) {
-  for (let i = 0; i < 20 && (await p.locator('.toast', { hasText: 'probe' }).count()) === 0; i++) {
+  for (let i = 0; i < 20 && (await p.locator('.toast').count()) === 0; i++) {
     await request.post(`/api/chat/${channel}`, { headers: auth, data: { text: 'probe' } });
     await p.waitForTimeout(250);
   }
-  await expect(p.locator('.toast', { hasText: 'probe' }).last()).toBeVisible();
+  await expect(p.locator('.toast').last()).toContainText('probe');
 }
 
 test('three taunts stack, newest at the bottom; a swipe dismisses only that one; a fourth pushes the oldest out', async ({ browser, request }) => {
@@ -209,6 +209,7 @@ test('a line posted just before the phone opens the table still toasts (no misse
   await p.goto(`/t/${tid}`); // ...and back: the line is a couple of seconds old
   await expect(p.locator('.toast').last()).toContainText('Let us make some chain reactions');
   await expect(p.locator('.toast', { hasText: 'Let us make some chain reactions' })).toHaveCount(1);
+  await expect(p.locator('.toast', { hasText: 'Talk trash' })).toHaveCount(0); // the table's intro (a system line) is never caught up
 });
 
 test('a blocked agent never toasts and never counts towards the badge; unblocked, it does', async ({ browser, request }) => {
@@ -219,13 +220,10 @@ test('a blocked agent never toasts and never counts towards the badge; unblocked
   await p.reload();
   await expect(p.getByRole('button', { name: 'Open chat' })).toBeVisible();
   await p.waitForTimeout(1500); // the page has followed the table and loaded who you block
-  // The table's own intro line (a system line, not from the blocked agent) may already have toasted and counted.
-  const chatBtn = p.getByRole('button', { name: /^Open chat/ });
-  const before = await chatBtn.getAttribute('aria-label');
   await request.post(`/api/chat/table:${tid}`, { headers: auth, data: { text: 'you will never read this' } });
   await p.waitForTimeout(1200);
-  expect(await chatBtn.getAttribute('aria-label')).toBe(before);
-  await expect(p.locator('.toast', { hasText: 'you will never read this' })).toHaveCount(0);
+  await expect(p.locator('.toast')).toHaveCount(0);
+  await expect(p.getByRole('button', { name: 'Open chat', exact: true })).toBeVisible();
   // Positive control: once unblocked, the same agent's lines get through.
   expect((await p.request.delete(`/api/me/blocks/${handle}`)).ok()).toBe(true);
   await p.reload();
@@ -241,7 +239,7 @@ test('a DM from another player while you sit at the table bumps the badge and to
   expect((await request.post(`/api/dms/${me}`, { headers: auth, data: { text: 'psst, carbon' } })).status()).toBe(201);
   await expect(p.locator('.toast').last()).toContainText('psst, carbon');
   await expect(p.locator('.toast').last()).toContainText(handle);
-  await expect(p.getByRole('button', { name: /^Open chat \(\d+ unread\)$/ })).toBeVisible();
+  await expect(p.getByRole('button', { name: 'Open chat (1 unread)' })).toBeVisible();
   // Tapping the toast opens the sheet on that conversation, not the table tab.
   await p.locator('.toast').last().click();
   const sheet = p.getByRole('dialog', { name: 'Chat' });
@@ -299,7 +297,7 @@ test('Lightline held sideways: the toast shows but lets steering swipes and taps
     await expect(p.locator('.table.pocket')).toBeVisible();
     await expect.poll(async () => (await (await request.get(`/api/matches/${matchId}`, { headers: auth })).json()).match.status, { timeout: 10_000 }).toBe('live');
     // Sprocket (the house machine that fills the table) talks; keep lines coming until one is on screen.
-    for (let i = 0; i < 20 && (await p.locator('.toast', { hasText: 'probe' }).count()) === 0; i++) {
+    for (let i = 0; i < 20 && (await p.locator('.toast').count()) === 0; i++) {
       await request.post(`/api/chat/table:${table.id}`, { headers: auth, data: { text: 'probe' } });
       await p.waitForTimeout(250);
     }
@@ -323,7 +321,7 @@ test('Lightline held sideways: the toast shows but lets steering swipes and taps
       expect(arena.y + arena.height).toBeLessThanOrEqual(last.y + 1);
     };
     const toastClearsArena = async () => {
-      for (let i = 0; i < 20 && (await p.locator('.toast', { hasText: 'probe' }).count()) === 0; i++) {
+      for (let i = 0; i < 20 && (await p.locator('.toast').count()) === 0; i++) {
         await request.post(`/api/chat/table:${table.id}`, { headers: auth, data: { text: 'probe' } });
         await p.waitForTimeout(250);
       }

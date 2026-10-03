@@ -6,10 +6,10 @@ export const TOAST_MS = 6000;
 /** On arriving at a table, lines from the last 10 s still toast: an opening line can land just before the page listens. */
 export const CATCH_UP_MS = 10_000;
 
-/** The lines of a channel's history worth toasting now: at most `max` of the last CATCH_UP_MS, oldest first. */
+/** The lines of a channel's history worth toasting now: from people (never system lines, such as the table's intro), at most `max` of the last CATCH_UP_MS, oldest first. */
 export function recentLines(history: ChatMessage[], now: number, max: number): ChatMessage[] {
   return history
-    .filter((m) => now - Date.parse(m.createdAt) <= CATCH_UP_MS)
+    .filter((m) => m.author !== null && !m.system && now - Date.parse(m.createdAt) <= CATCH_UP_MS)
     .sort((a, b) => a.id - b.id)
     .slice(-max);
 }

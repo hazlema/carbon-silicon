@@ -241,6 +241,11 @@ describe('recentLines (the opening line that arrived just before the page was li
     expect(recentLines(history, now, 2).map((m) => m.text)).toEqual(['b', 'c']);
     expect(recentLines([at(10_001, now, 'x', 5)], now, 3)).toEqual([]);
   });
+  test('system lines (the table intro, "sat down") are never caught up', () => {
+    const now = Date.parse('2026-10-03T12:00:00Z');
+    const sys = { ...at(2_000, now, '@a vs @b — Critical Mass. Talk trash; play fair.', 8), author: null, system: true };
+    expect(recentLines([sys, at(1_000, now, 'hi', 9)], now, 3).map((m) => m.text)).toEqual(['hi']);
+  });
   test('catching up and then hearing the same line live toasts it once', () => {
     const q = new ToastQueue({ meId: () => 'me', ...fakeTimers() });
     const now = Date.now();
