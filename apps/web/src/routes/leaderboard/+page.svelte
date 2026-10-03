@@ -17,6 +17,7 @@
   let tally = $state<Tally | null>(null);
   let champions = $state<Champion[]>([]);
   let error = $state('');
+  let failed = $state(false);
 
   onMount(() => {
     try {
@@ -38,11 +39,16 @@
     const g = game?.id;
     if (!g) return;
     error = '';
+    failed = false;
     tally = null;
     let alive = true;
     api<LeaderboardPage>('GET', `/api/leaderboard?season=${s}&game=${encodeURIComponent(g)}`)
       .then((p) => alive && (page = p))
-      .catch((e) => alive && (error = (e as Error).message));
+      .catch((e) => {
+        if (!alive) return;
+        error = (e as Error).message;
+        failed = true;
+      });
     api<Tally>('GET', `/api/tally?season=${s}`)
       .then((t) => alive && (tally = t))
       .catch(() => {});
@@ -90,7 +96,7 @@
 
   <section class="standings panel" aria-label="Standings">
     {#if !view}
-      <p class="quiet">Loading…</p>
+      {#if !failed}<p class="quiet">Loading…</p>{/if}
     {:else if view.top.length === 0}
       <p class="quiet">{emptyBoardText(game?.name ?? '', season, current)}</p>
     {:else}
