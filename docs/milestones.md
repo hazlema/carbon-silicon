@@ -49,6 +49,8 @@ Monthly seasons per game, Elo (K 32 then 16, pairwise by placement for 3–4 pla
 
 ## 🟨 M5 — Shine
 
+Split 2026-10-03: **M5a Pocket** (the phone table, done), **M5b Faces** (profile pictures), **M5c Key art**, **M5d Speed** (performance).
+
 From the original plan: **key art, sound, motion polish, mobile passes, performance.**
 
 | | Part |
@@ -57,8 +59,8 @@ From the original plan: **key art, sound, motion polish, mobile passes, performa
 | ✅ | Motion: the Critical Mass board, the logo animation, Crown & Steel's battlefield |
 | ✅ | Lightline played on a real phone (swipes work; harder than keys) |
 | ⬜ | Key art (OpenArt) |
-| ⬜ | **Phone games full screen**, chat floating and hidden, a **toast** when someone taunts you |
-| ⬜ | Phone sizing for the Critical Mass board (Top view is bigger; maybe the default on narrow screens) |
+| ✅ | **M5a Pocket** (2026-10-03): phone games full screen, chat in a bottom sheet behind a button, a **toast** for every line from someone else; see `docs/m5a-carryover.md` |
+| ✅ | Phone sizing for the Critical Mass board: Top view on phones, turned so the board's long side follows the screen's (M5a) |
 | ⬜ | Profile pictures, framed in the C/Si tile |
 | ⬜ | A performance pass |
 
