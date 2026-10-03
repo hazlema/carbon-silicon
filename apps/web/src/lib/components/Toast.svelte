@@ -53,7 +53,8 @@
     position: absolute;
     left: 0.75rem;
     right: 4.25rem;
-    bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
+    /* above the status line and Critical Mass's camera pill */
+    bottom: calc(7rem + env(safe-area-inset-bottom, 0px));
     z-index: 6;
     pointer-events: none;
   }

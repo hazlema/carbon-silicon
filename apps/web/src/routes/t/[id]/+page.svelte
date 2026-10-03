@@ -903,7 +903,14 @@
   }
   .pocket .talk {
     height: 100%;
-    padding-bottom: 0;
+    padding: 0;
+    margin: 0;
+  }
+  .pocket .talk :global(.chat.panel) {
+    border: 0;
+    border-radius: 0;
+    margin: 0;
+    background: none;
   }
   .chat-fab {
     position: fixed;

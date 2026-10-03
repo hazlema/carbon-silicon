@@ -46,7 +46,13 @@
     if (drag && drag.dy > 40) onclose();
     drag = null;
   }
-  function overlay(e: PointerEvent) {
+  // The overlay stays up until the whole tap (down, up, click) has landed on it, so the click
+  // never reaches the board cell underneath; it closes on that click.
+  function overlayDown(e: PointerEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+  function overlayClick(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
     onclose();
@@ -56,7 +62,7 @@
 <svelte:window onkeydown={keydown} />
 
 {#if open && tapToClose}
-  <div class="overlay" onpointerdown={overlay} aria-hidden="true" style:bottom="calc(55dvh + {kb}px)"></div>
+  <div class="overlay" onpointerdown={overlayDown} onclick={overlayClick} aria-hidden="true" style:bottom="calc(55dvh + {kb}px)"></div>
 {/if}
 <div
   class="sheet"
@@ -107,6 +113,9 @@
   }
   .sheet.open {
     transform: translateY(var(--drag, 0px));
+  }
+  .sheet:not(.open) {
+    box-shadow: none;
   }
   .sheet.dragging {
     transition: none;

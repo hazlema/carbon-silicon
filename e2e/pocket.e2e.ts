@@ -62,11 +62,17 @@ test('a line from the other player pops up as a toast; tapping it opens the chat
   const { auth, matchId } = await enterAndPlayAgent(p, request);
   // The table's chat is followed once the board is up; a line posted before that would be history, not a toast.
   await expect(p.getByRole('button', { name: 'Open chat' })).toBeVisible();
-  await p.waitForTimeout(500);
+  // Probe until the page has followed the channel (a toast shows), then clear it and send the line under test.
+  const tid = p.url().split('/t/')[1];
+  for (let i = 0; i < 20 && (await p.locator('.toast').count()) === 0; i++) {
+    await request.post(`/api/chat/table:${tid}`, { headers: auth, data: { text: 'probe' } });
+    await p.waitForTimeout(250);
+  }
+  await expect(p.locator('.toast')).toContainText('probe');
   await request.post(`/api/chat/table:${p.url().split('/t/')[1]}`, { headers: auth, data: { text: 'Your move, carbon.' } });
   const toast = p.locator('.toast');
   await expect(toast).toContainText('Your move, carbon.');
-  await expect(p.getByRole('button', { name: 'Open chat (1 unread)' })).toBeVisible();
+  await expect(p.getByRole('button', { name: /^Open chat \(\d+ unread\)$/ })).toBeVisible();
   await p.screenshot({ path: 'test-results/pocket-toast.png' });
   await toast.click();
   const sheet = p.getByRole('dialog', { name: 'Chat' });
@@ -79,9 +85,25 @@ test('a line from the other player pops up as a toast; tapping it opens the chat
   await p.screenshot({ path: 'test-results/pocket-sheet.png' });
   await p.keyboard.press('Escape');
   await expect(p.getByRole('button', { name: 'Open chat' })).toBeVisible();
-  const before = (await (await request.get(`/api/matches/${matchId}`)).json()).match.revision;
   await p.getByRole('button', { name: 'Open chat' }).click();
-  await p.mouse.click(200, 150);
+  await expect(sheet).toBeVisible();
+  // Tap a legal cell that lies above the sheet: it must only close the sheet, not place an orb.
+  const sheetTop = (await sheet.boundingBox())!.y;
+  const cells = p.locator('button[data-legal="true"]');
+  // If the agent has the first move, play it (the agent has no client), so the human's cells light up.
+  const agentEnv = await (await request.get(`/api/matches/${matchId}`, { headers: auth })).json();
+  if (agentEnv.match.status === 'live' && agentEnv.legal.length > 0) {
+    await request.post(`/api/matches/${matchId}/move`, { headers: auth, data: { revision: agentEnv.match.revision, cell: agentEnv.legal[0].cell } });
+  }
+  await expect(cells.first()).toBeVisible({ timeout: 20_000 });
+  let target: { x: number; y: number } | null = null;
+  for (let i = 0; i < (await cells.count()); i++) {
+    const b = await cells.nth(i).boundingBox();
+    if (b && b.y + b.height / 2 < sheetTop - 10 && b.y > 60) { target = { x: b.x + b.width / 2, y: b.y + b.height / 2 }; break; }
+  }
+  expect(target).not.toBeNull();
+  const before = (await (await request.get(`/api/matches/${matchId}`)).json()).match.revision;
+  await p.mouse.click(target!.x, target!.y);
   await expect(p.getByRole('button', { name: 'Open chat' })).toBeVisible();
   expect((await (await request.get(`/api/matches/${matchId}`)).json()).match.revision).toBe(before);
 });
