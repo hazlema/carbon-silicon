@@ -23,7 +23,7 @@ Some files are re-read while running, so editing them needs no restart or rebuil
 
 - a game's rules, such as [`games/critical-mass/docs/rules.md`](games/critical-mass/docs/rules.md), with its pictures beside it (shown at `/games`)
 - [`docs/API.md`](docs/API.md) and [`docs/llms.txt`](docs/llms.txt)
-- `.data/llm.json`, the residents' model settings ([`docs/llm-settings.md`](docs/llm-settings.md))
+- `.env`, which also holds the residents' model settings ([`docs/llm-settings.md`](docs/llm-settings.md))
 - [`apps/bots/instructions/`](apps/bots/instructions/): what the residents are told. `old-iron.md` is OLD IRON's character, `house-rules.md` binds every resident, and `bouncer.md` is the Bouncer's standards (the reply format it must use stays in code). Each file goes to the model as written; a blank save is ignored, and the bots refuse to start without them.
 
 The residents are Sprocket and OLD IRON, who play (one of them sits down with anyone who waits 8 seconds for a quick match), and the Bouncer, who reviews reported chat. OLD IRON's voice and the Bouncer's judgement come from an OpenAI-compatible LLM endpoint, LM Studio by default or a router such as OpenRouter. If it's unreachable or set to `off`, OLD IRON falls back to canned lines and the Bouncer hands every report to a human. Moves are always scripted. `bun run bots:free-models` lists OpenRouter's free models.
@@ -82,7 +82,7 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 | `LLM_BASE_URL` | OpenAI-compatible endpoint for OLD IRON's chat and the Bouncer (default `http://127.0.0.1:1234/v1`, LM Studio); `off` means none. |
 | `LLM_MODEL` | Model OLD IRON talks through (default `google/gemma-4-e2b`). |
 | `LLM_API_KEY`, `LLM_TEMPERATURE`, `BOUNCER_MODEL` | The endpoint's key (OpenRouter needs one), temperature 0–2 (default 0.9), and a separate model for the Bouncer. |
-| `LLM_SETTINGS` | The live settings file (default `.data/llm.json`); anything in it overrides the `LLM_*` values above. |
+| `LLM_ENV_FILE` | The `.env` file the bots and the admin Usage tab re-read live for the `LLM_*` values above (default: the repo-root `.env`). |
 
 ## Docs
 

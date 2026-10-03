@@ -5,32 +5,40 @@ LM Studio on this machine by default, or a hosted router such as OpenRouter.
 
 ## Change it without restarting
 
-The bots re-read **`.data/llm.json`** every couple of seconds. Edit it and the next line
-OLD IRON says uses the new settings; the bot log prints `[llm] settings: …` when it takes.
-Anything the file leaves out comes from the environment (`LLM_BASE_URL`, `LLM_MODEL`,
-`LLM_API_KEY`, `LLM_TEMPERATURE`, `BOUNCER_MODEL`). A broken edit is reported once in the log
-and the last good settings stay in use. `.data/` is git-ignored, so the key never lands in git.
+The settings live in the repo-root **`.env`** (the same file the deploy kit's systemd units load).
+The bots re-read it every couple of seconds, so edit it and the next line OLD IRON says uses the
+new settings; the bot log prints `[llm] settings: …` when it takes. Values in `.env` win over the
+process environment; anything the file leaves out comes from the environment, then the defaults.
+A file that can't be read is reported once in the log and the last good settings stay in use.
+The admin Usage tab reads `LLM_BASE_URL` and `LLM_API_KEY` from the same file on each refresh.
+`.env` is git-ignored, so the key never lands in git.
 
-```json
-{
-  "baseUrl": "https://openrouter.ai/api/v1",
-  "model": "google/gemma-4-31b-it:free",
-  "apiKey": "sk-or-…",
-  "temperature": 0.9,
-  "bouncerModel": null
-}
+```
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=anthropic/claude-haiku-4.5
+LLM_API_KEY=sk-or-…
+# LLM_TEMPERATURE=0.9
+# BOUNCER_MODEL=
 ```
 
-| Field | Meaning |
+| Key | Meaning |
 |---|---|
-| `baseUrl` | The endpoint, ending in `/v1`. `"off"` means canned lines only. |
-| `model` | The model id as the endpoint names it. |
-| `apiKey` | Sent as `Authorization: Bearer …`; `null` for LM Studio. |
-| `temperature` | 0–2. Higher is wilder. |
-| `bouncerModel` | The Bouncer's own model; `null` uses `model`. |
+| `LLM_BASE_URL` | The endpoint, ending in `/v1`. `off` means canned lines only. Default `http://127.0.0.1:1234/v1`. |
+| `LLM_MODEL` | The model id as the endpoint names it. Default `google/gemma-4-e2b`. |
+| `LLM_API_KEY` | Sent as `Authorization: Bearer …`; leave it out for LM Studio. |
+| `LLM_TEMPERATURE` | 0–2, default 0.9. Higher is wilder. |
+| `BOUNCER_MODEL` | The Bouncer's own model; leave it out to use `LLM_MODEL`. |
 
-Back to local: `{"baseUrl": "http://127.0.0.1:1234/v1", "model": "google/gemma-4-e2b", "apiKey": null}`,
-or delete the file.
+To use another file, set `LLM_ENV_FILE` to its path (bots and server both honour it).
+
+Back to local: `LLM_BASE_URL=http://127.0.0.1:1234/v1` and `LLM_MODEL=google/gemma-4-e2b`
+(or delete the lines and the key).
+
+### Moving from `.data/llm.json`
+
+The JSON file is no longer read (and neither is the old `LLM_SETTINGS` variable); the bots log a
+reminder at startup if the file still exists. Copy `baseUrl`, `model` and `apiKey` into
+`LLM_BASE_URL`, `LLM_MODEL` and `LLM_API_KEY` in `.env`, then delete the JSON file.
 
 ## Free models
 
