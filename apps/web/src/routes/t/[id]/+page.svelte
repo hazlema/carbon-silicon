@@ -11,6 +11,9 @@
   import ChatPanel from '$lib/components/ChatPanel.svelte';
   import ConvMenu from '$lib/components/ConvMenu.svelte';
   import ConvTabs from '$lib/components/ConvTabs.svelte';
+  import ChatSheet from '$lib/components/ChatSheet.svelte';
+  import Toast from '$lib/components/Toast.svelte';
+  import { ToastQueue, type ToastLine } from '$lib/toasts';
   import { groupTitle } from '$lib/groups';
   import GatheringCard from '$lib/components/GatheringCard.svelte';
   import Board from '$lib/games/critical-mass/Board.svelte';
@@ -51,6 +54,47 @@
     };
   });
   let moreOpen = $state(false);
+  let moreBtn: HTMLButtonElement | undefined = $state();
+  let moreMenu: HTMLElement | undefined = $state();
+  let sheetOpen = $state(false);
+  let chatBtn: HTMLButtonElement | undefined = $state();
+  // Pocket: lines from others show as toasts while the chat sheet is closed.
+  let toast = $state<ToastLine | null>(null);
+  let unread = $state(0);
+  const q = new ToastQueue({ meId: () => live.me?.id ?? null });
+  q.onChange = () => {
+    toast = q.current;
+    unread = q.unread;
+  };
+  $effect(() => q.setOpen(sheetOpen));
+  // Leaving pocket (a tablet-size rotation): the sheet has no place any more.
+  $effect(() => {
+    if (!inPocket) sheetOpen = false;
+  });
+  function closeSheet() {
+    sheetOpen = false;
+    void tick().then(() => chatBtn?.focus({ preventScroll: true }));
+  }
+  function closeMore(refocus: boolean) {
+    moreOpen = false;
+    confirmResign = false;
+    if (refocus) void tick().then(() => moreBtn?.focus());
+  }
+  $effect(() => {
+    if (!moreOpen) return;
+    void tick().then(() => moreMenu?.querySelector<HTMLElement>('button')?.focus());
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && closeMore(true);
+    const down = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!moreMenu?.contains(t) && !moreBtn?.contains(t)) closeMore(false);
+    };
+    window.addEventListener('keydown', key);
+    window.addEventListener('pointerdown', down, true);
+    return () => {
+      window.removeEventListener('keydown', key);
+      window.removeEventListener('pointerdown', down, true);
+    };
+  });
   let confirmLeave = $state(false);
   let now = $state(Date.now());
   let verdictHeading: HTMLHeadingElement | undefined = $state();
@@ -153,12 +197,21 @@
   });
   const dmTab = $derived(dmParticipants(tab) ? (live.dms.find((d) => d.channel === tab) ?? null) : null);
   const groupTab = $derived(groupOf(tab) ? (live.groups.find((g) => g.channel === tab) ?? null) : null);
+  const chatChannel = $derived(table ? (tab === 'table' ? tableChannel(table.id) : tab === 'rail' ? railChannel(table.id) : tab) : null);
+  $effect(() => {
+    const ch = chatChannel;
+    if (!inPocket || !ch) return;
+    q.reset();
+    const off = live.onChat(ch, (m) => q.push(m));
+    return () => off();
+  });
   const convTitle = $derived(groupTab ? groupTitle(groupTab, live.me!.id) : `@${dmTab?.with.handle ?? ''}`);
   $effect(() => {
     const r = live.convRequest;
     if (!r) return;
     tab = r.channel;
     focusKey += 1;
+    if (untrack(() => inPocket)) sheetOpen = true;
     live.convRequest = null;
   });
   // A conversation that left the list (closed elsewhere, the name released): back to where you were.
@@ -342,6 +395,10 @@
   );
   const canResign = $derived(!!match && !!mySeat && !iAmOut && (match.status === 'live' || match.status === 'countdown'));
 
+  $effect(() => {
+    if (!canResign) confirmLeave = false;
+  });
+
   async function rematch() {
     if (!table) return;
     error = '';
@@ -387,6 +444,33 @@
     <a class="btn primary" href="/">Back to the lobby</a>
   </div>
 {:else if table && env && match && (view || ll || ck)}
+  {#snippet chat()}
+  <div class="talk">
+    <ChatPanel
+      channel={chatChannel ?? tab}
+      title={tab === 'table' ? 'Table talk' : tab === 'rail' ? 'The rail' : convTitle}
+      readOnly={(tab === 'table' && !isPlayer) || !!dmTab?.with.released}
+      readOnlyNote={dmTab ? 'This name was given back; nobody will read this.' : 'Only the players can talk at this table.'}
+      placeholder={tab === 'table' ? 'Talk trash, play fair' : tab === 'rail' ? 'Cheer, heckle, speculate' : `Message ${convTitle}`}
+      {focusKey}
+    >
+      {#snippet header()}
+        <div>
+          <div class="tabbar">
+          <div class="tabs" role="tablist" aria-label="Chat">
+            <button role="tab" type="button" aria-selected={tab === 'table'} onclick={() => (tab = 'table')}>Table</button>
+            <button role="tab" type="button" aria-selected={tab === 'rail'} onclick={() => (tab = 'rail')}
+              >{railUnread > 0 ? `Rail (${railUnread})` : 'Rail'}</button
+            >
+            <ConvTabs active={dmTab || groupTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} />
+          </div>
+          <ConvMenu channel={tab} />
+          </div>
+        </div>
+      {/snippet}
+    </ChatPanel>
+  </div>
+  {/snippet}
   <div class="table" class:pocket={inPocket}>
     <section class="game panel" aria-labelledby="game-title">
       <header class="bar top">
@@ -397,7 +481,7 @@
         {#if inPocket}
           <a class="rules" href={gameId ? `/games#${gameId}` : '/games'}>Rules</a>
           {#if canResign}
-            <button class="icon" type="button" aria-label="More" aria-expanded={moreOpen} aria-haspopup="true" onclick={() => (moreOpen = !moreOpen)}>⋯</button>
+            <button class="icon" type="button" aria-label="More" aria-expanded={moreOpen} aria-haspopup="true" bind:this={moreBtn} onclick={() => (moreOpen ? closeMore(false) : (moreOpen = true))}>⋯</button>
           {/if}
         {:else}
         {#if ll}
@@ -412,7 +496,7 @@
         {/if}
       </header>
       {#if inPocket}
-        {#if confirmLeave}
+        {#if confirmLeave && canResign}
           <div class="sheetnote" role="alertdialog" aria-labelledby="leave-text">
             <p id="leave-text">{leaveText}</p>
             <div class="row">
@@ -422,7 +506,7 @@
           </div>
         {/if}
         {#if moreOpen && canResign}
-          <div class="sheetnote more" role="group" aria-label="More">
+          <div class="sheetnote more" role="group" aria-label="More" bind:this={moreMenu}>
             {#if confirmResign}
               <span>Resign this match?</span>
               <div class="row">
@@ -517,33 +601,18 @@
           {#if !inPocket}{@render tableActions()}{/if}
         </footer>
       {/if}
+    {#if inPocket}<Toast line={toast} onopen={() => (sheetOpen = true)} ondismiss={() => q.dismiss()} />{/if}
     </section>
 
-    <div class="talk">
-      <ChatPanel
-        channel={tab === 'table' ? tableChannel(table.id) : tab === 'rail' ? railChannel(table.id) : tab}
-        title={tab === 'table' ? 'Table talk' : tab === 'rail' ? 'The rail' : convTitle}
-        readOnly={(tab === 'table' && !isPlayer) || !!dmTab?.with.released}
-        readOnlyNote={dmTab ? 'This name was given back; nobody will read this.' : 'Only the players can talk at this table.'}
-        placeholder={tab === 'table' ? 'Talk trash, play fair' : tab === 'rail' ? 'Cheer, heckle, speculate' : `Message ${convTitle}`}
-        {focusKey}
-      >
-        {#snippet header()}
-          <div>
-            <div class="tabbar">
-            <div class="tabs" role="tablist" aria-label="Chat">
-              <button role="tab" type="button" aria-selected={tab === 'table'} onclick={() => (tab = 'table')}>Table</button>
-              <button role="tab" type="button" aria-selected={tab === 'rail'} onclick={() => (tab = 'rail')}
-                >{railUnread > 0 ? `Rail (${railUnread})` : 'Rail'}</button
-              >
-              <ConvTabs active={dmTab || groupTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} />
-            </div>
-            <ConvMenu channel={tab} />
-            </div>
-          </div>
-        {/snippet}
-      </ChatPanel>
-    </div>
+    {#if inPocket}
+      <ChatSheet open={sheetOpen} onclose={closeSheet} tapToClose={!ll}>{@render chat()}</ChatSheet>
+      <button class="chat-fab" class:hidden={sheetOpen} type="button" aria-label={unread ? `Open chat (${unread} unread)` : 'Open chat'} bind:this={chatBtn} onclick={() => (sheetOpen = true)}>
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" /></svg>
+        {#if unread > 0}<span class="badge" aria-hidden="true">{unread}</span>{/if}
+      </button>
+    {:else}
+      {@render chat()}
+    {/if}
   </div>
 
   {#if match.status === 'over'}
@@ -829,8 +898,44 @@
     border-inline: 0;
     border-block: 0;
   }
+  .pocket .game {
+    position: relative;
+  }
   .pocket .talk {
+    height: 100%;
+    padding-bottom: 0;
+  }
+  .chat-fab {
+    position: fixed;
+    right: 0.75rem;
+    bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    z-index: 7;
+    display: grid;
+    place-items: center;
+    width: 3rem;
+    height: 3rem;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--panel-2);
+    border: 1px solid var(--lattice);
+    color: var(--chalk);
+  }
+  .chat-fab.hidden {
     display: none;
+  }
+  .badge {
+    position: absolute;
+    top: -0.3rem;
+    right: -0.3rem;
+    min-width: 1.2rem;
+    padding: 0 0.3rem;
+    border-radius: 999px;
+    background: var(--carbon);
+    color: var(--ink);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.2rem;
+    text-align: center;
   }
   .pocket .bar {
     gap: 0.6rem;
@@ -876,7 +981,7 @@
     gap: 0.5rem 0.75rem;
     padding: 0.6rem 0.75rem;
     border-bottom: 1px solid var(--lattice);
-    background: var(--ink-2, rgb(255 255 255 / 0.04));
+    background: var(--panel-2);
   }
   .sheetnote p {
     margin: 0;

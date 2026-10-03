@@ -53,7 +53,7 @@
     position: absolute;
     left: 0.75rem;
     right: 4.25rem;
-    bottom: calc(0.9rem + env(safe-area-inset-bottom, 0px));
+    bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
     z-index: 6;
     pointer-events: none;
   }

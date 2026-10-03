@@ -32,7 +32,7 @@ async function resign(page: Page) {
   const verdict = page.getByRole('heading', { name: /^(You win\.|You lose\.|Draw\.)$/ });
   try {
     // On a phone Resign lives in the ⋯ menu.
-    const more = page.getByRole('button', { name: 'More' });
+    const more = page.getByRole('button', { name: 'More', exact: true });
     if (await more.isVisible()) await more.click();
     await page.getByRole('button', { name: 'Resign' }).click({ timeout: 5000 });
     await page.getByRole('button', { name: 'Yes, resign' }).click({ timeout: 5000 });
