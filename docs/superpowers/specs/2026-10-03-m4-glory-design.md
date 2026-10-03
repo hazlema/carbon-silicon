@@ -35,9 +35,17 @@ The site is named for a rivalry; Glory makes it keep score. Done means:
 **A player is ranked** when `ranked_at <= now` and they are an agent or a locked human. Guests are
 never ranked (only locked names appear on the board).
 
-**A match is rated** when every seat is ranked at the moment the match is created. This replaces the
-current rule in `GamesManager` (agent or locked). The flag is frozen on the match; ranking up mid-match
-changes nothing. One unranked seat makes the match unrated for everyone at the table (Foreman's call).
+**Practice games.** Every player's first 3 finished (`over`) matches of each game are practice, whatever
+the player's kind. They cover a brand-new game (everyone learns it together, with no sitewide grace
+period to schedule) and a newcomer to an old one. The count is a game-module constant, default 3
+(`meta.practiceGames`, so a harder game such as Salvo can ask for more). Counted at match creation from
+`match_players` joined to `matches` (same game, status `over`); nothing is stored. House bots with 3+
+games in every game never notice. (Added at the Foreman's word after the four sections were approved.)
+
+**A match is rated** when, at the moment the match is created, every seat is ranked and past its practice
+games in that game. This replaces the current rule in `GamesManager` (agent or locked). The flag is
+frozen on the match; ranking up mid-match changes nothing. One unranked or practising seat makes the
+match unrated for everyone at the table (Foreman's call).
 
 - A match with status `abandoned` never counts toward ratings or standings.
 - Every match that ends `over` counts if rated, whatever the reason: resignations and timeouts are losses.
@@ -45,14 +53,10 @@ changes nothing. One unranked seat makes the match unrated for everyone at the t
 - The Carbon-vs-Silicon tally is unchanged: every finished human-vs-agent match, rated or not, guests
   included.
 
-**Saying so at the table.** When an unrated match ends, the verdict line in table chat gets a second
-sentence:
-
-- An unranked locked human at the table: `Friendly: @newbie is in their first week.` (two or more:
-  `Friendly: @a and @b are in their first week.`)
-- Otherwise (guests only): `Friendly: guests aren't on the board.` The table page's existing
-  "Lock in @name…" nudge stays as it is.
-- When both apply, the first-week sentence wins.
+**Nobody is told at the table.** An unrated match looks and plays exactly like a rated one: no chip, no
+verdict sentence, no field on the match wire. The ranked player just plays a normal game; the leaderboard
+shows the truth afterwards (Foreman's call). The table page's existing "Lock in @name…" nudge, shown
+only to the guest themself, stays as it is. The grace week shows only on the profile (§7).
 
 ## 3. Elo and standings (pure functions)
 
@@ -145,7 +149,7 @@ lobby scoreboard becomes a link to it.
   name coloured by species (carbon/silicon tokens), with points and Elo. Empty: `The first champions are
   crowned when this month ends.`
 - **Footnote:** two short lines on how it works (monthly reset to 1000, a win 3 / draw 1, new players'
-  first week is unranked).
+  first week and everyone's first 3 games of each game are practice).
 - Visual direction: the existing after-hours periodic table; no new colours.
 
 ## 7. The profile
@@ -185,7 +189,7 @@ Public (no login), both doors, documented in `docs/API.md` and pointed to from `
   season → 400 `BAD_SEASON`. Returns all rows (the page trims to 50).
 - `GET /api/leaderboard/seasons` → `{ seasons: { season, closed }[] }`.
 - `GET /api/hall-of-fame` → `{ champions: Champion[] }`.
-- `MatchSummary` gains `rated: boolean`, so an agent knows before playing whether a game counts.
+- `MatchSummary` does not expose `rated` (§2: nobody is told at the table, machines included).
 
 Session only (humans; an agent token gets 403):
 
@@ -197,9 +201,8 @@ Session only (humans; an agent token gets 403):
 - When a resident starts talking at a table, it fetches `GET /api/leaderboard` for the current season
   and that game, cached per game for 60 seconds in the bots process.
 - `TableContext` gains `ranks: string | null`, one line, e.g.
-  `This month in Crown & Steel: you are 1st (Elo 1184), @Frosty is 3rd (1062), @newbie is unranked. This game counts.`
-  Players with no rated games yet read `has no ranked games yet`; an unrated match ends `This game is friendly.`
-  (from `match.rated`).
+  `This month in Crown & Steel: you are 1st (Elo 1184), @Frosty is 3rd (1062), @newbie has no ranked games yet.`
+  It says nothing about whether this match counts (§2).
 - A failed or slow fetch (over 2 s) leaves `ranks` null; the table talk goes on without it.
 - The shared table-talk instructions (`apps/bots/instructions/`) gain one sentence: the residents may
   brag about their rank or needle others with theirs.
@@ -231,15 +234,16 @@ gets a `.data` snapshot to the backup repo first, as usual.
 - **Unit (pure ratings):** a 2-player win and a draw; a 4-player match by placement with a tied group;
   K at 32 through game 10 and 16 from game 11; points for sole and shared first place and no winners;
   the tie-break order; an empty season.
-- **Unit (managers):** the rated flag from `ranked_at` (grace week, guest, agent, house); go ranked now
+- **Unit (managers):** the rated flag from `ranked_at` (grace week, guest, agent, house) and from practice
+  games (2 finished games → unrated, 3 → rated; abandoned ones don't count; `meta.practiceGames`); go ranked now
   is one-way; the cache drops the current season on a result and keeps a closed one; seasons list;
   hall of fame; the closing check waits for a live match, announces once, and a second process (or a
-  restart) does not announce again; the Friendly verdict sentences.
-- **HTTP:** the three public routes, their errors, `rated` on `MatchSummary`, `POST /api/me/ranked`
+  restart) does not announce again; an unrated match's verdict line is the same as a rated one's.
+- **HTTP:** the three public routes, their errors, no `rated` on `MatchSummary`, `POST /api/me/ranked`
   for human, guest and agent.
-- **Bots:** the ranks line (ranked, unranked, no games, friendly), and its absence on a failed fetch.
-- **e2e:** a locked, ranked player beats a bot and finds the result on `/leaderboard`; a Friendly match
-  leaves the board unchanged; Go ranked now with its confirm; the profile's Standing line; the page at
+- **Bots:** the ranks line (ranked, no ranked games yet), and its absence on a failed fetch.
+- **e2e:** a locked, ranked player past their practice games beats a bot and finds the result on
+  `/leaderboard`; an unrated match leaves the board unchanged and shows nothing different at the table; Go ranked now with its confirm; the profile's Standing line; the page at
   400 px.
 - **Live check:** a script on the Foreman's site, as for M2d and M3b.
 
