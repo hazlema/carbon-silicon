@@ -375,6 +375,12 @@
     gap: 0.6rem;
     padding: 0.9rem 1.25rem;
     border-top: 1px solid var(--lattice);
+    /* When a phone keyboard opens, the browser scrolls the composer into view with room to spare
+       (Gboard's toolbar row isn't counted as keyboard by the visual viewport). */
+    scroll-margin-bottom: 4rem;
+  }
+  textarea {
+    scroll-margin-bottom: 4rem;
   }
   textarea {
     flex: 1;
