@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { PgTable, getTableConfig } from 'drizzle-orm/pg-core';
 import { testDatabaseUrl } from '../lib/testing';
-import { copyDatabase, copyTables } from './copy';
+import { copyDatabase, copyTables, sequenceColumns } from './copy';
 import { type Database, openDatabase } from './index';
 import * as schema from './schema';
 
@@ -57,7 +57,34 @@ describe('copyTables', () => {
   });
 });
 
+describe('sequenceColumns', () => {
+  test('covers every serial and bigserial column in the schema', () => {
+    const found: string[] = [];
+    for (const t of Object.values(schema) as unknown[]) {
+      if (!(t instanceof PgTable)) continue;
+      const cfg = getTableConfig(t);
+      for (const c of cfg.columns) if (/^Pg(Big)?Serial/.test(c.columnType)) found.push(`${cfg.name}.${c.name}`);
+    }
+    expect(found.length).toBeGreaterThan(0);
+    expect(sequenceColumns.map((c) => `${c.table}.${c.column}`).sort()).toEqual(found.sort());
+  });
+});
+
 describe('copyDatabase', () => {
+  test('a failing insert names the table and the cause, and never leaks row values', async () => {
+    const from = await open('pglite:memory');
+    const to = await open('pglite:memory');
+    await populate(from.db);
+    await to.db.execute(sql.raw(`create function refuse() returns trigger language plpgsql as $$ begin raise exception 'refused by test trigger'; end $$`));
+    await to.db.execute(sql.raw('create trigger no_identities before insert on identities for each row execute function refuse()'));
+    let message = '';
+    await copyDatabase(from.db, to.db, () => {}).catch((e) => (message = e.message));
+    expect(message).toContain('table identities');
+    expect(message).toContain('refused by test trigger');
+    for (const leak of ['hash-a', 'Ann', 'Bob', 'Failed query', 'params']) expect(message).not.toContain(leak);
+    expect(await to.db.select().from(schema.identities)).toEqual([]);
+  });
+
   test('copies every row; ids, timestamps and jsonb round-trip; sequences continue after the copy', async () => {
     const from = await open('pglite:memory');
     const to = await open(await testDatabaseUrl());

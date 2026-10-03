@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { asc, count, sql } from 'drizzle-orm';
@@ -33,6 +34,13 @@ function keyColumns(t: PgTable): AnyPgColumn[] {
   return cfg.primaryKeys.flatMap((pk) => pk.columns);
 }
 
+/** Every serial/bigserial column, whose sequence must continue after the copied rows. */
+export const sequenceColumns = copyTables.flatMap((t) =>
+  getTableConfig(t)
+    .columns.filter((c) => c.columnType.startsWith('PgSerial') || c.columnType.startsWith('PgBigSerial'))
+    .map((c) => ({ table: nameOf(t), column: c.name })),
+);
+
 async function rowCount(db: DB, t: PgTable): Promise<number> {
   const [r] = await db.select({ n: count() }).from(t);
   return Number(r.n);
@@ -49,25 +57,33 @@ export async function copyDatabase(from: DB, to: DB, log: (line: string) => void
       const name = nameOf(t);
       const order = keyColumns(t).map((c) => asc(c));
       let copied = 0;
-      for (;;) {
-        const rows = (await from.select().from(t).orderBy(...order).limit(BATCH).offset(copied)) as Record<string, unknown>[];
-        if (!rows.length) break;
-        await tx.insert(t).values(rows);
-        copied += rows.length;
-        if (rows.length < BATCH) break;
+      try {
+        for (;;) {
+          const rows = (await from.select().from(t).orderBy(...order).limit(BATCH).offset(copied)) as Record<string, unknown>[];
+          if (!rows.length) break;
+          // Rows pass through JS: timestamps keep millisecond precision (all app-written data is
+          // millisecond anyway), and a JSON null in a jsonb column becomes SQL NULL.
+          await tx.insert(t).values(rows);
+          copied += rows.length;
+          if (rows.length < BATCH) break;
+        }
+      } catch (e) {
+        // Drizzle's own message carries the SQL and every parameter (password hashes, emails, IPs); the cause has the real reason.
+        throw new Error(`table ${name}: ${e instanceof Error && e.cause instanceof Error ? e.cause.message : e instanceof Error ? e.message.split('\n')[0] : String(e)}`);
       }
       const sourceCount = await rowCount(from, t);
       const destCount = await rowCount(tx as unknown as DB, t);
       if (destCount !== sourceCount) throw new Error(`table ${name}: copied ${destCount} rows, source has ${sourceCount}`);
-      if (getTableConfig(t).columns.some((c) => c.name === 'id' && c.columnType === 'PgBigSerial53')) {
+      for (const { column } of sequenceColumns.filter((c) => c.table === name)) {
         await tx.execute(
-          sql.raw(`select setval(pg_get_serial_sequence('${name}','id'), coalesce(max(id),1), max(id) is not null) from ${name}`),
+          sql.raw(`select setval(pg_get_serial_sequence('${name}','${column}'), coalesce(max(${column}),1), max(${column}) is not null) from ${name}`),
         );
       }
       log(`${name} ${sourceCount} → ${destCount}`);
       total += destCount;
     }
   });
+  if (total === 0) log('warning: the source has no rows at all');
   log(`copied ${total} rows`);
   return total;
 }
@@ -86,7 +102,12 @@ if (import.meta.main) {
     console.error('db:copy: source and destination are the same database.');
     process.exit(1);
   }
-  const from = await openDatabase(absolute(fromUrl));
+  const fromPath = absolute(fromUrl);
+  if (fromPath.startsWith('pglite:') && fromPath !== 'pglite:memory' && !existsSync(fromPath.slice('pglite:'.length))) {
+    console.error(`db:copy: source ${fromPath.slice('pglite:'.length)} does not exist.`);
+    process.exit(1);
+  }
+  const from = await openDatabase(fromPath);
   const to = await openDatabase(absolute(toUrl));
   let code = 0;
   try {
