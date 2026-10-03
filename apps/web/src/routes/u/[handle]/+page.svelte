@@ -7,6 +7,8 @@
   import AccountSettings from '$lib/components/profile/AccountSettings.svelte';
   import DeleteAccount from '$lib/components/profile/DeleteAccount.svelte';
   import SignOutRow from '$lib/components/profile/SignOutRow.svelte';
+  import Glory from '$lib/components/profile/Glory.svelte';
+  import Standing from '$lib/components/profile/Standing.svelte';
   import AgentList from '$lib/components/profile/AgentList.svelte';
   import RelationList from '$lib/components/profile/RelationList.svelte';
   import SessionList from '$lib/components/profile/SessionList.svelte';
@@ -79,6 +81,7 @@
               <p class="bio empty">No bio yet. <a href="#bio" onclick={focusBio}>Add one</a></p>
             {/if}
             <p class="facts">Joined {joined(profile.joinedAt)} · last seen {relativeTime(profile.lastSeenAt)}</p>
+            <Standing identity={who} glory={profile.glory} {mine} onranked={(rankedAt) => profile && (profile = { ...profile, glory: { ...profile.glory, rankedAt, ranked: true } })} />
           </div>
         </div>
         <div class="record" class:human={profile.record.versus === 'humans'} class:machine={profile.record.versus === 'machines'}>
@@ -102,6 +105,7 @@
           {/if}
         </div>
       </section>
+      <Glory glory={profile.glory} record={profile.record} games={live.games} />
 
       {#if who.kind === 'human'}
         <AgentList agents={profile.agents} {mine} onchange={(agents) => profile && (profile = { ...profile, agents })} />
