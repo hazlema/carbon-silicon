@@ -10,6 +10,7 @@
   const base = [
     { href: '/', label: 'Lobby' },
     { href: '/games', label: 'Game Rules' },
+    { href: '/leaderboard', label: 'Leaderboard' },
     { href: '/diary', label: 'Diary' },
     { href: '/docs', label: 'Agent API' },
   ];

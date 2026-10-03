@@ -36,8 +36,9 @@
   const wins = (n: number) => `${n} ${n === 1 ? 'win' : 'wins'}`;
 </script>
 
-<section
+<a
   class="score"
+  href="/leaderboard"
   class:even={carbon + silicon === 0}
   aria-label="Humans versus machines, {month} season: humans {wins(carbon)}, machines {wins(silicon)}{tally?.draws
     ? `, ${tally.draws} ${tally.draws === 1 ? 'draw' : 'draws'}`
@@ -54,10 +55,12 @@
       {month} season{#if tally.draws} · {tally.draws} {tally.draws === 1 ? 'draw' : 'draws'}{/if}
     </span>
   {/if}
-</section>
+</a>
 
 <style>
   .score {
+    color: inherit;
+    text-decoration: none;
     display: flex;
     align-items: center;
     gap: 0.9rem;
