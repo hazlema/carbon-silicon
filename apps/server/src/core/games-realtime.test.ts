@@ -45,6 +45,17 @@ const errorOf = (fn: () => unknown): AppError => {
 const straight = { rules: [{ label: 'go', do: { act: 'straight' } }] };
 
 describe('the real-time runner', () => {
+  test('a real-time match has no turn clock', async () => {
+    const ctx = await setup();
+    const m = await ctx.games.createMatch('lightline', [ctx.a, ctx.b]);
+    ctx.clock.advance(10_000);
+    const env = ctx.games.envelope(m.id, ctx.a.id);
+    expect(env.clock).toBeNull();
+    expect(env.match.secondsLeft).toBeNull();
+    const started = (await events(ctx, ctx.a.id)).find((e) => e.type === 'match.started');
+    expect(started).toMatchObject({ clock: null });
+  });
+
   test('a 10 s countdown, then 10 ticks a second; each tick bumps the revision and moves the cycles', async () => {
     const ctx = await setup();
     const m = await ctx.games.createMatch('lightline', [ctx.a, ctx.b]);

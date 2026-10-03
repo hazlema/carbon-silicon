@@ -258,7 +258,10 @@ export class GameManager {
       throw e;
     }
     const summary = this.toSummary(m);
-    for (const s of seats) this.comms.deliver(s.identity.id, { type: 'match.started', match: summary });
+    const clock = m.module.turn
+      ? `Turn-based: ${m.module.turn.turnSeconds} s per move. ${this.rulesOfClock()}`
+      : null;
+    for (const s of seats) this.comms.deliver(s.identity.id, { type: 'match.started', match: summary, clock });
     await this.comms.postSystem(
       this.chatOf(m),
       `${seats.map((s) => `@${s.identity.handle}`).join(' vs ')} — ${name}. Talk trash; play fair.`,
@@ -321,6 +324,8 @@ export class GameManager {
         matchId: m.id,
         revision: m.revision,
         deadline,
+        secondsLeft: this.secondsLeft(m) ?? 0,
+        clock: this.moverClock(m, seat),
       });
     }
   }
@@ -420,6 +425,7 @@ export class GameManager {
     this.record(m, seat, `${this.narrateMove(m, before, next, seat, command)} (autopilot)`);
     const done = this.advance(m, next);
     const text = turn.describe ? turn.describe(command) : JSON.stringify(command);
+    this.comms.deliver(who.id, { type: 'match.autopilot', matchId: m.id, move: text, misses: m.timeouts[seat]!, forfeitAt: this.opts.maxTimeouts });
     await this.comms.postSystem(table, `@${who.handle} dozed off — autopilot played ${text}.`);
     await done;
   }
@@ -673,11 +679,39 @@ export class GameManager {
             ...(you ? { you: { senses: senses(you), doctrine: m.desk.doctrineOf(you), pending: m.desk.pendingOf(you) } } : {}),
           }
         : undefined;
-    return { match: this.toSummary(m), you, view: m.module.view(m.state, you), legal, recent: [...m.recent], ...(realtime ? { realtime } : {}) };
+    return { match: this.toSummary(m), you, clock: this.clockFor(m, you), view: m.module.view(m.state, you), legal, recent: [...m.recent], ...(realtime ? { realtime } : {}) };
   }
 
   summary(matchId: string): MatchSummary {
     return this.toSummary(this.require(matchId));
+  }
+
+  private rulesOfClock(): string {
+    return `At 0 the autopilot plays a random move for you; ${this.opts.maxTimeouts} misses in a row forfeit the match.`;
+  }
+
+  /** Whole seconds to the deadline, rounded up, never below 0; null with no deadline. */
+  private secondsLeft(m: LiveMatch): number | null {
+    if (!m.deadline) return null;
+    return Math.max(0, Math.ceil((m.deadline - this.clock.now()) / 1000));
+  }
+
+  private moverClock(m: LiveMatch, seat: SeatId): string {
+    const missed = m.timeouts[seat] ?? 0;
+    const misses = missed > 0 ? ` You've missed ${missed} in a row.` : '';
+    return `Your move: ${this.secondsLeft(m) ?? 0} s left. ${this.rulesOfClock()}${misses}`;
+  }
+
+  /** The clock as one sentence for this viewer (a seat, or null for a spectator). */
+  private clockFor(m: LiveMatch, seat: SeatId | null): string | null {
+    const left = this.secondsLeft(m);
+    const turn = m.module.turn;
+    if (left === null || !turn || m.status !== 'live') return null;
+    const toMove = turn.toMove(m.state);
+    if (seat && toMove.includes(seat)) return this.moverClock(m, seat);
+    const first = toMove[0];
+    if (!first) return null;
+    return `@${this.seatInfo(m, first).identity.handle} to move: ${left} s left.`;
   }
 
   private toSummary(m: LiveMatch): MatchSummary {
@@ -690,6 +724,7 @@ export class GameManager {
       seats: m.seats,
       toMove: m.status === 'live' && turn ? turn.toMove(m.state) : [],
       deadline: m.deadline ? new Date(m.deadline).toISOString() : null,
+      secondsLeft: m.status === 'live' ? this.secondsLeft(m) : null,
       startsAt: new Date(m.startsAt).toISOString(),
       outcome: m.outcome,
       endReason: m.endReason,

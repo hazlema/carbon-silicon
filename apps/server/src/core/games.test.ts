@@ -3,7 +3,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { criticalMassGame, type CMCommand, type CMView } from '@cs/critical-mass';
 import { createRng, type GameModule } from '@cs/game-api';
-import { PUBLIC_CHANNELS, tableChannel, type IdentityPublic } from '@cs/shared/protocol';
+import { PUBLIC_CHANNELS, tableChannel, type IdentityPublic, type InboxEvent } from '@cs/shared/protocol';
 import { openDatabase } from '../db';
 import type { DB } from '../db';
 import { matches, matchPlayers, messages } from '../db/schema';
@@ -328,6 +328,86 @@ describe('clocks', () => {
     await waitFor(async () => (await ctx.comms.poll(ctx.blue.id, 0, 0)).events.some((e) => e.type === 'match.over' && e.result === 'win'));
     const [row] = await database.db.select().from(matches).where(eq(matches.id, id));
     expect(row.status).toBe('over');
+  });
+});
+
+describe('the turn clock in words', () => {
+  const MINE = 'Your move: 90 s left. At 0 the autopilot plays a random move for you; 3 misses in a row forfeit the match.';
+  const yourTurns = async (ctx: Ctx, who: IdentityPublic, id: string) =>
+    (await ctx.comms.poll(who.id, 0, 0)).events.filter((e) => e.type === 'match.yourTurn' && e.matchId === id) as Extract<InboxEvent, { type: 'match.yourTurn' }>[];
+
+  test('secondsLeft is whole seconds, rounded up; null in countdown and once the match is over', async () => {
+    const ctx = await setup();
+    const created = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.blue]);
+    expect(ctx.games.summary(created.id).secondsLeft).toBeNull();
+    ctx.clock.advance(3000);
+    expect(ctx.games.summary(created.id).secondsLeft).toBe(90);
+    ctx.clock.advance(30_500); // 59.5 s left, rounded up
+    expect(ctx.games.summary(created.id).secondsLeft).toBe(60);
+    ctx.clock.advance(1000); // 58.5 s left
+    expect(ctx.games.summary(created.id).secondsLeft).toBe(59);
+    await ctx.games.resign(created.id, ctx.blue);
+    expect(ctx.games.summary(created.id).secondsLeft).toBeNull();
+  });
+
+  test('envelope.clock tells the mover, everyone else and a spectator; null in countdown', async () => {
+    const ctx = await setup();
+    const created = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.blue]);
+    expect(ctx.games.envelope(created.id, ctx.red.id).clock).toBeNull();
+    ctx.clock.advance(3000);
+    ctx.clock.advance(31_500); // 58.5 s left, rounded up
+    expect(ctx.games.envelope(created.id, ctx.red.id).clock).toBe(MINE.replace('90', '59'));
+    const theirs = `@${ctx.red.handle} to move: 59 s left.`;
+    expect(ctx.games.envelope(created.id, ctx.blue.id).clock).toBe(theirs);
+    expect(ctx.games.envelope(created.id, null).clock).toBe(theirs);
+    expect(ctx.games.envelope(created.id, ctx.outsider.id).clock).toBe(theirs);
+  });
+
+  test('match.started carries the turn-based clock sentence', async () => {
+    const ctx = await setup();
+    await ctx.games.createMatch('critical-mass', [ctx.red, ctx.blue]);
+    const started = (await ctx.comms.poll(ctx.blue.id, 0, 0)).events.find((e) => e.type === 'match.started');
+    expect(started).toMatchObject({
+      clock: 'Turn-based: 90 s per move. At 0 the autopilot plays a random move for you; 3 misses in a row forfeit the match.',
+    });
+  });
+
+  test('match.yourTurn carries secondsLeft and the sentence', async () => {
+    const ctx = await setup();
+    const id = await liveMatch(ctx);
+    const [turn] = await yourTurns(ctx, ctx.red, id);
+    expect(turn).toMatchObject({ secondsLeft: 90, clock: MINE });
+  });
+
+  test('a timeout tells the sleeper (match.autopilot) and the next yourTurn counts the miss until they move', async () => {
+    const ctx = await setup();
+    const id = await liveMatch(ctx);
+    ctx.clock.advance(90_000); // red dozes; blue to move
+    const events = (await ctx.comms.poll(ctx.red.id, 0, 0)).events;
+    const auto = events.find((e) => e.type === 'match.autopilot');
+    const move = (auto as { move: string }).move;
+    expect(auto).toMatchObject({ matchId: id, misses: 1, forfeitAt: 3 });
+    expect(move).toMatch(/^[a-f][1-9]/);
+    await waitFor(async () => (await ctx.comms.history(`match:${id}`)).some((m) => m.text.includes(`autopilot played ${move}.`)));
+    expect((await ctx.comms.poll(ctx.blue.id, 0, 0)).events.some((e) => e.type === 'match.autopilot')).toBe(false);
+    await ctx.games.move(id, ctx.blue, ctx.games.summary(id).revision, firstLegal(ctx, id, ctx.blue));
+    const missed = await yourTurns(ctx, ctx.red, id);
+    expect(missed.at(-1)!.clock.endsWith(" You've missed 1 in a row.")).toBe(true);
+    expect(ctx.games.envelope(id, ctx.red.id).clock!.endsWith(" You've missed 1 in a row.")).toBe(true);
+    await ctx.games.move(id, ctx.red, ctx.games.summary(id).revision, firstLegal(ctx, id, ctx.red));
+    await ctx.games.move(id, ctx.blue, ctx.games.summary(id).revision, firstLegal(ctx, id, ctx.blue));
+    const after = (await yourTurns(ctx, ctx.red, id)).at(-1)!;
+    expect(after.clock).toBe(MINE);
+  });
+
+  test('the forfeiting timeout sends match.over, not match.autopilot', async () => {
+    const ctx = await setup();
+    const id = await liveMatch(ctx);
+    for (let i = 0; i < 5; i++) ctx.clock.advance(90_000);
+    const events = (await ctx.comms.poll(ctx.red.id, 0, 0)).events;
+    expect(events.filter((e) => e.type === 'match.autopilot').map((e: any) => e.misses)).toEqual([1, 2]);
+    await waitFor(async () => (await ctx.comms.poll(ctx.red.id, 0, 0)).events.some((e) => e.type === 'match.over' && e.result === 'loss'));
+    expect(ctx.games.summary(id).status).toBe('over');
   });
 });
 

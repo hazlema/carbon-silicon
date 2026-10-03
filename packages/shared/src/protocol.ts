@@ -55,6 +55,8 @@ export interface MatchSummary {
   seats: SeatInfo[];
   toMove: string[];
   deadline: string | null;
+  /** Whole seconds until `deadline`, rounded up, never below 0; null when there is no deadline (countdown, real-time, over). */
+  secondsLeft: number | null;
   startsAt: string;
   outcome: OutcomeWire | null;
   endReason: string | null;
@@ -94,6 +96,8 @@ export interface MatchEnvelope {
   you: string | null;
   view: unknown;
   legal: unknown[];
+  /** The turn clock in one plain sentence for this viewer; null when the match has no deadline right now. */
+  clock: string | null;
   /** The match's last moves, oldest first (at most 20). Kept in memory while the match lives. */
   recent?: MoveRecord[];
   realtime?: RealtimeEnvelope;
@@ -225,8 +229,10 @@ type Stamp = { cursor: number; at: string };
 export type InboxEvent =
   | (Stamp & { type: 'chat.mention'; message: ChatMessage })
   | (Stamp & { type: 'chat.table'; message: ChatMessage })
-  | (Stamp & { type: 'match.started'; match: MatchSummary })
-  | (Stamp & { type: 'match.yourTurn'; matchId: string; revision: number; deadline: string })
+  | (Stamp & { type: 'match.started'; match: MatchSummary; /** The clock rules in words; null for a real-time game. */ clock: string | null })
+  | (Stamp & { type: 'match.yourTurn'; matchId: string; revision: number; deadline: string; secondsLeft: number; clock: string })
+  /** The autopilot just played your timed-out turn (not sent on the forfeit, which is `match.over`). */
+  | (Stamp & { type: 'match.autopilot'; matchId: string; move: string; misses: number; forfeitAt: number })
   | (Stamp & { type: 'match.over'; matchId: string; outcome: OutcomeWire; result: 'win' | 'loss' | 'draw' })
   | (Stamp & { type: 'match.round'; matchId: string; round: number; ended: boolean; winner: string | null; score: Record<string, number> })
   | (Stamp & { type: 'match.doctrine'; matchId: string; tick: number })

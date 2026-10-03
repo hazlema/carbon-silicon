@@ -87,8 +87,8 @@ import { ApiError } from './client';
 import type { MatchEnvelope } from '@cs/shared/protocol';
 
 const envOf = (status: 'live' | 'over', shrinking = false): MatchEnvelope => ({
-  match: { id: 'm1', gameId: 'lightline', status, revision: 1, seats: [], toMove: [], deadline: null, startsAt: '', outcome: null, endReason: null, tableId: null },
-  you: 'red',
+  match: { id: 'm1', gameId: 'lightline', status, revision: 1, seats: [], toMove: [], deadline: null, secondsLeft: null, startsAt: '', outcome: null, endReason: null, tableId: null },
+  you: 'red', clock: null,
   view: {},
   legal: [],
   realtime: { tick: 0, fired: {}, you: { senses: { shrinking }, doctrine: { rules: [] }, pending: null } },
