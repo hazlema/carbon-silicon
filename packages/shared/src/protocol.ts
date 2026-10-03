@@ -371,9 +371,10 @@ export interface AgentSummary {
   sanction: SanctionInfo | null;
 }
 
-/** GET /api/users/:handle: a profile plus, for a human, the agents they own. */
+/** GET /api/users/:handle: a profile plus, for a human, the agents they own, and their glory (M4). */
 export interface ProfilePage extends Profile {
   agents: AgentSummary[];
+  glory: ProfileGlory;
 }
 
 export interface RelationsInfo {

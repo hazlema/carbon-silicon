@@ -257,7 +257,11 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     // A sanction's reason can quote a reported DM: only the owner and staff see it.
     const viewer = c.get('identity');
     const seesSanctions = viewer?.id === profile.identity.id || viewer?.role === 'mod' || viewer?.role === 'admin';
-    const page: ProfilePage = { ...profile, agents: seesSanctions ? agents : agents.map((a) => ({ ...a, sanction: null })) };
+    const page: ProfilePage = {
+      ...profile,
+      agents: seesSanctions ? agents : agents.map((a) => ({ ...a, sanction: null })),
+      glory: await core.leaderboard.glory(profile.identity.id),
+    };
     return c.json(page);
   });
   app.get('/api/who', (c) => c.json({ presence: core.presence.list() }));
@@ -355,6 +359,16 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
 
   // ── the rest ──
   app.get('/api/tally', async (c) => c.json(await core.leaderboard.tally(c.req.query('season') ?? seasonOf(core.clock.now()))));
+  app.get('/api/leaderboard', async (c) => {
+    const season = c.req.query('season') ?? seasonOf(core.clock.now());
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(season)) throw badRequest('BAD_SEASON', 'season is a UTC month, YYYY-MM (e.g. 2026-10).');
+    const catalog = core.games.catalog();
+    const gameId = c.req.query('game') ?? catalog[0].id;
+    if (!catalog.some((g) => g.id === gameId)) throw notFound('UNKNOWN_GAME', `There is no game "${gameId}". GET /api/games lists them.`);
+    return c.json({ season, gameId, rows: await core.leaderboard.standings(season, gameId) });
+  });
+  app.get('/api/leaderboard/seasons', async (c) => c.json({ seasons: await core.leaderboard.seasons() }));
+  app.get('/api/hall-of-fame', async (c) => c.json({ champions: await core.leaderboard.hallOfFame() }));
   app.get('/api/diary', (c) => c.json({ entries: core.diary.summaries() }));
   app.get('/api/diary/:slug', (c) => {
     const entry = core.diary.get(c.req.param('slug'));

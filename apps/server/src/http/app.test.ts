@@ -2,7 +2,7 @@ import { testDatabaseUrl } from '@cs/server/testing';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import type { CMCommand } from '@cs/critical-mass';
-import type { InboxPoll, MatchEnvelope } from '@cs/shared/protocol';
+import { seasonOf, type InboxPoll, type MatchEnvelope } from '@cs/shared/protocol';
 import { createCore } from '../core/core';
 import { FakeClock } from '../lib/clock';
 import { randomTag } from '../lib/testing';
@@ -498,5 +498,44 @@ describe('humans play Lightline', () => {
     expect(tallyAfter.silicon).toBe(tallyBefore.silicon + 1);
     expect(tallyAfter.carbon).toBe(tallyBefore.carbon);
     expect((await call('GET', '/api/games/lightline/rules')).data.game.humans).toBe(true);
+  });
+});
+
+describe('leaderboard', () => {
+  test('GET /api/leaderboard defaults to this season and the first game, and checks its query', async () => {
+    const r = await call('GET', '/api/leaderboard');
+    expect(r.status).toBe(200);
+    expect(r.data).toMatchObject({ season: seasonOf(Date.now()), gameId: 'critical-mass' });
+    expect(Array.isArray(r.data.rows)).toBe(true);
+    expect(await call('GET', '/api/leaderboard?season=2099-01&game=checkers')).toMatchObject({ status: 200, data: { season: '2099-01', gameId: 'checkers', rows: [] } });
+    for (const bad of ['2026-13', 'sept', '2026-9']) {
+      const r2 = await call('GET', `/api/leaderboard?season=${bad}`);
+      expect([r2.status, r2.data.error.code]).toEqual([400, 'BAD_SEASON']);
+    }
+    const r3 = await call('GET', '/api/leaderboard?game=pong');
+    expect([r3.status, r3.data.error.code]).toEqual([404, 'UNKNOWN_GAME']);
+  });
+  test('seasons and the hall of fame answer without a login', async () => {
+    const s = await call('GET', '/api/leaderboard/seasons');
+    expect(s.status).toBe(200);
+    expect(s.data.seasons[0]).toEqual({ season: seasonOf(Date.now()), closed: false });
+    const h = await call('GET', '/api/hall-of-fame');
+    expect(h.status).toBe(200);
+    expect(Array.isArray(h.data.champions)).toBe(true);
+  });
+  test('Go ranked now: a locked human is ranked and the profile says so; a guest must lock; an agent is refused', async () => {
+    const h = await lockedHuman('rk');
+    const before = await call('GET', `/api/users/${h.handle}`);
+    expect(before.data.glory).toMatchObject({ ranked: false, matchesPlayed: 0, season: [], titles: [] });
+    const r = await call('POST', '/api/me/ranked', { cookie: h.cookie });
+    expect(r.status).toBe(200);
+    expect(Date.parse(r.data.rankedAt)).toBeLessThanOrEqual(Date.now());
+    expect((await call('GET', `/api/users/${h.handle}`)).data.glory.ranked).toBe(true);
+    const guest = await call('POST', '/api/session', { body: { handle: `gst${tag()}` } });
+    const g = await call('POST', '/api/me/ranked', { cookie: cookieOf(guest) });
+    expect([g.status, g.data.error.code]).toEqual([403, 'LOCK_FIRST']);
+    const a = await agent();
+    const x = await call('POST', '/api/me/ranked', { token: a.token });
+    expect([x.status, x.data.error.code]).toEqual([403, 'HUMANS_ONLY']);
   });
 });
