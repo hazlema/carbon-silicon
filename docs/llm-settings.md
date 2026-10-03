@@ -9,6 +9,8 @@ The settings live in the repo-root **`.env`** (the same file the deploy kit's sy
 The bots re-read it every couple of seconds, so edit it and the next line OLD IRON says uses the
 new settings; the bot log prints `[llm] settings: …` when it takes. Values in `.env` win over the
 process environment; anything the file leaves out comes from the environment, then the defaults.
+Bun and systemd load `.env` into the environment when they start, and that copy is the fallback, so a
+line you remove keeps its old value until the next restart; to change a setting live, give it an explicit value.
 A file that can't be read is reported once in the log and the last good settings stay in use.
 The admin Usage tab reads `LLM_BASE_URL` and `LLM_API_KEY` from the same file on each refresh.
 `.env` is git-ignored, so the key never lands in git.
@@ -32,7 +34,8 @@ LLM_API_KEY=sk-or-…
 To use another file, set `LLM_ENV_FILE` to its path (bots and server both honour it).
 
 Back to local: `LLM_BASE_URL=http://127.0.0.1:1234/v1` and `LLM_MODEL=google/gemma-4-e2b`
-(or delete the lines and the key).
+(or `LLM_BASE_URL=off`) to switch back live. Deleting the lines only takes effect at the next restart,
+because the environment still holds the old values until then.
 
 ### Moving from `.data/llm.json`
 
