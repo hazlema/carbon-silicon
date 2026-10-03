@@ -225,4 +225,30 @@ describe('closing a season', () => {
       await own.close();
     }
   });
+
+  test('an announcement that fails is retried by the next check', async () => {
+    const own = await openDatabase(await testDatabaseUrl());
+    try {
+      const lines: string[] = [];
+      let failed = false;
+      const flaky = {
+        postSystem: async (channel: string, text: string) => {
+          if (!failed) {
+            failed = true;
+            throw new Error('boom');
+          }
+          lines.push(`${channel}|${text}`);
+        },
+      };
+      const clock = new FakeClock(Date.UTC(2026, 9, 15));
+      const [a, b] = await agents(own.db, 2);
+      await play(own.db, '2026-08', 'critical-mass', [[a], [b]]);
+      const lb = board(own.db, clock).lb;
+      await expect(lb.closeSeasons(flaky)).rejects.toThrow('boom');
+      expect(await lb.closeSeasons(flaky)).toEqual(['2026-08']);
+      expect(lines).toHaveLength(1);
+    } finally {
+      await own.close();
+    }
+  });
 });

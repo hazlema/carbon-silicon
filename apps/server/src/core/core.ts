@@ -145,7 +145,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       const done = await leaderboard.closeSeasons(comms);
       if (done.length > 0) console.log(`[core] closed season(s) ${done.join(', ')}`);
     } catch (e) {
-      console.error('[core] season closing failed', e);
+      if (!closed) console.error('[core] season closing failed', e);
     }
   };
   const seasonEvery = opts.seasonCheckMs ?? 60_000;

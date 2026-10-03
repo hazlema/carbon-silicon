@@ -14,7 +14,6 @@ export interface LeaderboardDeps {
   games: () => { id: string; name: string }[];
 }
 
-/** Seasons, Elo, standings, the hall of fame and the Carbon-vs-Silicon tally, all derived from match results (M4). */
 /** Whoever posts the closing line: the CommunicationManager in production, a fake in tests. */
 export interface Announcer {
   postSystem(channel: string, text: string): Promise<unknown>;
@@ -25,6 +24,7 @@ export function monthName(season: string): string {
   return new Date(`${season}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
 }
 
+/** Seasons, Elo, standings, the hall of fame and the Carbon-vs-Silicon tally, all derived from match results (M4). */
 export class LeaderboardManager {
   /** `${season}:${gameId}` → standings. Closed seasons stay forever; open ones go on `match.finished`. */
   private cache = new Map<string, StandingRow[]>();
@@ -182,7 +182,14 @@ export class LeaderboardManager {
         .returning({ season: seasonClosings.season });
       closed.add(season);
       if (inserted.length === 0) continue;
-      await announcer.postSystem('lobby', await this.announcement(season, current));
+      try {
+        await announcer.postSystem('lobby', await this.announcement(season, current));
+      } catch (e) {
+        // Nothing was announced: undo the closing so the next check tries again.
+        await this.db.delete(seasonClosings).where(eq(seasonClosings.season, season));
+        closed.delete(season);
+        throw e;
+      }
       done.push(season);
     }
     return done;
