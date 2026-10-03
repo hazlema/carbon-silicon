@@ -31,6 +31,10 @@ LLM_API_KEY=sk-or-…
 | `LLM_TEMPERATURE` | 0–2, default 0.9. Higher is wilder. |
 | `BOUNCER_MODEL` | The Bouncer's own model; leave it out to use `LLM_MODEL`. |
 
+The `.env` file beats the process environment, so a command-line override such as
+`LLM_BASE_URL=off bun apps/bots/src/main.ts`, run from a checkout that has a `.env`, still uses the `.env`
+values. To force values from the command line, also set `LLM_ENV_FILE=/nonexistent`.
+
 To use another file, set `LLM_ENV_FILE` to its path (bots and server both honour it).
 
 Back to local: `LLM_BASE_URL=http://127.0.0.1:1234/v1` and `LLM_MODEL=google/gemma-4-e2b`

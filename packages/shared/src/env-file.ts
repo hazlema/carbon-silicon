@@ -2,7 +2,11 @@ import { readFile } from 'node:fs/promises';
 
 const LINE = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/;
 
-/** Reads dotenv text: KEY=value lines, `export ` allowed, # comments, single or double quotes. */
+/**
+ * Reads dotenv text: KEY=value lines, `export ` allowed, # comments, single or double quotes.
+ * A simple subset of what Bun's own loader accepts: no `$VAR` expansion, no `\"` escapes, and an
+ * unquoted `#` without a space before it stays in the value. While running, this file is the source of truth.
+ */
 export function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const raw of text.split(/\r?\n/)) {
