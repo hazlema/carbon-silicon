@@ -24,9 +24,11 @@ export function monthName(season: string): string {
   return new Date(`${season}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
 }
 
+const SEASON_GRACE_MS = 5 * 60_000;
+
 /** Seasons, Elo, standings, the hall of fame and the Carbon-vs-Silicon tally, all derived from match results (M4). */
 export class LeaderboardManager {
-  /** `${season}:${gameId}` → standings. Closed seasons stay forever; open ones go on `match.finished`. */
+  /** `${season}:${gameId}` → standings. Closed seasons stay forever; open ones go when a match is recorded. */
   private cache = new Map<string, StandingRow[]>();
   /** Bumped on every drop, so a query that started before it never stores a stale result. */
   private generation = 0;
@@ -37,7 +39,7 @@ export class LeaderboardManager {
     private db: DB,
     private deps: LeaderboardDeps,
   ) {
-    deps.bus.on('match.finished', () => this.dropOpen());
+    deps.bus.on('match.recorded', (e) => this.dropRecorded(e.season, e.gameId));
   }
 
   async tally(season: string): Promise<Tally> {
@@ -106,7 +108,8 @@ export class LeaderboardManager {
       games: l.games,
       elo: Math.round(l.elo),
     }));
-    if (generation === this.generation || closed.has(season)) this.cache.set(key, board);
+    // An empty board is cheap to recompute, and never storing one keeps a crawler's made-up seasons out of the cache.
+    if (board.length > 0 && (generation === this.generation || closed.has(season))) this.cache.set(key, board);
     return board;
   }
 
@@ -163,7 +166,10 @@ export class LeaderboardManager {
     const now = this.deps.clock.now();
     const current = seasonOf(now);
     const closed = await this.closedSeasons();
-    const past = (await this.db.selectDistinct({ season: matches.season }).from(matches).where(lt(matches.season, current)))
+    // A match created in the first moments of a month is stamped with the new season; waiting a few
+    // minutes means the previous season's last matches are all in before it can close.
+    const before = seasonOf(now - SEASON_GRACE_MS);
+    const past = (await this.db.selectDistinct({ season: matches.season }).from(matches).where(lt(matches.season, before)))
       .map((r) => r.season)
       .filter((s) => !closed.has(s))
       .sort();
@@ -213,11 +219,24 @@ export class LeaderboardManager {
     return this.closed;
   }
 
-  private dropOpen(): void {
+  /** A match was written (or its write failed): that game's open season is stale; nothing else is. */
+  private dropRecorded(season: string, gameId: string): void {
     this.generation += 1;
-    for (const key of [...this.cache.keys()]) {
-      if (!this.closed?.has(key.slice(0, key.indexOf(':')))) this.cache.delete(key);
-    }
+    if (!this.closed?.has(season)) this.cache.delete(`${season}:${gameId}`);
+  }
+
+  /**
+   * A name was released or deleted: closed seasons embed the old public identity, so every entry goes
+   * and recomputes (cheaply) with the tombstone.
+   */
+  async forget(_identityId: string): Promise<void> {
+    this.generation += 1;
+    this.cache.clear();
+  }
+
+  /** For tests: how many boards are cached. */
+  cacheSize(): number {
+    return this.cache.size;
   }
 
   private warnOnce(matchId: string): void {

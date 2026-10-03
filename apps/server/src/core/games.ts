@@ -47,6 +47,7 @@ const DEFAULTS: GameManagerOptions = {
 interface LiveMatch {
   id: string;
   gameId: string;
+  season: string;
   tableId: string | null;
   module: GameModule<any>;
   state: unknown;
@@ -201,6 +202,7 @@ export class GameManager {
     const m: LiveMatch = {
       id,
       gameId,
+      season: seasonOf(now),
       tableId: opts.tableId ?? null,
       module,
       state: module.setup({ seats: seats.map((s) => s.seat), seed }),
@@ -238,7 +240,7 @@ export class GameManager {
           tableId: opts.tableId ?? null,
           status: 'countdown',
           seed,
-          season: seasonOf(now),
+          season: m.season,
           rated,
           createdAt: new Date(now),
         });
@@ -582,6 +584,7 @@ export class GameManager {
       // marked abandoned at the next boot. The players must still get their verdict.
       console.error(`[games] could not record the result of ${m.id}`, e);
     }
+    this.bus.emit('match.recorded', { matchId: m.id, gameId: m.gameId, season: m.season });
     for (const s of m.seats) {
       this.comms.deliver(s.identity.id, { type: 'match.over', matchId: m.id, outcome, result: resultFor(outcome, s.seat) });
     }
@@ -610,6 +613,7 @@ export class GameManager {
     } catch (e) {
       console.error(`[games] could not record ${m.id} as abandoned`, e);
     }
+    this.bus.emit('match.recorded', { matchId: m.id, gameId: m.gameId, season: m.season });
     await this.comms.postSystem(this.chatOf(m), 'The match broke down and was abandoned. Nobody wins or loses.');
   }
 

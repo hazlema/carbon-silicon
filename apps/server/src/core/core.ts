@@ -110,6 +110,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   accounts.onRelease((identityId) => relations.forget(identityId));
   accounts.onRelease((identityId) => moderation.liftOnRelease(identityId));
   accounts.onRelease((identityId) => dms.forget(identityId));
+  accounts.onRelease(async (identityId) => leaderboard.forget(identityId));
   accounts.onRelease((identityId) => groups.forget(identityId));
   accounts.onRelease((identityId) => owners.forget(identityId));
   accounts.onRelease(async (identityId) => presence.drop(identityId));

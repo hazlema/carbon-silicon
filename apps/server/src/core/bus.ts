@@ -11,6 +11,8 @@ export interface BusEvents {
   inbox: { identityId: string; event: InboxEvent };
   'match.updated': { matchId: string; revision: number };
   'match.finished': { matchId: string; tableId: string | null };
+  /** A match's result is in the database (or its write failed): standings may be recalculated. */
+  'match.recorded': { matchId: string; gameId: string; season: string };
   'table.changed': { tableId: string };
   'sessions.ended': { sessionIds: string[] };
   'ip.banned': { ip: string };

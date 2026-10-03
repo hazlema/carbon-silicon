@@ -120,9 +120,46 @@ describe('standings', () => {
     await play(database.db, '2032-05', 'critical-mass', [[a], [b]]);
     await play(database.db, '2032-06', 'critical-mass', [[a], [b]]);
     expect((await lb.standings('2032-06', 'critical-mass'))[0].games).toBe(1); // cached until a match ends
-    bus.emit('match.finished', { matchId: 'm_x', tableId: null });
+    bus.emit('match.recorded', { matchId: 'm_x', gameId: 'critical-mass', season: '2032-06' });
     expect((await lb.standings('2032-06', 'critical-mass'))[0].games).toBe(2);
     expect((await lb.standings('2032-05', 'critical-mass'))[0].games).toBe(1);
+  });
+});
+
+describe('the cache', () => {
+  test('a recorded match drops only its own game’s open board', async () => {
+    const [a, b] = await agents(database.db, 2);
+    await play(database.db, '2032-07', 'critical-mass', [[a], [b]]);
+    await play(database.db, '2032-07', 'checkers', [[a], [b]]);
+    const { lb, bus } = board();
+    await lb.standings('2032-07', 'critical-mass');
+    await lb.standings('2032-07', 'checkers');
+    await play(database.db, '2032-07', 'critical-mass', [[a], [b]]);
+    await play(database.db, '2032-07', 'checkers', [[a], [b]]);
+    bus.emit('match.recorded', { matchId: 'm_x', gameId: 'critical-mass', season: '2032-07' });
+    expect((await lb.standings('2032-07', 'critical-mass'))[0].games).toBe(2);
+    expect((await lb.standings('2032-07', 'checkers'))[0].games).toBe(1); // still cached
+  });
+  test('an empty season is not cached', async () => {
+    const { lb } = board();
+    await lb.standings('0001-01', 'critical-mass');
+    await lb.standings('0001-02', 'checkers');
+    expect(lb.cacheSize()).toBe(0);
+  });
+  test('releasing a champion shows the former player in the hall of fame, closed seasons included', async () => {
+    const clock = new FakeClock();
+    const ids = new IdentityManager(database.db, clock, { houseKey: null });
+    const accounts = new AccountManager(database.db, clock, ids, new Guard());
+    const { lb } = board(database.db, clock);
+    accounts.onRelease((id) => lb.forget(id));
+    const h = (await ids.createHuman(`rc${randomTag()}`)).identity;
+    const [x] = await agents(database.db, 1);
+    await database.db.insert(seasonClosings).values({ season: '2036-01' });
+    await play(database.db, '2036-01', 'critical-mass', [[h], [x]]);
+    const champion = async () => (await lb.hallOfFame()).find((c) => c.season === '2036-01')!.row.identity;
+    expect((await champion()).released).toBeFalsy();
+    expect(await accounts.release(h.id)).toBe(true);
+    expect((await champion()).released).toBe(true);
   });
 });
 
@@ -206,6 +243,22 @@ describe('closing a season', () => {
       expect(await one.closeSeasons(announcer)).toEqual([]);
       expect(posted).toHaveLength(1);
       expect(await two.seasons()).toContainEqual({ season: '2026-09', closed: true });
+    } finally {
+      await own.close();
+    }
+  });
+
+  test('a season closes only five minutes into the next month', async () => {
+    const own = await openDatabase(await testDatabaseUrl());
+    try {
+      posted.length = 0;
+      const clock = new FakeClock(Date.UTC(2026, 9, 1, 0, 2));
+      const [a, b] = await agents(own.db, 2);
+      await play(own.db, '2026-09', 'critical-mass', [[a], [b]]);
+      const { lb } = board(own.db, clock);
+      expect(await lb.closeSeasons(announcer)).toEqual([]);
+      clock.advance(4 * 60_000); // 00:06
+      expect(await lb.closeSeasons(announcer)).toEqual(['2026-09']);
     } finally {
       await own.close();
     }
