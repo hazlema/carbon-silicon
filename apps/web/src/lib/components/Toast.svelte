@@ -1,54 +1,56 @@
 <script lang="ts">
+  import { fade } from 'svelte/transition';
   import type { ToastLine } from '$lib/toasts';
 
-  /** `bottom`: how far above the bottom edge it sits (clear of the game's own pill or banner); `top`: sit under the
+  /** Up to a few toasts stacked, oldest first, so the newest sits nearest the bottom (the thumb, the status line).
+   *  Each is its own button: a tap opens the chat on that line's channel, a swipe or Escape dismisses only that one.
+   *  `bottom`: how far above the bottom edge it sits (clear of the game's own pill or banner); `top`: sit under the
    *  header instead (after the match, when the verdict owns the bottom); `passthrough`: never take pointer input
    *  (Lightline's arena below is being steered), so swipes and taps reach the game and the chat button opens the chat. */
-  let { line, onopen, ondismiss, bottom = '7rem', top = false, passthrough = false, compact = false }: { line: ToastLine | null; onopen: () => void; ondismiss: () => void; bottom?: string; top?: boolean; passthrough?: boolean; compact?: boolean } = $props();
+  let { lines, onopen, ondismiss, bottom = '7rem', top = false, passthrough = false, compact = false }: { lines: ToastLine[]; onopen: (line: ToastLine) => void; ondismiss: (id: number) => void; bottom?: string; top?: boolean; passthrough?: boolean; compact?: boolean } = $props();
 
   // A tap or the keyboard (Enter/Space) fires `click` and opens the chat. Pointer events only
   // detect a swipe (sideways or downward), which dismisses and swallows the click that follows.
   let start: { x: number; y: number } | null = null;
   let swallow = false;
+  const leave = () => (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 180);
   function down(e: PointerEvent) {
     start = { x: e.clientX, y: e.clientY };
     swallow = false;
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   }
-  function up(e: PointerEvent) {
+  function up(e: PointerEvent, line: ToastLine) {
     if (!start) return;
     const dx = e.clientX - start.x;
     const dy = e.clientY - start.y;
     start = null;
     if (Math.abs(dx) > 40 || dy > 30) {
       swallow = true;
-      ondismiss();
+      ondismiss(line.id);
     } else if (Math.hypot(dx, dy) >= 10) {
       swallow = true; // a drag that is neither a tap nor a swipe does nothing
     }
     // The click fires right after pointerup; if there is none, do not leave the flag behind.
     if (swallow) setTimeout(() => (swallow = false), 0);
   }
-  function click() {
+  function click(line: ToastLine) {
     if (swallow) {
       swallow = false;
       return;
     }
-    onopen();
+    onopen(line);
   }
 </script>
 
 <div class="toast-slot" class:top class:compact={compact && !top} role="status" aria-live="polite" style:--toast-bottom={bottom}>
-  {#if line}
-    {#key line.id}
-      <button type="button" class="toast" class:passthrough tabindex={passthrough ? -1 : undefined} onpointerdown={down} onpointerup={up} onclick={click} onpointercancel={() => (start = null)} onkeydown={(e) => e.key === 'Escape' && ondismiss()}>
-        {#if line.author}
-          <span class="who" class:human={line.author.kind === 'human'} class:machine={line.author.kind === 'agent'}>{line.author.handle}</span>
-        {/if}
-        <span class="text" class:system={!line.author}>{line.text}</span>
-      </button>
-    {/key}
-  {/if}
+  {#each lines as line (line.id)}
+    <button type="button" class="toast" class:passthrough tabindex={passthrough ? -1 : undefined} out:fade={{ duration: leave() }} onpointerdown={down} onpointerup={(e) => up(e, line)} onclick={() => click(line)} onpointercancel={() => (start = null)} onkeydown={(e) => e.key === 'Escape' && ondismiss(line.id)}>
+      {#if line.author}
+        <span class="who" class:human={line.author.kind === 'human'} class:machine={line.author.kind === 'agent'}>{line.author.handle}</span>
+      {/if}
+      <span class="text" class:system={!line.author}>{line.text}</span>
+    </button>
+  {/each}
 </div>
 
 <style>
@@ -60,6 +62,9 @@
     bottom: calc(var(--toast-bottom, 7rem) + env(safe-area-inset-bottom, 0px));
     z-index: 6;
     pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
   }
   .toast-slot.top {
     z-index: 11; /* above the verdict, which owns the bottom after the match */

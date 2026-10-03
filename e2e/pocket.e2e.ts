@@ -79,9 +79,9 @@ test('a line from the other player pops up as a toast; tapping it opens the chat
     await request.post(`/api/chat/table:${tid}`, { headers: auth, data: { text: 'probe' } });
     await p.waitForTimeout(250);
   }
-  await expect(p.locator('.toast')).toContainText('probe');
+  await expect(p.locator('.toast').last()).toContainText('probe');
   await request.post(`/api/chat/table:${p.url().split('/t/')[1]}`, { headers: auth, data: { text: 'Your move, carbon.' } });
-  const toast = p.locator('.toast');
+  const toast = p.locator('.toast').last();
   await expect(toast).toContainText('Your move, carbon.');
   await expect(p.getByRole('button', { name: /^Open chat \(\d+ unread\)$/ })).toBeVisible();
   await p.screenshot({ path: 'test-results/pocket-toast.png' });
@@ -156,8 +156,47 @@ async function untilFollowing(p: Page, request: import('@playwright/test').APIRe
     await request.post(`/api/chat/${channel}`, { headers: auth, data: { text: 'probe' } });
     await p.waitForTimeout(250);
   }
-  await expect(p.locator('.toast')).toContainText('probe');
+  await expect(p.locator('.toast').last()).toContainText('probe');
 }
+
+test('three taunts stack, newest at the bottom; a swipe dismisses only that one; a fourth pushes the oldest out', async ({ browser, request }) => {
+  const p = await phone(browser);
+  const { auth } = await enterAndPlayAgent(p, request);
+  const tid = p.url().split('/t/')[1];
+  await untilFollowing(p, request, auth, `table:${tid}`);
+  await expect(p.locator('.toast')).toHaveCount(0, { timeout: 8000 }); // the probes have faded
+  for (const text of ['first taunt', 'second taunt', 'third taunt']) {
+    await request.post(`/api/chat/table:${tid}`, { headers: auth, data: { text } });
+    await p.waitForTimeout(200);
+  }
+  const toasts = p.locator('.toast');
+  await expect(toasts).toHaveCount(3);
+  await expect(toasts.nth(0)).toContainText('first taunt');
+  await expect(toasts.nth(2)).toContainText('third taunt');
+  const [a, b, c] = await Promise.all([0, 1, 2].map((i) => toasts.nth(i).boundingBox()));
+  expect(a!.y).toBeLessThan(b!.y);
+  expect(b!.y).toBeLessThan(c!.y);
+  await p.screenshot({ path: '.superpowers/sdd/pocket-polish/stacked-toasts-cm.png' });
+  // Swipe the middle one away: the others stay.
+  const m = (await toasts.nth(1).boundingBox())!;
+  const cx = m.x + m.width / 2;
+  const cy = m.y + m.height / 2;
+  await p.mouse.move(cx, cy);
+  await p.mouse.down();
+  await p.mouse.move(cx + 80, cy, { steps: 4 });
+  await p.mouse.up();
+  await expect(toasts).toHaveCount(2);
+  await expect(toasts.nth(0)).toContainText('first taunt');
+  await expect(toasts.nth(1)).toContainText('third taunt');
+  // Two more: the oldest leaves at once to keep three.
+  await request.post(`/api/chat/table:${tid}`, { headers: auth, data: { text: 'fourth taunt' } });
+  await request.post(`/api/chat/table:${tid}`, { headers: auth, data: { text: 'fifth taunt' } });
+  await expect(toasts).toHaveCount(3);
+  await expect(toasts.nth(0)).toContainText('third taunt');
+  await expect(toasts.nth(2)).toContainText('fifth taunt');
+  // Each is gone 6 s after it arrived.
+  await expect(toasts).toHaveCount(0, { timeout: 9000 });
+});
 
 test('a blocked agent never toasts and never counts towards the badge; unblocked, it does', async ({ browser, request }) => {
   const p = await phone(browser);
@@ -184,11 +223,11 @@ test('a DM from another player while you sit at the table bumps the badge and to
   await expect(p.getByRole('button', { name: 'Open chat', exact: true })).toBeVisible();
   await p.waitForTimeout(1000); // the socket is up
   expect((await request.post(`/api/dms/${me}`, { headers: auth, data: { text: 'psst, carbon' } })).status()).toBe(201);
-  await expect(p.locator('.toast')).toContainText('psst, carbon');
-  await expect(p.locator('.toast')).toContainText(handle);
+  await expect(p.locator('.toast').last()).toContainText('psst, carbon');
+  await expect(p.locator('.toast').last()).toContainText(handle);
   await expect(p.getByRole('button', { name: 'Open chat (1 unread)' })).toBeVisible();
   // Tapping the toast opens the sheet on that conversation, not the table tab.
-  await p.locator('.toast').click();
+  await p.locator('.toast').last().click();
   const sheet = p.getByRole('dialog', { name: 'Chat' });
   await expect(sheet).toBeVisible();
   await expect(sheet.getByRole('log').getByText('psst, carbon')).toBeVisible();
@@ -209,7 +248,7 @@ test('after the match the chat button is above the verdict, and later toasts sit
   expect(v.y + v.height).toBeLessThanOrEqual(f.y + 1); // the verdict ends above the button
   // A line after the match: the toast shows (at the top, clear of the verdict) and the button is on top at its spot.
   await request.post(`/api/chat/table:${tid}`, { headers: auth, data: { text: 'good game, carbon' } });
-  const toast = p.locator('.toast');
+  const toast = p.locator('.toast').last();
   await expect(toast).toContainText('good game, carbon');
   const t = (await toast.boundingBox())!;
   expect(t.y + t.height).toBeLessThanOrEqual(v.y);
@@ -248,7 +287,7 @@ test('Lightline held sideways: the toast shows but lets steering swipes and taps
       await request.post(`/api/chat/table:${table.id}`, { headers: auth, data: { text: 'probe' } });
       await p.waitForTimeout(250);
     }
-    const toast = p.locator('.toast');
+    const toast = p.locator('.toast').last();
     await expect(toast).toBeVisible();
     expect(await toast.evaluate((e) => (globalThis as any).getComputedStyle(e).pointerEvents)).toBe('none');
     const b = (await toast.boundingBox())!;
@@ -272,7 +311,7 @@ test('Lightline held sideways: the toast shows but lets steering swipes and taps
         await request.post(`/api/chat/table:${table.id}`, { headers: auth, data: { text: 'probe' } });
         await p.waitForTimeout(250);
       }
-      const t = (await p.locator('.toast').boundingBox())!;
+      const t = (await p.locator('.toast').last().boundingBox())!;
       const field = (await p.locator('.field').boundingBox())!;
       expect(t.y).toBeGreaterThanOrEqual(field.y + field.height - 1); // below the arena: it covers none of it
     };

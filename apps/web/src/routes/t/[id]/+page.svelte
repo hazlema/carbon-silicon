@@ -52,11 +52,11 @@
   let sheetOpen = $state(false);
   let chatBtn: HTMLButtonElement | undefined = $state();
   // Pocket: lines from others show as toasts while the chat sheet is closed.
-  let toast = $state<ToastLine | null>(null);
+  let toasts = $state<ToastLine[]>([]);
   let unread = $state(0);
   const q = new ToastQueue({ meId: () => live.me?.id ?? null, hidden: () => live.hiddenAuthors });
   q.onChange = () => {
-    toast = q.current;
+    toasts = q.visible;
     unread = q.unread;
   };
   $effect(() => q.setOpen(sheetOpen));
@@ -69,9 +69,9 @@
     if (!inPocket) sheetOpen = false;
   });
   /** A tap on a toast opens the chat on the conversation that line was said in. */
-  function openFromToast() {
-    const ch = toast?.channel;
-    if (ch && table) {
+  function openFromToast(line: ToastLine) {
+    const ch = line.channel;
+    if (table) {
       if (ch === tableChannel(table.id)) tab = 'table';
       else if (ch === railChannel(table.id)) tab = 'rail';
       else if ((dmParticipants(ch) && live.dms.some((d) => d.channel === ch)) || (groupOf(ch) && live.groups.some((g) => g.channel === ch))) tab = ch;
@@ -215,7 +215,7 @@
     if (!inPocket || !toastChannels) return;
     const offs = toastChannels.split(' ').flatMap((ch) => [
       live.onChat(ch, (m) => q.push(m)),
-      live.onChatRemoved(ch, (r) => q.current?.id === r.id && q.dismiss()),
+      live.onChatRemoved(ch, (r) => q.dismiss(r.id)),
     ]);
     return () => offs.forEach((off) => off());
   });
@@ -257,6 +257,12 @@
   );
   const view = $derived(env?.match.gameId === 'critical-mass' ? (env.view as CMView) : undefined);
   const ll = $derived(env?.match.gameId === 'lightline' ? (env.view as LLView) : undefined);
+  // Lightline's toast sits over a one-line footer: one at a time, each up for at least 2.5 s. After the match it moves to the top and stacks again.
+  $effect(() => {
+    const footer = !!ll && env?.match.status !== 'over' && env?.match.status !== 'abandoned';
+    q.max = footer ? 1 : 3;
+    q.minShowMs = footer ? 2500 : 0;
+  });
   const ck = $derived(env?.match.gameId === 'checkers' ? (env.view as CheckersView) : undefined);
   /** The full table is on screen: only then does the site's chrome step aside (the ✕ is there to get out). */
   const fullTable = $derived(!gone && !!(table && table.matchId && env && match && (view || ll || ck)));
@@ -656,9 +662,9 @@
         </footer>
       {/if}
     {#if inPocket}<Toast
-        line={toast}
+        lines={toasts}
         onopen={openFromToast}
-        ondismiss={() => q.dismiss()}
+        ondismiss={(id) => q.dismiss(id)}
         bottom={toastBottom}
         top={match.status === 'over' || match.status === 'abandoned'}
         compact={ll !== undefined}
