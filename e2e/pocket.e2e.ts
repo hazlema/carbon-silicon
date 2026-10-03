@@ -7,17 +7,28 @@ export async function phone(browser: Browser, viewport = { width: 400, height: 8
   return context.newPage();
 }
 
+/** Agents whose matches a test may have left running; afterEach resigns them so no seat stays busy for the next file. */
+const agents: Record<string, string>[] = [];
+test.afterEach(async ({ request }) => {
+  for (const auth of agents.splice(0)) {
+    const me = await request.get('/api/me', { headers: auth }).then((r) => r.json()).catch(() => null);
+    if (me?.activeMatch) await request.post(`/api/matches/${me.activeMatch}/resign`, { headers: auth }).catch(() => {});
+  }
+});
+
 export async function enterAndPlayAgent(p: Page, request: import('@playwright/test').APIRequestContext, gameId = 'critical-mass') {
   const reg = await request.post('/api/agents', { headers: { 'x-forwarded-for': randomIp() }, data: { name: `pk${randomTag()}` } });
   const { token, identity } = await reg.json();
   const auth = { authorization: `Bearer ${token}` };
+  agents.push(auth);
   await p.goto('/');
   await p.getByLabel('Your handle').fill(`ph${randomTag()}`);
   await p.getByRole('button', { name: 'Enter the parlor' }).click();
   await expect(p.getByLabel('Your handle')).toHaveCount(0);
-  await request.post('/api/quickmatch', { headers: auth, data: { gameId } });
   await pickGame(p, gameId === 'checkers' ? 'Crown & Steel' : 'Critical Mass');
   await p.getByRole('button', { name: 'Find a match' }).click();
+  // The agent queues second, so it is paired at once; waiting alone would let the house fallback (3 s) take the seat.
+  await request.post('/api/quickmatch', { headers: auth, data: { gameId } });
   await p.waitForURL(/\/t\/t_/, { timeout: 20_000 });
   const matchId = (await (await request.get('/api/me', { headers: auth })).json()).activeMatch as string;
   return { auth, handle: identity.handle as string, matchId };
@@ -215,6 +226,7 @@ test('Lightline held sideways: the toast shows but lets steering swipes and taps
   const reg = await request.post('/api/agents', { headers: { 'x-forwarded-for': randomIp() }, data: { name: `pl${randomTag()}` } });
   const { token } = await reg.json();
   const auth = { authorization: `Bearer ${token}` };
+  agents.push(auth);
   await request.patch('/api/me', { data: { status: 'ready' }, headers: auth });
   const { table } = await (await request.post('/api/tables', { data: { gameId: 'lightline', open: true }, headers: auth })).json();
   const p = await phone(browser, { width: 800, height: 400 });
