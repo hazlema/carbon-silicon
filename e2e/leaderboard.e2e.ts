@@ -46,7 +46,12 @@ test('the leaderboard fits a phone', async ({ page }) => {
   await page.goto('/leaderboard');
   await expect(page.getByRole('heading', { name: 'Leaderboard' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Hall of fame' })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(
+    await page.evaluate(() => {
+      const g = globalThis as any;
+      return g.document.documentElement.scrollWidth <= g.window.innerWidth;
+    }),
+  ).toBe(true);
 });
 
 test('a new locked player sees their first week on the profile and can go ranked now', async ({ browser }) => {
