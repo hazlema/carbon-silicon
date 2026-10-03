@@ -861,3 +861,51 @@ describe('GAME_OVER', () => {
     }
   }, 30_000);
 });
+
+describe('Sprocket with a voice (as main.ts runs him: no ambient chatter, no unprompted answers)', () => {
+  test('answers his name in the lobby and the talk at his table through the voice, with the table context', async () => {
+    const core2 = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: 'hk', diaryDir: join(root, 'no-diary'), countdownMs: 0, houseFallbackMs: 100 });
+    const server2 = startServer(core2, createApp(core2, { apiDocs: '', llmsTxt: '', trustProxy: true }), { port: 0, hostname: '127.0.0.1', webDir: null, allowedOrigins: [] });
+    const c = new AbortController();
+    let ready = () => {};
+    const listening = new Promise<void>((resolve) => (ready = resolve));
+    const spoken: Moment[] = [];
+    const voice: Voice = {
+      say(m) {
+        spoken.push(m);
+        return Promise.resolve(`SPROCKET ${m.kind.toUpperCase()} LINE.`);
+      },
+    };
+    const name = `Gear${randomTag()}`;
+    const done = runBot({ base: server2.url, personality: { ...sprocket, name }, voice, houseKey: 'hk', tokenFile: join(root, `.data/test-bots/${crypto.randomUUID()}.token`), thinkMs: [0, 0], inviteThinkMs: [0, 0], pollWaitMs: 500, tableTalkChance: 1, replyCooldownMs: 0, tableCooldownMs: 0, ambientEveryMs: 0, watchPublic: false, signal: c.signal, log: () => {}, onReady: () => ready() });
+    try {
+      await listening;
+      const ann = await newHuman(server2.url, `Ann${randomTag()}`);
+      // Named plainly in the lobby: answered. A plain line nobody answered: not.
+      const quiet = (await ann.client.chat('lobby', 'is anybody home?')) as { message: { id: number } };
+      const named = (await ann.client.chat('lobby', `${name}, you there?`)) as { message: { id: number } };
+      type Said = { messages: { id: number; author: { handle: string } | null; text: string }[] };
+      const botLines = async (since: number) => (await ann.client.call<Said>('GET', `/api/chat/lobby?since=${since}&limit=50`)).messages.filter((m) => m.author?.handle === name).map((m) => m.text);
+      expect(await until(async () => (await botLines(named.message.id))[0])).toBe(`@${ann.handle} SPROCKET MENTION LINE.`);
+      expect(await botLines(quiet.message.id)).toEqual([`@${ann.handle} SPROCKET MENTION LINE.`]);
+      // At a table: the hello and a reply to table talk both carry the table.
+      const knight = await newAgent(server2.url, `knight${randomTag()}`);
+      await knight.client.setStatus('ready');
+      const tableId = (await knight.client.hostTable('checkers', [name])).table.id;
+      await until(async () => (await knight.client.call<{ table: { seated: unknown[] } }>('GET', `/api/tables/${tableId}`)).table.seated.length === 2);
+      await knight.client.startTable(tableId);
+      await until(async () => spoken.find((m) => m.kind === 'hello'));
+      await knight.client.chat(`table:${tableId}`, 'your knights are doomed');
+      const talk = await until(async () => spoken.find((m) => m.kind === 'tableTalk'));
+      expect(talk.opponent).toBe(knight.handle);
+      expect(talk.table?.players).toContain(`@${name} (you)`);
+      expect(talk.table?.standing).toMatch(/knights/);
+      expect(talk.game?.name).toBe('Crown & Steel');
+    } finally {
+      c.abort();
+      await done.catch(() => {});
+      await server2.stop();
+      await core2.close();
+    }
+  }, 30_000);
+});

@@ -1,12 +1,12 @@
 # The residents' model
 
-OLD IRON's voice (and, from M2a, the Bouncer) talk to one OpenAI-compatible endpoint:
+The voices of OLD IRON, GAME_OVER and Sprocket (and, from M2a, the Bouncer) talk to one OpenAI-compatible endpoint:
 LM Studio on this machine by default, or a hosted router such as OpenRouter.
 
 ## Change it without restarting
 
 The settings live in the repo-root **`.env`** (the same file the deploy kit's systemd units load).
-The bots re-read it every couple of seconds, so edit it and the next line OLD IRON says uses the
+The bots re-read it every couple of seconds, so edit it and the next line a resident says uses the
 new settings; the bot log prints `[llm] settings: …` when it takes. Values in `.env` win over the
 process environment; anything the file leaves out comes from the environment, then the defaults.
 Bun and systemd load `.env` into the environment when they start, and that copy is the fallback, so a
@@ -51,8 +51,8 @@ reminder at startup if the file still exists. Copy `baseUrl`, `model` and `apiKe
 
 `bun run bots:free-models` lists the chat models OpenRouter offers for free right now.
 `openrouter/free` is OpenRouter's own router that picks an available free model for each
-request: it never goes stale, but OLD IRON's voice will vary with whatever it picks.
+request: it never goes stale, but the voices will vary with whatever it picks.
 
-Free tiers are rate limited. When a request fails, OLD IRON falls back to his canned lines and
+Free tiers are rate limited. When a request fails, the voiced residents fall back to their canned lines and
 the Bouncer hands the report to a human, so nothing breaks. Hosted models see the chat lines
 they are asked to answer; some free providers log prompts.

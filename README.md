@@ -24,9 +24,9 @@ Some files are re-read while running, so editing them needs no restart or rebuil
 - a game's rules, such as [`games/critical-mass/docs/rules.md`](games/critical-mass/docs/rules.md), with its pictures beside it (shown at `/games`)
 - [`docs/API.md`](docs/API.md) and [`docs/llms.txt`](docs/llms.txt)
 - `.env`, which also holds the residents' model settings ([`docs/llm-settings.md`](docs/llm-settings.md))
-- [`apps/bots/instructions/`](apps/bots/instructions/): what the residents are told. `old-iron.md` is OLD IRON's character, `house-rules.md` binds every resident, and `bouncer.md` is the Bouncer's standards (the reply format it must use stays in code). Each file goes to the model as written; a blank save is ignored, and the bots refuse to start without them.
+- [`apps/bots/instructions/`](apps/bots/instructions/): what the residents are told. `old-iron.md`, `game-over.md` and `sprocket.md` are the voiced residents' characters, `house-rules.md` binds every resident, and `bouncer.md` is the Bouncer's standards (the reply format it must use stays in code). Each file goes to the model as written; a blank save is ignored, and the bots refuse to start without them.
 
-The residents are Sprocket and OLD IRON, who play (one of them sits down with anyone who waits 8 seconds for a quick match), and the Bouncer, who reviews reported chat. OLD IRON's voice and the Bouncer's judgement come from an OpenAI-compatible LLM endpoint, LM Studio by default or a router such as OpenRouter. If it's unreachable or set to `off`, OLD IRON falls back to canned lines and the Bouncer hands every report to a human. Moves are always scripted. `bun run bots:free-models` lists OpenRouter's free models.
+The residents are Sprocket and OLD IRON, who play (one of them sits down with anyone who waits 8 seconds for a quick match), and the Bouncer, who reviews reported chat. The voices of OLD IRON, GAME_OVER and Sprocket (who talks at his tables and when named, never unprompted) and the Bouncer's judgement come from an OpenAI-compatible LLM endpoint, LM Studio by default or a router such as OpenRouter. If it's unreachable or set to `off`, the voiced residents fall back to canned lines and the Bouncer hands every report to a human. Moves are always scripted. `bun run bots:free-models` lists OpenRouter's free models.
 
 With no configuration the server keeps its data in an embedded PGlite database under `.data/pglite`. Bun reads `.env` automatically; copy `.env.example` to `.env` to change anything. `bun run admin <command>` is the owner's console (grant or revoke admins and moderators, reset a password, lift a sanction); run it with no command for the list.
 
@@ -79,8 +79,8 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 | `GROUP_MAX_MEMBERS` | The most people a group chat may hold, creator included (2–50, default `8`). |
 | `DOCTRINE_FLOOR_MS` | How often a machine may change its doctrine in a real-time game, in ms: human reaction speed (100–2000, default `300`). |
 | `BOT_TOKEN_DIR` | Where the bots keep their tokens (default `.data/bots`). Point it elsewhere when running a second set of bots against a throwaway server. |
-| `LLM_BASE_URL` | OpenAI-compatible endpoint for OLD IRON's chat and the Bouncer (default `http://127.0.0.1:1234/v1`, LM Studio); `off` means none. |
-| `LLM_MODEL` | Model OLD IRON talks through (default `google/gemma-4-e2b`). |
+| `LLM_BASE_URL` | OpenAI-compatible endpoint for the voiced residents' chat (OLD IRON, GAME_OVER, Sprocket) and the Bouncer (default `http://127.0.0.1:1234/v1`, LM Studio); `off` means none. |
+| `LLM_MODEL` | Model the voiced residents talk through (default `google/gemma-4-e2b`). |
 | `LLM_API_KEY`, `LLM_TEMPERATURE`, `BOUNCER_MODEL` | The endpoint's key (OpenRouter needs one), temperature 0–2 (default 0.9), and a separate model for the Bouncer. |
 | `LLM_ENV_FILE` | The `.env` file the bots and the admin Usage tab re-read live for the `LLM_*` values above (default: the repo-root `.env`). |
 
