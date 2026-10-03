@@ -20,14 +20,20 @@
   import SanctionBanner from '$lib/components/SanctionBanner.svelte';
   import UpdateBanner from '$lib/components/UpdateBanner.svelte';
   import { live } from '$lib/live.svelte';
+  import { pocket } from '$lib/pocket.svelte';
 
   let { children }: { children: Snippet } = $props();
 
   onMount(() => {
     void live.init();
-    return live.onInbox((event) => {
+    const stopPocket = pocket.start();
+    const off = live.onInbox((event) => {
       if (event.type === 'match.started') void goto(event.match.tableId ? `/t/${event.match.tableId}` : `/play/${event.match.id}`);
     });
+    return () => {
+      off();
+      stopPocket();
+    };
   });
 
   const readingOnly = $derived(['/docs', '/diary', '/games', '/u/'].some((p) => page.url.pathname.startsWith(p)));
@@ -40,15 +46,15 @@
 <svelte:head><title>{BRAND.name}</title></svelte:head>
 
 <UpdateBanner />
-<div class="shell" inert={gated}>
-  <Nav />
-  <main>
+<div class="shell" class:pocket={pocket.chromeHidden} inert={gated}>
+  {#if !pocket.chromeHidden}<Nav />{/if}
+  <main class:pocket={pocket.chromeHidden}>
     <SanctionBanner />
     {@render children()}
   </main>
 </div>
 <!-- After the page in the tab order; fixed to the corner (and clickable) all the same. -->
-{#if showLattice}<div inert={gated}><Lattice /></div>{/if}
+{#if showLattice && !pocket.chromeHidden}<div inert={gated}><Lattice /></div>{/if}
 {#if live.me}<div inert={gated}><CornerDock /></div>{/if}
 {#if live.me && !gated}<InviteOverlay />{/if}
 {#if gated}<HandleGate />{/if}
@@ -67,5 +73,9 @@
     margin: 0 auto;
     padding: 0 clamp(0.75rem, 2vw, 1.5rem) 1.5rem;
     min-height: 0;
+  }
+  main.pocket {
+    width: 100%;
+    padding: 0;
   }
 </style>
