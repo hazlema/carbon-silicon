@@ -36,6 +36,7 @@ A bug the review loop caught: the overlay that closes the sheet used to close on
 - The toast's per-game offsets (CM 7rem above the camera pill, Crown & Steel 5.5rem, Lightline over the footer) were checked by screenshot for CM and Lightline, not for Crown & Steel.
 - The landscape Critical Mass board is small (the camera pill's reserve and margins in a ~300 px stage).
 - `toasts.test.ts`'s `msg()` helper increments its counter twice per call (harmless).
+- The pocket Lightline sideways e2e failed once in eight combined `pocket + tables` runs (error not captured, never reproduced; likely house-bot availability between tests). The full verify after the helper fix passed 104/104.
 
 ## Not verified here — the phone check
 
