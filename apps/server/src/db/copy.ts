@@ -61,8 +61,9 @@ export async function copyDatabase(from: DB, to: DB, log: (line: string) => void
         for (;;) {
           const rows = (await from.select().from(t).orderBy(...order).limit(BATCH).offset(copied)) as Record<string, unknown>[];
           if (!rows.length) break;
-          // Rows pass through JS: timestamps keep millisecond precision (all app-written data is
-          // millisecond anyway), and a JSON null in a jsonb column becomes SQL NULL.
+          // Rows pass through JS: timestamps are cut to milliseconds (defaultNow() columns such as
+          // identities.created_at hold microseconds, which changes no behaviour here), and a JSON null
+          // in a jsonb column becomes SQL NULL.
           await tx.insert(t).values(rows);
           copied += rows.length;
           if (rows.length < BATCH) break;
