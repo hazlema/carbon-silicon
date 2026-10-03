@@ -52,18 +52,20 @@ PORT=3000
 
 ### Moving your data to production
 
-To carry a development database (accounts, chat, matches, the hall of fame) into production Postgres:
+Do this after step 4 and before you install the services in step 5. To carry a development database (accounts, chat, matches, the hall of fame) into production Postgres:
 
 1. Stop the dev server (and the bots) so nothing writes while you copy.
-2. Either copy `.data/pglite` to the VPS, or run the command from the dev machine against the VPS Postgres through an SSH tunnel (`ssh -L 5432:localhost:5432 user@vps`).
+2. Either copy `.data/pglite` to the VPS, or run the command from the dev machine against the VPS Postgres through an SSH tunnel on a free local port: `ssh -L 15432:localhost:5432 user@vps`, then use `postgres://carbon:<password>@localhost:15432/carbon_silicon`.
 3. Copy into the empty production database (it refuses a database that already has rows):
 
    ```sh
    bun run db:copy pglite:.data/pglite postgres://carbon:<password>@localhost:5432/carbon_silicon
    ```
 
-   It migrates both sides, copies every table in one transaction, resets the id counters, and prints `table N → N` per table and a final `copied N rows`.
+   It migrates both sides, copies every table in one transaction, resets the id counters, and prints `table N → N` per table and a final `copied N rows`. The copied `.data/pglite` gets migrated, so it must be writable by the user running the command (e.g. `sudo -u carbon bun run db:copy …`).
 4. Start the services.
+
+If the services have already run on the VPS, the bots will have registered and the database is no longer empty, so the copy refuses. Stop the services, then drop and recreate `carbon_silicon` (`sudo -u postgres dropdb carbon_silicon && sudo -u postgres createdb -O carbon carbon_silicon`) and copy again.
 
 ### Becoming admin
 
