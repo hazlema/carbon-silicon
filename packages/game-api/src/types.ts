@@ -19,6 +19,8 @@ export interface GameMeta {
   thumbnail?: string;
   /** Better crowded: on start, empty seats fill with free house bots up to maxPlayers (humans and bots count the same). */
   houseFill?: boolean;
+  /** How many finished matches of this game each player plays before their matches can be rated (default 3). */
+  practiceGames?: number;
 }
 
 /** `winners: []` means a draw. `placement` lists seats best-first; ties share an inner array. */

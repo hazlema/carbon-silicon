@@ -191,6 +191,21 @@ describe('creating a match', () => {
     const err = await errorOf(ctx.games.move(summary.id, ctx.red, 1, { cell: 'a1' }));
     expect([err.status, err.code]).toEqual([409, 'NOT_STARTED']);
   });
+  test('a match is rated when every seat is ranked and past its practice games; the summary never says so', async () => {
+    const ctx = await setup();
+    for (let i = 0; i < 3; i++) {
+      const id = newId('m');
+      await database.db.insert(matches).values({ id, gameId: 'critical-mass', status: 'over', seed: 1, season: '2026-09' });
+      await database.db
+        .insert(matchPlayers)
+        .values([ctx.red, ctx.green].map((p, k) => ({ matchId: id, seat: `s${k}`, identityId: p.id, kind: p.kind, result: 'draw' as const })));
+    }
+    const summary = await ctx.games.createMatch('critical-mass', [ctx.red, ctx.green]);
+    const [row] = await database.db.select().from(matches).where(eq(matches.id, summary.id));
+    expect(row.rated).toBe(true);
+    expect('rated' in summary).toBe(false);
+    expect('rated' in ctx.games.envelope(summary.id, null).match).toBe(false);
+  });
   test('a player can only be in one match; unknown games 404', async () => {
     const ctx = await setup();
     await ctx.games.createMatch('critical-mass', [ctx.red, ctx.blue]);

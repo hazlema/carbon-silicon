@@ -20,6 +20,7 @@ import { newId } from '../lib/ids';
 import type { EventBus } from './bus';
 import type { CommunicationManager } from './communication';
 import type { Guard } from './guard';
+import { isRatedMatch, PRACTICE_GAMES } from './ranked';
 import type { PresenceManager } from './presence';
 import { DoctrineDesk, FLOOR_DEFAULT_MS, floorTicks, SteerQueue } from './realtime';
 
@@ -229,6 +230,7 @@ export class GameManager {
       this.goLive(id).catch((e) => console.error('[games] goLive failed', e));
     }, countdownMs);
     try {
+      const rated = await isRatedMatch(this.db, gameId, players, now, module.meta.practiceGames ?? PRACTICE_GAMES);
       await this.db.transaction(async (tx) => {
         await tx.insert(matches).values({
           id,
@@ -237,7 +239,7 @@ export class GameManager {
           status: 'countdown',
           seed,
           season: seasonOf(now),
-          rated: seats.every((s) => s.identity.kind === 'agent' || s.identity.locked),
+          rated,
           createdAt: new Date(now),
         });
         await tx.insert(matchPlayers).values(
