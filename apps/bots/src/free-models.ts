@@ -31,5 +31,5 @@ if (import.meta.main) {
   const models = freeModels(await res.json());
   console.log(`${models.length} free models on OpenRouter right now:\n`);
   for (const m of models) console.log(`  ${m.id.padEnd(52)} ${m.context ? `${Math.round(m.context / 1000)}k context` : ''}`);
-  console.log('\nPut one in .data/llm.json as "model" (with "baseUrl": "https://openrouter.ai/api/v1" and your "apiKey").');
+  console.log('\nPut one in .env as LLM_MODEL (with LLM_BASE_URL=https://openrouter.ai/api/v1 and your LLM_API_KEY).');
 }

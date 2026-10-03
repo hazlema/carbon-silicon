@@ -5,6 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./brand": "./src/brand.ts",
+    "./env-file": "./src/env-file.ts",
     "./filter": "./src/filter.ts",
     "./handles": "./src/handles.ts",
     "./live-text": "./src/live-text.ts",

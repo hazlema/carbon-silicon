@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm, utimes } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { connectionFor, parseSettings, SettingsFile, settingsFromEnv, type LlmSettings } from './llm-settings';
+import { connectionFor, EnvSettings, settingsFromEnv, type LlmSettings } from './llm-settings';
 
 const base: LlmSettings = { baseUrl: 'http://127.0.0.1:1234/v1', model: 'google/gemma-4-e2b', apiKey: null, temperature: 0.9, bouncerModel: null };
 const dir = await mkdtemp(join(tmpdir(), 'cs-llm-'));
@@ -33,22 +33,6 @@ describe('settingsFromEnv', () => {
   });
 });
 
-describe('parseSettings', () => {
-  test('fields in the file override the base; missing ones keep it', () => {
-    expect(parseSettings('{"model": "qwen/qwen3.8-27b:free", "apiKey": "k"}', base)).toEqual({ ...base, model: 'qwen/qwen3.8-27b:free', apiKey: 'k' });
-  });
-  test('null clears the key and the bouncer model', () => {
-    expect(parseSettings('{"apiKey": null, "bouncerModel": null}', { ...base, apiKey: 'k', bouncerModel: 'b' })).toEqual(base);
-  });
-  test('bad files explain themselves', () => {
-    expect(() => parseSettings('{nope', base)).toThrow(/JSON/);
-    expect(() => parseSettings('[]', base)).toThrow(/object/);
-    expect(() => parseSettings('{"model": ""}', base)).toThrow(/model/);
-    expect(() => parseSettings('{"temperature": 3}', base)).toThrow(/temperature/);
-    expect(() => parseSettings('{"apiKey": 7}', base)).toThrow(/apiKey/);
-  });
-});
-
 describe('connectionFor', () => {
   test('the bouncer uses its own model when set, else the shared one', () => {
     expect(connectionFor(base, 'bouncer')?.model).toBe('google/gemma-4-e2b');
@@ -60,31 +44,65 @@ describe('connectionFor', () => {
   });
 });
 
-describe('SettingsFile', () => {
-  test('uses the base until the file appears, then follows edits, and keeps the last good settings on a bad edit', async () => {
-    const path = join(dir, 'llm.json');
+describe('EnvSettings', () => {
+  const touch = (path: string, text: string, ahead: number) => Bun.write(path, text).then(() => utimes(path, new Date(), new Date(Date.now() + ahead)));
+
+  test('starts from the environment, follows .env edits after minCheckMs, and not sooner', async () => {
+    const path = join(dir, 'a.env');
     const logs: string[] = [];
     let now = 0;
-    const file = new SettingsFile({ path, base, log: (m) => logs.push(m), minCheckMs: 1000, now: () => now });
-    expect(await file.get()).toEqual(base);
+    const s = new EnvSettings({ path, env: { LLM_MODEL: 'env-model' }, log: (m) => logs.push(m), minCheckMs: 1000, now: () => now });
+    expect((await s.get()).model).toBe('env-model');
 
-    await Bun.write(path, '{"model": "a:free"}');
-    expect((await file.get()).model).toBe('google/gemma-4-e2b'); // checked less than a second ago
+    await touch(path, 'LLM_MODEL=a:free\n', 1000);
+    expect((await s.get()).model).toBe('env-model'); // checked less than a second ago
     now += 1000;
-    expect((await file.get()).model).toBe('a:free');
+    expect((await s.get()).model).toBe('a:free');
+    expect(logs.some((l) => l.startsWith('settings: ') && l.includes('a:free'))).toBe(true);
 
-    await Bun.write(path, '{"model": "b:free"}');
-    await utimes(path, new Date(), new Date(Date.now() + 5000)); // make sure the mtime moves
-    now += 1000;
-    expect((await file.get()).model).toBe('b:free');
+    await touch(path, 'LLM_MODEL=b:free\n', 5000);
+    now += 999;
+    expect((await s.get()).model).toBe('a:free');
+    now += 1;
+    expect((await s.get()).model).toBe('b:free');
+  });
 
-    await Bun.write(path, '{"model": ');
-    await utimes(path, new Date(), new Date(Date.now() + 10_000));
-    now += 1000;
-    expect((await file.get()).model).toBe('b:free');
-    now += 1000;
-    await file.get();
-    expect(logs.filter((l) => l.includes('ignored'))).toHaveLength(1); // one complaint per bad edit
-    expect(logs.some((l) => l.includes('b:free'))).toBe(true);
+  test('a value the file does not set falls back to the environment; the file wins when it does', async () => {
+    const path = join(dir, 'b.env');
+    await Bun.write(path, 'LLM_MODEL=file-model\n');
+    const s = new EnvSettings({ path, env: { LLM_MODEL: 'env-model', LLM_API_KEY: 'k', LLM_BASE_URL: 'http://x/v1' }, log: () => {}, now: () => 0 });
+    const got = await s.get();
+    expect(got.model).toBe('file-model');
+    expect(got.apiKey).toBe('k');
+    expect(got.baseUrl).toBe('http://x/v1');
+  });
+
+  test('file removed: back to the environment', async () => {
+    const path = join(dir, 'c.env');
+    await Bun.write(path, 'LLM_MODEL=file-model\n');
+    let now = 0;
+    const logs: string[] = [];
+    const s = new EnvSettings({ path, env: { LLM_MODEL: 'env-model' }, log: (m) => logs.push(m), minCheckMs: 10, now: () => now });
+    expect((await s.get()).model).toBe('file-model');
+    await rm(path);
+    now += 10;
+    expect((await s.get()).model).toBe('env-model');
+    expect(logs.some((l) => l.includes('gone'))).toBe(true);
+  });
+
+  test('an unreadable file is reported once and the last good settings stay', async () => {
+    const path = join(dir, 'd.env');
+    await Bun.write(path, 'LLM_MODEL=good\n');
+    let now = 0;
+    const logs: string[] = [];
+    const s = new EnvSettings({ path, env: {}, log: (m) => logs.push(m), minCheckMs: 10, now: () => now });
+    expect((await s.get()).model).toBe('good');
+    await rm(path);
+    await mkdir(path); // a directory where the file was: stat works, reading fails
+    now += 10;
+    expect((await s.get()).model).toBe('good');
+    now += 10;
+    expect((await s.get()).model).toBe('good');
+    expect(logs.filter((l) => l.includes('ignored'))).toHaveLength(1);
   });
 });

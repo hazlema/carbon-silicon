@@ -80,7 +80,7 @@ export interface LlmJudgeOptions {
   baseUrl?: string;
   model?: string;
   apiKey?: string | null;
-  /** Asked before every request (the shared .data/llm.json via SettingsFile); null means off. */
+  /** Asked before every request (the shared .env settings via EnvSettings); null means off. */
   connection?: () => Promise<LlmConnection | null>;
   /** Give up on the model after this long (default 20 s). */
   timeoutMs?: number;

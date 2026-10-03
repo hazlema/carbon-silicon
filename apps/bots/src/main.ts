@@ -4,7 +4,7 @@ import { runBot, type BotOptions } from './bot';
 import { runBouncer } from './bouncer';
 import { instructions } from './instructions';
 import { LlmJudge } from './judge';
-import { connectionFor, describeSettings, SettingsFile, settingsFromEnv } from './llm-settings';
+import { connectionFor, describeSettings, EnvSettings } from './llm-settings';
 import { gameOver } from './personalities/game-over';
 import { oldIron } from './personalities/old-iron';
 import { sprocket } from './personalities/sprocket';
@@ -26,14 +26,17 @@ const common = {
   signal: controller.signal,
 } satisfies Partial<BotOptions>;
 
-// The model settings live in one file the bots re-read while running (see docs/llm-settings.md);
-// the LLM_* environment variables are the fallback for anything the file leaves out.
-const settingsPath = env.LLM_SETTINGS || join(root, '.data/llm.json');
+// The model settings come from the environment plus the repo-root .env, which the bots re-read while
+// running (see docs/llm-settings.md); the file's values win.
+const settingsPath = env.LLM_ENV_FILE || join(root, '.env');
 const llmLog = (m: string) => console.log(`[llm] ${m}`);
-const settings = new SettingsFile({ path: settingsPath, base: settingsFromEnv(env), log: llmLog });
+if (await Bun.file(join(root, '.data/llm.json')).exists()) {
+  llmLog('.data/llm.json is no longer read — put LLM_BASE_URL, LLM_MODEL and LLM_API_KEY in .env (see docs/llm-settings.md)');
+}
+const settings = new EnvSettings({ path: settingsPath, env, log: llmLog });
 llmLog(`settings file: ${settingsPath}; starting with ${describeSettings(await settings.get())}`);
 
-// What the residents are told lives in apps/bots/instructions/*.md, re-read while running like llm.json.
+// What the residents are told lives in apps/bots/instructions/*.md, re-read while running like the .env settings.
 const houseRules = await instructions('house-rules.md');
 
 const ironLog = (m: string) => console.log(`[${oldIron.name}] ${m}`);

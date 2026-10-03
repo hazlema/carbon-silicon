@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BRAND } from '@cs/shared/brand';
+import { readEnvFile } from '@cs/shared/env-file';
 import { LiveText } from '@cs/shared/live-text';
 import { createCore } from './core/core';
 import { clampGroupMax } from './core/groups';
@@ -30,15 +31,13 @@ const core = await createCore({
   groupMaxMembers: clampGroupMax(env.GROUP_MAX_MEMBERS, console.warn),
 });
 
-// The admins' Usage tab: what the bots' OpenRouter key has spent. Read from the same file the bots
-// use (.data/llm.json, or LLM_SETTINGS), on each refresh, so a new key needs no restart.
-const llmSettingsPath = env.LLM_SETTINGS || join(root, '.data/llm.json');
+// The admins' Usage tab: what the bots' OpenRouter key has spent. Read from the same .env the bots
+// use (or LLM_ENV_FILE), on each refresh, so a new key needs no restart; process.env is the fallback.
+const llmEnvPath = env.LLM_ENV_FILE || join(root, '.env');
 const llmUsage = new LlmUsage({
   settings: async () => {
-    const file = Bun.file(llmSettingsPath);
-    if (!(await file.exists())) return null;
-    const s = (await file.json()) as { baseUrl?: unknown; apiKey?: unknown };
-    return typeof s.baseUrl === 'string' ? { baseUrl: s.baseUrl, apiKey: typeof s.apiKey === 'string' ? s.apiKey : null } : null;
+    const merged = { ...env, ...((await readEnvFile(llmEnvPath)) ?? {}) };
+    return { baseUrl: merged.LLM_BASE_URL?.trim() || 'http://127.0.0.1:1234/v1', apiKey: merged.LLM_API_KEY?.trim() || null };
   },
   clock: systemClock,
 });

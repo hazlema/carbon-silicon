@@ -64,7 +64,7 @@ describe('LlmUsage', () => {
   test('says plainly when there is no key, the voice is not on OpenRouter, or OpenRouter does not answer', async () => {
     const clock = new FakeClock(0);
     const none = new LlmUsage({ settings: async () => null, fetchImpl: fakeFetch(ok).fetchImpl, clock });
-    expect(await none.get()).toEqual({ status: 'unconfigured', message: 'No OpenRouter key configured (.data/llm.json).' });
+    expect(await none.get()).toEqual({ status: 'unconfigured', message: 'No OpenRouter key configured (.env).' });
     const local = new LlmUsage({ settings: async () => ({ baseUrl: 'http://127.0.0.1:1234/v1', apiKey: null }), fetchImpl: fakeFetch(ok).fetchImpl, clock });
     expect(await local.get()).toEqual({ status: 'unconfigured', message: 'The voice runs on http://127.0.0.1:1234/v1, not OpenRouter: no usage to show.' });
     const down = new LlmUsage({ settings: async () => ({ baseUrl: OPENROUTER, apiKey: KEY }), fetchImpl: fakeFetch(() => new Response('nope', { status: 401 })).fetchImpl, clock });

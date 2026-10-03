@@ -1,7 +1,7 @@
 import type { UsageReport } from '@cs/shared/protocol';
 import type { Clock } from './clock';
 
-/** The voice's connection as .data/llm.json gives it; only the address and the key matter here. */
+/** The voice's connection as the .env gives it; only the address and the key matter here. */
 export interface UsageSettings {
   baseUrl: string;
   apiKey: string | null;
@@ -19,7 +19,7 @@ export class LlmUsage {
 
   constructor(
     private readonly opts: {
-      /** Read on every refresh, so a new key in llm.json is picked up without a restart. */
+      /** Read on every refresh, so a new key in .env is picked up without a restart. */
       settings: () => Promise<UsageSettings | null>;
       fetchImpl?: typeof fetch;
       clock: Clock;
@@ -40,7 +40,7 @@ export class LlmUsage {
     if (base && !/^https:\/\/openrouter\.ai\//.test(`${base}/`)) {
       return { status: 'unconfigured', message: `The voice runs on ${base}, not OpenRouter: no usage to show.` };
     }
-    if (!s?.apiKey || !base) return { status: 'unconfigured', message: 'No OpenRouter key configured (.data/llm.json).' };
+    if (!s?.apiKey || !base) return { status: 'unconfigured', message: 'No OpenRouter key configured (.env).' };
     let res: Response;
     try {
       res = await (this.opts.fetchImpl ?? fetch)(`${base}/key`, { headers: { authorization: `Bearer ${s.apiKey}` }, signal: AbortSignal.timeout(10_000) });
