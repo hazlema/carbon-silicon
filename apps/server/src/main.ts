@@ -9,6 +9,7 @@ import { clampGroupMax } from './core/groups';
 import { clampFloor } from './core/realtime';
 import { createApp } from './http/app';
 import { systemClock } from './lib/clock';
+import { databaseUrlFor } from './lib/database-url';
 import { LlmUsage } from './lib/llm-usage';
 import { secretFromEnv } from './lib/secrets';
 import { startServer } from './server';
@@ -23,8 +24,16 @@ if (!houseKey) console.warn('[main] HOUSE_KEY is not set — house bots cannot r
 const adminKey = secretFromEnv('ADMIN_KEY', env.ADMIN_KEY, production);
 if (!adminKey) console.warn('[main] ADMIN_KEY is not set — `bun run admin` is switched off.');
 
+let databaseUrl: string;
+try {
+  databaseUrl = databaseUrlFor(env, root);
+} catch (e) {
+  console.error(e instanceof Error ? e.message : e);
+  process.exit(1);
+}
+
 const core = await createCore({
-  databaseUrl: env.DATABASE_URL ?? `pglite:${join(root, '.data/pglite')}`,
+  databaseUrl,
   houseKey,
   diaryDir: join(root, 'diary'),
   doctrineFloorMs: clampFloor(env.DOCTRINE_FLOOR_MS, console.warn),

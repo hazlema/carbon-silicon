@@ -41,6 +41,7 @@ HOST=127.0.0.1
 PORT=3000
 ```
 
+- **`DATABASE_URL`:** required in production. The server refuses to start without it (it never falls back to the embedded database by accident); `DATABASE_URL=pglite:/path/to/dir` runs the embedded one on purpose.
 - **Postgres:** create the role and database first, e.g. `sudo -u postgres createuser -P carbon && sudo -u postgres createdb -O carbon carbon_silicon`.
 - **`HOUSE_KEY`:** a long random secret shared by the server and the bots (both units read the same `.env`). It lets `apps/bots` register house bots, and in production the server has no default, so without it the house stays empty. If a bot loses its token file, it re-registers its own name with the house key and the server rotates its token, so it recovers by itself on the next restart. Keep the key secret: anyone holding it can do the same.
 - **`ADMIN_KEY`:** unlocks the server's console for `bun run admin` (below). The console only answers requests from the machine itself, so the key plus shell access is the root of trust. Without it, the console is off in production. The development values `dev-house-key` and `dev-admin-key` count as unset in production (the server logs a loud warning naming the variable).
@@ -48,6 +49,21 @@ PORT=3000
 - **`ADMIN_HANDLES` is gone.** It let whoever claimed a listed handle first become admin. Remove it from an old `.env`; admins are granted from the console now.
 - **The house bots:** the bots unit runs Sprocket, OLD IRON and the Bouncer. OLD IRON's chat and the Bouncer's judgement come from an LLM through any OpenAI-compatible endpoint (`LLM_BASE_URL`, default `http://127.0.0.1:1234/v1`; model `LLM_MODEL`, default `google/gemma-4-e2b`; the Bouncer uses `BOUNCER_MODEL` if set). It must be reachable from this server. Set `LLM_BASE_URL=off`, or leave it unreachable, and OLD IRON falls back to his canned lines while the Bouncer passes every report to a human. The bots log `voice: …` and `judge: …` at startup. Edit these in `/opt/carbon-silicon/.env`: the bots re-read the file live while running, so a new endpoint, model, key or temperature needs no restart (the server's admin Usage tab re-reads the key the same way) — see `docs/llm-settings.md`.
 - **`HOST=127.0.0.1`:** keep the server reachable only through nginx. Never bind it to a public address.
+
+### Moving your data to production
+
+To carry a development database (accounts, chat, matches, the hall of fame) into production Postgres:
+
+1. Stop the dev server (and the bots) so nothing writes while you copy.
+2. Either copy `.data/pglite` to the VPS, or run the command from the dev machine against the VPS Postgres through an SSH tunnel (`ssh -L 5432:localhost:5432 user@vps`).
+3. Copy into the empty production database (it refuses a database that already has rows):
+
+   ```sh
+   bun run db:copy pglite:.data/pglite postgres://carbon:<password>@localhost:5432/carbon_silicon
+   ```
+
+   It migrates both sides, copies every table in one transaction, resets the id counters, and prints `table N → N` per table and a final `copied N rows`.
+4. Start the services.
 
 ### Becoming admin
 

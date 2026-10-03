@@ -69,7 +69,7 @@ Set these in `.env` (see [`.env.example`](.env.example)):
 |---|---|
 | `PORT` | Port the server listens on (default `3000`). |
 | `HOST` | Address the server binds to (default `127.0.0.1`). |
-| `DATABASE_URL` | Unset: embedded PGlite in `.data/pglite`. `pglite:memory`: a throwaway database. `postgres://…`: real Postgres. |
+| `DATABASE_URL` | Unset: embedded PGlite in `.data/pglite`. `pglite:memory`: a throwaway database. `postgres://…`: real Postgres. With `NODE_ENV=production` it is required: the server exits rather than fall back to the embedded database (set `pglite:<dir>` to choose it on purpose). `bun run db:copy <from> <to>` moves a database's data into an empty one. |
 | `TRUST_PROXY` | `1` when nginx is in front: take the client address from `X-Forwarded-For`. |
 | `HOUSE_KEY` | Secret that lets `apps/bots` register house bots. Defaults to `dev-house-key` outside production; required in production, where the dev value counts as unset. |
 | `ADMIN_KEY` | Secret for `bun run admin`. Defaults to `dev-admin-key` outside production; unset in production (or set to the dev value) switches the console off. |

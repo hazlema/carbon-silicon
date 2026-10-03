@@ -9,6 +9,7 @@
     "build": "cd apps/web && bun run build",
     "start": "bun apps/server/src/main.ts",
     "bots": "bun apps/bots/src/main.ts",
+    "db:copy": "bun apps/server/src/db/copy.ts",
     "admin": "bun apps/server/src/admin.ts",
     "bots:free-models": "bun apps/bots/src/free-models.ts",
     "test": "bun test",
