@@ -112,17 +112,35 @@
     if (log) pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
   }
 
+  const flat = (text: string) => text.replace(/\s*[\r\n]+\s*/g, ' ');
+  let lastSubmitAt = 0;
+  /** One press sends once, whichever of keydown (desktop) or beforeinput (Android soft keyboards) sees it. */
+  function submitOnce(form: HTMLFormElement | null) {
+    const now = Date.now();
+    if (now - lastSubmitAt < 300) return;
+    lastSubmitAt = now;
+    form?.requestSubmit();
+  }
   /** Enter sends; Shift+Enter inserts nothing (the box stays one line). */
   function onComposerKey(e: KeyboardEvent) {
-    if (e.key !== 'Enter' || e.isComposing) return;
+    // Gboard reports the Enter that commits a composing word as key "Unidentified" / keyCode 229: beforeinput handles it.
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
-    if (!e.shiftKey) (e.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
+    if (!e.shiftKey) submitOnce((e.currentTarget as HTMLTextAreaElement).form);
   }
-  /** A paste with line breaks becomes one line. */
+  /** A line break typed on a soft keyboard (no usable keydown) sends instead of inserting. */
+  function onComposerBeforeInput(e: InputEvent) {
+    if (e.inputType !== 'insertLineBreak' && e.inputType !== 'insertParagraph') return;
+    e.preventDefault();
+    submitOnce((e.currentTarget as HTMLTextAreaElement).form);
+  }
+  /** A paste with line breaks becomes one line, the caret staying where it was. */
   function flattenPaste(e: Event) {
     const t = e.currentTarget as HTMLTextAreaElement;
     if (!/[\r\n]/.test(t.value)) return;
-    t.value = t.value.replace(/\s*[\r\n]+\s*/g, ' ');
+    const caret = flat(t.value.slice(0, t.selectionStart)).length;
+    t.value = flat(t.value);
+    t.setSelectionRange(caret, caret);
     draft = t.value;
   }
 
@@ -251,7 +269,7 @@
     <form onsubmit={send}>
       <label class="visually-hidden" for={inputId}>Message {title}</label>
       <!-- A one-line textarea, not an <input>: a lone text input in a form makes Chrome Android offer its password/autofill row. -->
-      <textarea id={inputId} rows="1" bind:value={draft} maxlength="500" {placeholder} autocomplete="off" {...{ autocorrect: "on" }} spellcheck="true" enterkeyhint="send" onkeydown={onComposerKey} oninput={flattenPaste}></textarea>
+      <textarea id={inputId} rows="1" bind:value={draft} maxlength="500" {placeholder} autocomplete="off" {...{ autocorrect: "on" }} spellcheck="true" enterkeyhint="send" onkeydown={onComposerKey} onbeforeinput={onComposerBeforeInput} oninput={flattenPaste}></textarea>
       <button class="btn light" type="submit" disabled={sending || !draft.trim()}>Send</button>
     </form>
   {/if}

@@ -227,7 +227,8 @@ test('a blocked agent never toasts and never counts towards the badge; unblocked
   // Positive control: once unblocked, the same agent's lines get through.
   expect((await p.request.delete(`/api/me/blocks/${handle}`)).ok()).toBe(true);
   await p.reload();
-  await untilFollowing(p, request, auth, `table:${tid}`);
+  // The agent's line from a moment ago is caught up now that it is no longer hidden.
+  await expect(p.locator('.toast').last()).toContainText('you will never read this');
 });
 
 test('a DM from another player while you sit at the table bumps the badge and toasts', async ({ browser, request }) => {

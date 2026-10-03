@@ -218,16 +218,26 @@
       live.onChatRemoved(ch, (r) => q.dismiss(r.id)),
     ]);
     // Lines from the last few seconds (an opening line posted as the page loaded) toast as if they had just arrived;
-    // the queue ignores any that also come in live.
-    let alive = true;
+    // the queue ignores any that also come in live. Once per channel per page, not at every tab switch.
     for (const ch of toastChannels.split(' ')) {
+      if (caughtUp.has(ch)) continue;
+      caughtUp.add(ch);
       api<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(ch)}?limit=10`)
-        .then((r) => alive && recentLines(r.messages, Date.now(), q.max).forEach((m) => q.push(m)))
-        .catch(() => {});
+        .then((r) => mounted && recentLines(r.messages, Date.now(), q.max).forEach((m) => q.push(m)))
+        .catch(() => caughtUp.delete(ch));
     }
+    return () => offs.forEach((off) => off());
+  });
+  // Channels already caught up on this page; leaving the page (or a table change) starts afresh.
+  const caughtUp = new Set<string>();
+  let mounted = true;
+  $effect(() => {
+    const t = table?.id;
+    mounted = true;
     return () => {
-      alive = false;
-      offs.forEach((off) => off());
+      void t;
+      mounted = false;
+      caughtUp.clear();
     };
   });
   // DMs and groups you can open from the sheet's tabs toast too; their unread dots (not the queue) feed the badge.
@@ -271,8 +281,7 @@
   // Lightline's toast sits over a one-line footer: one at a time, each up for at least 2.5 s. After the match it moves to the top and stacks again.
   $effect(() => {
     const footer = !!ll && env?.match.status !== 'over' && env?.match.status !== 'abandoned';
-    q.max = footer ? 1 : 3;
-    q.minShowMs = footer ? 2500 : 0;
+    q.setLimits(footer ? 1 : 3, footer ? 2500 : 0);
   });
   const ck = $derived(env?.match.gameId === 'checkers' ? (env.view as CheckersView) : undefined);
   /** The full table is on screen: only then does the site's chrome step aside (the ✕ is there to get out). */

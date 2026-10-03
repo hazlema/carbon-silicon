@@ -160,6 +160,17 @@ describe('ToastQueue', () => {
   });
 });
 
+describe('ToastQueue.setLimits', () => {
+  test('shrinking the stack keeps only the newest', () => {
+    const q = new ToastQueue({ meId: () => 'me', ...fakeTimers() });
+    for (const t of ['one', 'two', 'three']) q.push(msg(who('a'), t));
+    q.setLimits(1, 2500);
+    expect(texts(q)).toEqual(['three']);
+    q.setLimits(3, 0);
+    expect(texts(q)).toEqual(['three']);
+  });
+});
+
 describe('ToastQueue, single slot with a minimum on-screen time (Lightline footer)', () => {
   const opts = (timers: ReturnType<typeof fakeTimers>) => ({ meId: () => 'me', max: 1, minShowMs: 2500, ...timers });
   test('a newer line waits until the older has had 2.5 s, then replaces it', () => {

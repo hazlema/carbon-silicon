@@ -41,6 +41,27 @@ test('the composer is a one-line textarea (not a login-looking input): Enter sen
   await box.press('Enter');
   await expect(page.getByRole('log').getByText('pasted across lines')).toBeVisible();
   await expect(box).toHaveValue('');
+  // A soft keyboard whose Enter has no usable keydown: beforeinput insertLineBreak sends once and inserts nothing.
+  await page.waitForTimeout(400); // past the double-send guard of the Enter above
+  await box.fill('from gboard');
+  const defaultPrevented = await box.evaluate((e) => {
+    const ev = new (globalThis as any).InputEvent('beforeinput', { inputType: 'insertLineBreak', bubbles: true, cancelable: true });
+    e.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  });
+  expect(defaultPrevented).toBe(true);
+  await expect(page.getByRole('log').getByText('from gboard')).toHaveCount(1);
+  await expect(box).toHaveValue('');
+  // Caret: replacing pasted breaks keeps the caret where it was.
+  await box.fill('');
+  const caret = await box.evaluate((e) => {
+    const t = e as unknown as { value: string; setSelectionRange(a: number, b: number): void; selectionStart: number; dispatchEvent(e: Event): boolean };
+    t.value = 'ab\ncd';
+    t.setSelectionRange(2, 2);
+    t.dispatchEvent(new Event('input', { bubbles: true }));
+    return t.selectionStart;
+  });
+  expect(caret).toBe(2);
 });
 
 test('a taken handle explains itself', async ({ page, browser }) => {

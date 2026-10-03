@@ -42,7 +42,7 @@ export class ToastQueue {
   unread = 0;
   open = false;
   onChange: (() => void) | null = null;
-  /** Both may be changed on the fly (the page switches them when the game changes). */
+  /** Read-only here: change them with setLimits (the page switches them when the game changes). */
   max: number;
   minShowMs: number;
   #shown: Entry[] = [];
@@ -103,6 +103,16 @@ export class ToastQueue {
     this.#clearAll();
     this.#seen.clear();
     this.unread = 0;
+    this.onChange?.();
+  }
+
+  /** Change the stack size (and the minimum on-screen time) on the fly; a smaller stack keeps only the newest. */
+  setLimits(max: number, minShowMs: number): void {
+    if (max === this.max && minShowMs === this.minShowMs) return;
+    this.max = max;
+    this.minShowMs = minShowMs;
+    while (this.#shown.length > max) this.#remove(this.#shown[0]!);
+    this.#pump();
     this.onChange?.();
   }
 
