@@ -345,6 +345,16 @@ describe('the game at the table', () => {
 });
 
 describe('the table prompt', () => {
+  test('the ranks line follows the standing', () => {
+    const prompt = buildUserPrompt({
+      kind: 'tableTalk',
+      channel: 'table:t_1',
+      opponent: 'Frosty',
+      table: { players: '@Frosty (human), @OLD_IRON (you)', turn: 'Turn 3 — your move', standing: 'you lead with 12 knights, Frosty has 11', moves: [], ranks: 'This month in Crown & Steel: you are 1st (Elo 1184), @Frosty is 3rd (1062).' },
+      recent: [],
+    });
+    expect(prompt).toContain('Standing: you lead with 12 knights, Frosty has 11.\nThis month in Crown & Steel: you are 1st (Elo 1184), @Frosty is 3rd (1062).\n');
+  });
   test('lays out the table like the playground: game, players, turn, standing, moves, the ask, then the chat', () => {
     const prompt = buildUserPrompt({
       kind: 'tableTalk',

@@ -7,7 +7,7 @@ import { DmBudget } from './dm-budget';
 import { callName, DEFAULT_STRATEGY, line, linesFor, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
 import { chooseCheckersMove } from './strategies/checkers';
-import { tableContext } from './table-context';
+import { ranksLine, type RankRow, tableContext } from './table-context';
 import { TableGames } from './table-games';
 import type { CheckersState } from '@cs/checkers';
 import { lightlineDoctrine } from './strategies/lightline';
@@ -120,6 +120,29 @@ function untilAborted<T>(p: Promise<T>, signal: AbortSignal | undefined): Promis
   });
 }
 
+/** This month's standings per game, fetched at most once a minute; null when the fetch fails or takes over 2 s. */
+const boards = new WeakMap<Client, Map<string, { at: number; rows: RankRow[] }>>();
+async function standingsOf(client: Client, gameId: string): Promise<RankRow[] | null> {
+  let cache = boards.get(client);
+  if (!cache) boards.set(client, (cache = new Map()));
+  const hit = cache.get(gameId);
+  if (hit && Date.now() - hit.at < 60_000) return hit.rows;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), 2000)));
+  try {
+    const rows = await Promise.race([
+      client.call<{ rows: RankRow[] }>('GET', `/api/leaderboard?game=${encodeURIComponent(gameId)}`).then((r) => r.rows),
+      late,
+    ]);
+    if (rows) cache.set(gameId, { at: Date.now(), rows });
+    return rows;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** The catalog's name and tagline for a game, fetched once and refreshed hourly (or when a new game shows up). */
 const catalogs = new WeakMap<Client, { at: number; games: Map<string, { name: string; tagline: string }> }>();
 async function gameInfo(client: Client, id: string): Promise<{ name: string; tagline: string } | undefined> {
@@ -159,8 +182,13 @@ async function speak(
       const recent = await recentLines(client, channel).catch(() => [] as ChatMessage[]);
       const { answering, gameId, matchId, ...who } = extra;
       const game = gameId ? await gameInfo(client, gameId) : undefined;
-      // The table as it stands; a failed fetch just means a reply without it.
-      const table = matchId ? await client.match(matchId).then(tableContext).catch(() => undefined) : undefined;
+      // The table as it stands, and where everyone sits on this month's board; a failed fetch just leaves it out.
+      const env = matchId ? await client.match(matchId).catch(() => undefined) : undefined;
+      const table = env ? tableContext(env) : undefined;
+      if (table && env && game && gameId) {
+        const rows = await standingsOf(client, gameId);
+        if (rows) table.ranks = ranksLine(game.name, rows, env.match.seats, env.you);
+      }
       const moment: Moment = {
         kind,
         channel,

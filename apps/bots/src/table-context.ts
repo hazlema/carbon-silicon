@@ -10,6 +10,32 @@ export interface TableContext {
   standing: string | null;
   /** The last moves, oldest first: "28. OLD_IRON places at b4 — small chain, takes 2 of Fable's cells". */
   moves: string[];
+  /** "This month in Crown & Steel: you are 1st (Elo 1184), …"; filled by the bot from the leaderboard, absent when it couldn't be fetched. */
+  ranks?: string | null;
+}
+
+export interface RankRow {
+  rank: number;
+  elo: number;
+  identity: { id: string; handle: string };
+}
+
+function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
+}
+
+/** Where everyone at the table stands on this month's board for this game: you first, then seat order. */
+export function ranksLine(gameName: string, rows: RankRow[], seats: { seat: string; identity: { id: string; handle: string } }[], you: string | null): string | null {
+  if (seats.length === 0) return null;
+  const ordered = [...seats.filter((s) => s.seat === you), ...seats.filter((s) => s.seat !== you)];
+  const parts = ordered.map((s) => {
+    const r = rows.find((x) => x.identity.id === s.identity.id);
+    if (s.seat === you) return r ? `you are ${ordinal(r.rank)} (Elo ${r.elo})` : 'you have no ranked games yet';
+    return r ? `@${s.identity.handle} is ${ordinal(r.rank)} (${r.elo})` : `@${s.identity.handle} has no ranked games yet`;
+  });
+  return `This month in ${gameName}: ${parts.join(', ')}.`;
 }
 
 export interface StandingEntry {

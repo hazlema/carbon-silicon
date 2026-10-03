@@ -136,7 +136,7 @@ export function buildUserPrompt(m: Moment): string {
   const atTable = /^(match|table):/.test(m.channel);
   return [
     ...(m.game ? [`The game at this table is ${m.game.name}: ${m.game.tagline}`, ''] : []),
-    ...(t ? [`Players at the table: ${t.players}.`, `${t.turn}.`, ...(t.standing ? [`Standing: ${t.standing}.`] : []), ''] : []),
+    ...(t ? [`Players at the table: ${t.players}.`, `${t.turn}.`, ...(t.standing ? [`Standing: ${t.standing}.`] : []), ...(t.ranks ? [t.ranks] : []), ''] : []),
     ...(t && t.moves.length > 0 ? ['The last moves, oldest first:', ...t.moves, ''] : []),
     describeMoment(m),
     '',

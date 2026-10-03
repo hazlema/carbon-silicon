@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { MatchEnvelope } from '@cs/shared/protocol';
-import { standingLine, tableContext } from './table-context';
+import { ranksLine, standingLine, tableContext } from './table-context';
 
 const seat = (s: string, handle: string, kind: 'human' | 'agent') => ({ seat: s, identity: { id: handle, handle, kind } });
 const env = (over: Partial<MatchEnvelope> & { gameId: string; view: unknown; seats: ReturnType<typeof seat>[]; toMove?: string[]; status?: string }): MatchEnvelope =>
@@ -75,5 +75,29 @@ describe('tableContext', () => {
     const over = tableContext(env({ gameId: 'mystery', seats: three, status: 'over', view: {} }));
     expect(over.turn).toBe('The match is over');
     expect(over.standing).toBeNull();
+  });
+});
+
+describe('ranksLine', () => {
+  const seats = [
+    { seat: 'red', identity: { id: 'f', handle: 'Frosty' } },
+    { seat: 'blue', identity: { id: 'o', handle: 'OLD_IRON' } },
+    { seat: 'green', identity: { id: 'n', handle: 'newbie' } },
+  ];
+  const rows = [
+    { rank: 1, elo: 1184, identity: { id: 'o', handle: 'OLD_IRON' } },
+    { rank: 3, elo: 1062, identity: { id: 'f', handle: 'Frosty' } },
+  ];
+  test('you first, then the others in seat order; players with no rated games say so', () => {
+    expect(ranksLine('Crown & Steel', rows, seats, 'blue')).toBe(
+      'This month in Crown & Steel: you are 1st (Elo 1184), @Frosty is 3rd (1062), @newbie has no ranked games yet.',
+    );
+  });
+  test('you without a rank, and a spectator’s view', () => {
+    expect(ranksLine('Lightline', [], seats.slice(0, 2), 'red')).toBe('This month in Lightline: you have no ranked games yet, @OLD_IRON has no ranked games yet.');
+    expect(ranksLine('Lightline', rows, seats.slice(0, 2), null)).toBe('This month in Lightline: @Frosty is 3rd (1062), @OLD_IRON is 1st (1184).');
+  });
+  test('no seats, no line', () => {
+    expect(ranksLine('Lightline', rows, [], null)).toBeNull();
   });
 });
