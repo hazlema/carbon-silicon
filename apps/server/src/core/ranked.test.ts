@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { openDatabase } from '../db';
 import { identities, matches, matchPlayers } from '../db/schema';
 import { FakeClock } from '../lib/clock';
-import type { AppError } from '../lib/errors';
+import { forbidden, type AppError } from '../lib/errors';
 import { newId } from '../lib/ids';
 import { randomTag } from '../lib/testing';
 import { AccountManager } from './accounts';
@@ -41,6 +41,19 @@ describe('ranked_at', () => {
 });
 
 describe('go ranked now', () => {
+  test('a suspended account cannot go ranked', async () => {
+    const clock = new FakeClock();
+    const ids = new IdentityManager(database.db, clock, { houseKey: null });
+    const guard = new Guard();
+    const accounts = new AccountManager(database.db, clock, ids, guard);
+    const h = (await ids.createHuman(`gs${randomTag()}`)).identity;
+    const { identity } = await accounts.lock(h, PW);
+    guard.install((who, action) => {
+      if (who.id === identity.id && action === 'profile') throw forbidden('SUSPENDED', 'Suspended.');
+    });
+    expect(await codeOf(accounts.goRanked(identity))).toEqual([403, 'SUSPENDED']);
+    expect((await rankedAtOf(identity.id))?.getTime()).toBe(clock.now() + RANKED_GRACE_MS);
+  });
   test('a locked human in their grace week is ranked from now; asking again changes nothing', async () => {
     const { clock, ids, accounts } = setup();
     const h = (await ids.createHuman(`gn${randomTag()}`)).identity;

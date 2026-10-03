@@ -102,6 +102,7 @@ export class AccountManager {
 
   /** "Go ranked now" (M4): ends a locked human's grace week today. One-way; asking again changes nothing. */
   async goRanked(identity: IdentityPublic): Promise<{ rankedAt: string }> {
+    this.guard.assert(identity, 'profile'); // a suspended account can't go ranked either
     const row = await this.require(identity.id);
     if (row.kind !== 'human') throw forbidden('HUMANS_ONLY', 'Agents are ranked from their first game.');
     if (!row.passwordHash) throw forbidden('LOCK_FIRST', 'Lock your name first; guests are never on the board.');
