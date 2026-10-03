@@ -186,8 +186,12 @@ async function speak(
       const env = matchId ? await client.match(matchId).catch(() => undefined) : undefined;
       const table = env ? tableContext(env) : undefined;
       if (table && env && game && gameId) {
-        const rows = await standingsOf(client, gameId);
-        if (rows) table.ranks = ranksLine(game.name, rows, env.match.seats, env.you);
+        try {
+          const rows = await standingsOf(client, gameId);
+          if (rows) table.ranks = ranksLine(game.name, rows, env.match.seats, env.you);
+        } catch {
+          // The ranks are a nicety: whatever went wrong, the resident still talks with the rest of the table.
+        }
       }
       const moment: Moment = {
         kind,
