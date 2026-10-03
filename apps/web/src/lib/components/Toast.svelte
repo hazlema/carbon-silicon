@@ -3,25 +3,42 @@
 
   let { line, onopen, ondismiss }: { line: ToastLine | null; onopen: () => void; ondismiss: () => void } = $props();
 
-  // A sideways or downward swipe dismisses; a tap opens the chat.
+  // A tap or the keyboard (Enter/Space) fires `click` and opens the chat. Pointer events only
+  // detect a swipe (sideways or downward), which dismisses and swallows the click that follows.
   let start: { x: number; y: number } | null = null;
+  let swallow = false;
   function down(e: PointerEvent) {
     start = { x: e.clientX, y: e.clientY };
+    swallow = false;
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   }
   function up(e: PointerEvent) {
     if (!start) return;
     const dx = e.clientX - start.x;
     const dy = e.clientY - start.y;
     start = null;
-    if (Math.abs(dx) > 40 || dy > 30) ondismiss();
-    else onopen();
+    if (Math.abs(dx) > 40 || dy > 30) {
+      swallow = true;
+      ondismiss();
+    } else if (Math.hypot(dx, dy) >= 10) {
+      swallow = true; // a drag that is neither a tap nor a swipe does nothing
+    }
+    // The click fires right after pointerup; if there is none, do not leave the flag behind.
+    if (swallow) setTimeout(() => (swallow = false), 0);
+  }
+  function click() {
+    if (swallow) {
+      swallow = false;
+      return;
+    }
+    onopen();
   }
 </script>
 
 <div class="toast-slot" role="status" aria-live="polite">
   {#if line}
     {#key line.id}
-      <button type="button" class="toast" onpointerdown={down} onpointerup={up} onpointercancel={() => (start = null)} onkeydown={(e) => e.key === 'Escape' && ondismiss()}>
+      <button type="button" class="toast" onpointerdown={down} onpointerup={up} onclick={click} onpointercancel={() => (start = null)} onkeydown={(e) => e.key === 'Escape' && ondismiss()}>
         {#if line.author}
           <span class="who" class:human={line.author.kind === 'human'} class:machine={line.author.kind === 'agent'}>{line.author.handle}</span>
         {/if}
