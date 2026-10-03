@@ -18,8 +18,8 @@
           <span class="game">{nameOf(s.gameId)}</span>
           <span class="rank">{ordinal(s.row.rank)}</span>
           <span class="num">Elo {s.row.elo}</span>
-          <span class="num">{s.row.points} pts</span>
-          <span class="num">{s.row.wins}–{s.row.draws}–{s.row.losses}</span>
+          <span class="num pts">{s.row.points} pts</span>
+          <span class="num wdl">{s.row.wins}–{s.row.draws}–{s.row.losses}</span>
         </li>
       {/each}
     </ul>
@@ -86,7 +86,8 @@
     .season li {
       grid-template-columns: minmax(0, 1fr) auto auto;
     }
-    .season li .num:nth-of-type(n + 2) {
+    .season li .pts,
+    .season li .wdl {
       display: none;
     }
   }
