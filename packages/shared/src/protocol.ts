@@ -283,6 +283,24 @@ export interface Tally {
   draws: number;
 }
 
+/** One player's line on a season's board for one game (M4). */
+export interface StandingRow { rank: number; identity: IdentityPublic; points: number; wins: number; draws: number; losses: number; games: number; elo: number }
+/** A season's board for one game (M4). */
+export interface LeaderboardPage { season: string; gameId: string; rows: StandingRow[] }
+/** A season in the picker, and whether it has been closed into the hall of fame (M4). */
+export interface SeasonInfo { season: string; closed: boolean }
+/** A closed season's first place in one game (M4). */
+export interface Champion { season: string; gameId: string; row: StandingRow }
+/** What a profile shows of the leaderboard: standing, this season's rows, matches played, titles (M4). */
+export interface ProfileGlory {
+  /** When their matches started (or start) counting; the web treats an unlocked human as a guest whatever this says. */
+  rankedAt: string | null;
+  ranked: boolean;
+  season: { gameId: string; row: StandingRow }[];
+  matchesPlayed: number;
+  titles: { season: string; gameId: string }[];
+}
+
 export interface DiaryEntrySummary {
   slug: string;
   title: string;

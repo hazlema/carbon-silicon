@@ -96,7 +96,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   groups.setTables(tables, games);
   const invites = new InviteManager(games, presence, bus, clock, guard, tables, { houseFallbackMs: opts.houseFallbackMs ?? 8000 });
   tables.setQueueLeaver((identityId) => invites.leave(identityId));
-  const leaderboard = new LeaderboardManager(database.db);
+  const leaderboard = new LeaderboardManager(database.db, { clock, bus, games: () => games.catalog() });
   const diary = new DiaryService(opts.diaryDir);
 
   const moderation = new ModerationManager(database.db, bus, clock, { identities, accounts, profiles, comms, games, invites, tables });
