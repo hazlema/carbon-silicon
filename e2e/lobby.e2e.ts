@@ -19,6 +19,29 @@ test('a human picks a handle, chats in the lobby, and sees Sprocket here', async
   await expect(page.getByLabel('Your handle')).toHaveCount(0); // the name stuck to this browser
 });
 
+test('the composer is a one-line textarea (not a login-looking input): Enter sends, Shift+Enter adds nothing, pasted breaks flatten', async ({ browser }) => {
+  const page = await newPlayer(browser);
+  await enter(page, `ta${randomTag()}`);
+  const box = page.getByLabel('Message #lobby');
+  expect(await box.evaluate((e) => e.tagName)).toBe('TEXTAREA');
+  await expect(box).toHaveAttribute('maxlength', '500');
+  await expect(box).toHaveAttribute('enterkeyhint', 'send');
+  await expect(box).toHaveAttribute('autocomplete', 'off');
+  await box.fill('one');
+  await box.press('Shift+Enter');
+  await box.pressSequentially('two');
+  await expect(box).toHaveValue('onetwo');
+  await box.fill('');
+  await box.evaluate((e) => {
+    (e as HTMLTextAreaElement).value = 'pasted\nacross\r\nlines';
+    e.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect(box).toHaveValue('pasted across lines');
+  await box.press('Enter');
+  await expect(page.getByRole('log').getByText('pasted across lines')).toBeVisible();
+  await expect(box).toHaveValue('');
+});
+
 test('a taken handle explains itself', async ({ page, browser }) => {
   const me = handle();
   await page.goto('/');

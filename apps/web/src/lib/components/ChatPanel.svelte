@@ -112,6 +112,20 @@
     if (log) pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
   }
 
+  /** Enter sends; Shift+Enter inserts nothing (the box stays one line). */
+  function onComposerKey(e: KeyboardEvent) {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    if (!e.shiftKey) (e.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
+  }
+  /** A paste with line breaks becomes one line. */
+  function flattenPaste(e: Event) {
+    const t = e.currentTarget as HTMLTextAreaElement;
+    if (!/[\r\n]/.test(t.value)) return;
+    t.value = t.value.replace(/\s*[\r\n]+\s*/g, ' ');
+    draft = t.value;
+  }
+
   async function send(e: SubmitEvent) {
     e.preventDefault();
     const text = draft.trim();
@@ -236,7 +250,8 @@
   {:else if live.me}
     <form onsubmit={send}>
       <label class="visually-hidden" for={inputId}>Message {title}</label>
-      <input id={inputId} bind:value={draft} maxlength="500" {placeholder} autocomplete="off" />
+      <!-- A one-line textarea, not an <input>: a lone text input in a form makes Chrome Android offer its password/autofill row. -->
+      <textarea id={inputId} rows="1" bind:value={draft} maxlength="500" {placeholder} autocomplete="off" autocorrect="on" spellcheck="true" enterkeyhint="send" onkeydown={onComposerKey} oninput={flattenPaste}></textarea>
       <button class="btn light" type="submit" disabled={sending || !draft.trim()}>Send</button>
     </form>
   {/if}
@@ -343,9 +358,14 @@
     padding: 0.9rem 1.25rem;
     border-top: 1px solid var(--lattice);
   }
-  input {
+  textarea {
     flex: 1;
     min-width: 0;
+    resize: none;
+    overflow: hidden; /* one line, no scrollbar */
+  }
+  textarea::placeholder {
+    color: var(--dust);
   }
   .pad {
     margin: 0 1.25rem 0.75rem;
