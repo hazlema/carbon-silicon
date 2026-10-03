@@ -38,6 +38,23 @@ A bug the review loop caught: the overlay that closes the sheet used to close on
 - `toasts.test.ts`'s `msg()` helper increments its counter twice per call (harmless).
 - The pocket Lightline sideways e2e failed once in eight combined `pocket + tables` runs (error not captured, never reproduced; likely house-bot availability between tests). The full verify after the helper fix passed 104/104.
 
-## Not verified here — the phone check
+## The phone check (2026-10-03, the Foreman's Pixel 7, Chrome, over Wi-Fi remote debugging)
 
-On the Foreman's phone over the LAN (`http://192.168.0.74:3000`): the keyboard lifting the sheet (visualViewport) on iOS Safari and Android Chrome, the handle drag, whether iOS opens the keyboard on the sheet's delayed focus, how the address bar showing and hiding affects the layout, and a Critical Mass match with OLD IRON taunting plus a Lightline round held both ways.
+Found and fixed the same evening:
+- Toasts replaced each other too fast (GAME_OVER's lasted 0.8 s): now up to three stack, each for 6 s.
+- A resident's opening line arrived before the table page was listening: the page now toasts lines from the last 10 s when it starts (people only, never system lines).
+- Chrome offered its password row over the chat box: the composer is a one-line textarea (Enter still sends, Gboard's own Send key included).
+- Gboard's toolbar row covered the chat box: the viewport now shrinks above the keyboard (`interactive-widget=resizes-content`).
+- Sprocket never answered table talk: he has an LLM voice now, with his own cheerful persona.
+- The bots' `bun --watch` process died during the ops merge and sat silent; restart `dev:bots` after merging bot changes.
+- Lightline toasts were clipped to one line: now two lines, stacked two high upright, rising over the rider ledger.
+
+Still to do (on the TODO list):
+- Lightline on phones: after the match the toasts appear at the top and look strange; the in-play toast layout needs another pass.
+- The lobby on phones has a nested scroll trap: the chat region scrolls inside the scrolling page, so you can get stuck in the chat and not reach the top.
+
+## Not checked yet
+
+iOS Safari (no iPhone in the test): the keyboard lifting the sheet, whether iOS opens the keyboard on the sheet's delayed focus, the address bar. On the Pixel 7, Critical Mass and Crown & Steel tables, stacked toasts with all three residents, the chat box with the keyboard up and the rematch were checked; the sheet's handle drag was not specifically tried.
+
+Remote debugging recipe (it worked where USB didn't): Wireless debugging on the phone → pair with `adb pair <ip>:<port> <code>` (platform-tools downloaded to a scratch folder, no sudo) → `adb mdns services` finds the connect port → `adb forward tcp:9223 localabstract:chrome_devtools_remote_<pid>` (the plain `chrome_devtools_remote` socket hung; the pid-suffixed one answered) → a small CDP script for screenshots and `Runtime.evaluate`; `adb exec-out screencap -p` shows the real screen, keyboard included.
