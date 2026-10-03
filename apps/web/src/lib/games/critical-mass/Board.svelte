@@ -1,7 +1,8 @@
 <script lang="ts">
   import { cellIndex, type CMBoardCell, type CMView } from '@cs/critical-mass';
   import { colorOf, type TableColors } from '$lib/seats';
-  import { boardSize, captured, cellCenter, cellOrder, changedCells, clampTilt, DRAG_THRESHOLD, EMPTY, fitScale, flightPlan, ISO, nearestTurn, orbSpots, popTimes, shades, TOP, type Flight } from './iso';
+  import { boardSize, captured, cellCenter, cellOrder, changedCells, clampTilt, DRAG_THRESHOLD, EMPTY, fitScale, flightPlan, ISO, nearestTurn, orbSpots, popTimes, shades, TOP, topFor, type Flight } from './iso';
+  import { untrack } from 'svelte';
   import { createSound } from './sound';
   import { rgba } from './render';
 
@@ -11,12 +12,23 @@
     legal,
     interactive,
     onMove,
-  }: { view: CMView; colors: TableColors; legal: string[]; interactive: boolean; onMove: (cell: string) => void } = $props();
+    startTop = false,
+  }: {
+    view: CMView;
+    colors: TableColors;
+    legal: string[];
+    interactive: boolean;
+    onMove: (cell: string) => void;
+    /** Open in the Top view, turned to suit the stage (the phone's pocket layout); read once at mount. */
+    startTop?: boolean;
+  } = $props();
+  const topMode = untrack(() => startTop);
+  const first = topMode ? TOP : ISO;
 
-  let spin = $state(ISO.spin);
-  let tilt = $state(ISO.tilt);
+  let spin = $state(first.spin);
+  let tilt = $state(first.tilt);
   /** The angle the fit is computed for: only updated at rest, so the board doesn't breathe while you drag. */
-  let rest = $state({ spin: ISO.spin, tilt: ISO.tilt });
+  let rest = $state({ spin: first.spin, tilt: first.tilt });
   let drag: { x: number; y: number; spin: number; tilt: number; touch: boolean; moved: boolean } | null = null;
   let dragging = $state(false);
   /** Set for the click that ends a swivel, so it never places an orb. */
@@ -67,6 +79,22 @@
   let stage: HTMLDivElement | undefined = $state();
   let stageSize = $state({ w: 0, h: 0 });
   const size = $derived(boardSize(view.cols, view.rows));
+  /** The Top view button's target: upright on the desktop, turned to the stage's long side in the pocket. */
+  const topView = $derived(topMode ? topFor(size, stageSize) : TOP);
+  const turnsFrom360 = (a: number, b: number) => (((a - b) % 360) + 360) % 360 === 0;
+  const isView = (v: { spin: number; tilt: number }) => rest.tilt === v.tilt && turnsFrom360(rest.spin, v.spin);
+  // Turning the phone re-aims a board that is resting in its Top view.
+  let lastPortrait: boolean | null = null;
+  $effect(() => {
+    if (!topMode || stageSize.w === 0 || stageSize.h === 0) return;
+    const portrait = stageSize.h > stageSize.w;
+    const tv = topView;
+    untrack(() => {
+      const changed = lastPortrait !== portrait;
+      lastPortrait = portrait;
+      if (changed && rest.tilt === 0) aim(tv);
+    });
+  });
   const scale = $derived(fitScale(size, stageSize, rest.spin, rest.tilt));
   const legalSet = $derived(new Set(legal));
   const order = $derived(cellOrder(view.cols, view.rows));
@@ -234,8 +262,8 @@
   </div>
   <div class="pill" role="toolbar" aria-label="Board view">
     <button type="button" aria-label="Rotate left 90°" onclick={() => aim({ spin: spin - 90, tilt })}>⟲ 90°</button>
-    <button type="button" aria-label="Isometric view" onclick={() => aim(ISO)}>Iso</button>
-    <button type="button" aria-label="Top view" onclick={() => aim(TOP)}>Top</button>
+    <button type="button" aria-label="Isometric view" aria-pressed={isView(ISO)} onclick={() => aim(ISO)}>Iso</button>
+    <button type="button" aria-label="Top view" aria-pressed={isView(topView)} onclick={() => aim(topView)}>Top</button>
     <button type="button" aria-label="Rotate right 90°" onclick={() => aim({ spin: spin + 90, tilt })}>90° ⟳</button>
     <button type="button" class="snd" aria-label="Sound" aria-pressed={soundOn} onclick={() => (soundOn = sound?.toggle() ?? false)}>♪</button>
     <span class="hint">drag to swivel</span>

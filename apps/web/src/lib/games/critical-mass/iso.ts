@@ -12,6 +12,17 @@ export const PILL_RESERVE = 64;
 export const ISO = { spin: -35, tilt: 55 };
 export const TOP = { spin: 0, tilt: 0 };
 
+/**
+ * The Top view for a stage: turned a quarter when exactly one of board and stage is taller than wide,
+ * so the board's long side lies along the stage's long side. Square either way: not turned.
+ */
+export function topFor(board: { w: number; h: number }, stage: { w: number; h: number }): { spin: 0 | 90; tilt: 0 } {
+  const tall = (r: { w: number; h: number }) => (r.h === r.w ? null : r.h > r.w);
+  const b = tall(board);
+  const s = tall(stage);
+  return { spin: b !== null && s !== null && b !== s ? 90 : 0, tilt: 0 };
+}
+
 /** Waves burst this far apart; each flight takes exactly one wave, landing as the next wave bursts. */
 export const WAVE_MS = 200;
 export const MAX_FLIGHTS = 240;

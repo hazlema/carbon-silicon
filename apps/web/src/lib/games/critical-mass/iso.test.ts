@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { cellIndex } from '@cs/critical-mass';
 import {
   boardSize, captured, cellCenter, cellOrder, changedCells, clampTilt, CELL, EMPTY, fitScale, flightPlan,
-  GAP, MAX_BURSTS, MAX_FLIGHTS, MAX_POPS, mix, nearestTurn, popTimes, orbSpots, PAD, shades, WAVE_MS,
+  GAP, MAX_BURSTS, MAX_FLIGHTS, MAX_POPS, mix, nearestTurn, popTimes, orbSpots, PAD, shades, topFor, WAVE_MS,
 } from './iso';
 
 describe('nearestTurn', () => {
@@ -155,5 +155,23 @@ describe('popTimes', () => {
     expect(t.length).toBe(MAX_POPS);
     expect(t[0]).toBe(0);
     expect(t.at(-1)).toBeCloseTo(499 * 6, 5);
+  });
+});
+
+describe('topFor', () => {
+  const tall = { w: 6, h: 9 };
+  test('a tall board on a portrait stage stays upright', () => {
+    expect(topFor(tall, { w: 400, h: 700 })).toEqual({ spin: 0, tilt: 0 });
+  });
+  test('a tall board on a landscape stage is turned so the long sides agree', () => {
+    expect(topFor(tall, { w: 700, h: 400 })).toEqual({ spin: 90, tilt: 0 });
+  });
+  test('a wide board on a portrait stage is turned', () => {
+    expect(topFor({ w: 9, h: 6 }, { w: 400, h: 700 })).toEqual({ spin: 90, tilt: 0 });
+    expect(topFor({ w: 9, h: 6 }, { w: 700, h: 400 })).toEqual({ spin: 0, tilt: 0 });
+  });
+  test('a square board or a square stage is never turned', () => {
+    expect(topFor({ w: 7, h: 7 }, { w: 700, h: 400 })).toEqual({ spin: 0, tilt: 0 });
+    expect(topFor(tall, { w: 500, h: 500 })).toEqual({ spin: 0, tilt: 0 });
   });
 });

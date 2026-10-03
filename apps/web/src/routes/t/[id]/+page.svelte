@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { tick, untrack } from 'svelte';
   import type { CheckersView } from '@cs/checkers';
@@ -6,6 +7,7 @@
   import type { LLView } from '@cs/lightline';
   import { dmParticipants, groupOf, railChannel, tableChannel, type MatchEnvelope, type TableInfo } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
+  import IdentityChip from '$lib/components/IdentityChip.svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
   import ConvMenu from '$lib/components/ConvMenu.svelte';
   import ConvTabs from '$lib/components/ConvTabs.svelte';
@@ -18,7 +20,8 @@
   import { keyOf, typing, type SteerKey } from '$lib/games/lightline/controls';
   import { live } from '$lib/live.svelte';
   import { pollMatch } from '$lib/match-poll';
-  import { colorOf, tableColors } from '$lib/seats';
+  import { pocket } from '$lib/pocket.svelte';
+  import { clock, colorOf, tableColors } from '$lib/seats';
 
   const REASONS: Record<string, string> = {
     'last-standing': 'Last one with orbs on the board.',
@@ -39,6 +42,16 @@
   let error = $state('');
   let busy = $state(false);
   let confirmResign = $state(false);
+  /** A phone: the table fills the screen and the site's header and lattice step aside. */
+  const inPocket = $derived(pocket.screen);
+  $effect(() => {
+    pocket.chromeHidden = inPocket;
+    return () => {
+      pocket.chromeHidden = false;
+    };
+  });
+  let moreOpen = $state(false);
+  let confirmLeave = $state(false);
   let now = $state(Date.now());
   let verdictHeading: HTMLHeadingElement | undefined = $state();
   let focusedOver = false;
@@ -258,6 +271,7 @@
           : anyHuman ? 'Humans steer; machines ride their doctrine.' : 'Machines at work: each rides its own doctrine.';
       return { lead: `Round ${ll.round}`, detail };
     }
+    if (myTurn && inPocket && secondsLeft !== null) return { lead: `Your move · ${secondsLeft} s` };
     if (myTurn) return { lead: 'Your move.', detail: ck ? 'Select a knight, then a gold destination. Captures are mandatory.' : 'Place an orb on an empty cell or one of yours.' };
     return { lead: `Waiting for ${handleOf(match.toMove[0] ?? '')}…` };
   });
@@ -314,6 +328,20 @@
     }
   }
 
+  /** ✕: during your own live match ask first (the match plays on without you); otherwise straight to the lobby. */
+  function leave() {
+    if (mySeat && !iAmOut && (match?.status === 'live' || match?.status === 'countdown')) {
+      moreOpen = false;
+      confirmLeave = true;
+    } else void goto('/');
+  }
+  const leaveText = $derived(
+    ll
+      ? 'Leave the table? The match keeps going and your rider carries on without you.'
+      : 'Leave the table? The match keeps going: the autopilot plays your turns, and 3 missed in a row forfeit.',
+  );
+  const canResign = $derived(!!match && !!mySeat && !iAmOut && (match.status === 'live' || match.status === 'countdown'));
+
   async function rematch() {
     if (!table) return;
     error = '';
@@ -359,10 +387,19 @@
     <a class="btn primary" href="/">Back to the lobby</a>
   </div>
 {:else if table && env && match && (view || ll || ck)}
-  <div class="table">
+  <div class="table" class:pocket={inPocket}>
     <section class="game panel" aria-labelledby="game-title">
       <header class="bar top">
+        {#if inPocket}
+          <button class="icon" type="button" aria-label="Leave the table" onclick={leave}>✕</button>
+        {/if}
         <h1 id="game-title">{gameName}</h1>
+        {#if inPocket}
+          <a class="rules" href={gameId ? `/games#${gameId}` : '/games'}>Rules</a>
+          {#if canResign}
+            <button class="icon" type="button" aria-label="More" aria-expanded={moreOpen} aria-haspopup="true" onclick={() => (moreOpen = !moreOpen)}>⋯</button>
+          {/if}
+        {:else}
         {#if ll}
           <span class="meta" data-testid="ll-clock">round {ll.round}, {(ll.roundTick / 10).toFixed(1)} s</span>
         {:else if view}
@@ -372,7 +409,46 @@
         {/if}
         <span class="meta watching">Watching: {table.watching}</span>
         <a class="rules" href={gameId ? `/games#${gameId}` : '/games'}>Rules</a>
+        {/if}
       </header>
+      {#if inPocket}
+        {#if confirmLeave}
+          <div class="sheetnote" role="alertdialog" aria-labelledby="leave-text">
+            <p id="leave-text">{leaveText}</p>
+            <div class="row">
+              <button class="btn primary" type="button" onclick={() => goto('/')}>Leave</button>
+              <button class="btn" type="button" onclick={() => (confirmLeave = false)}>Stay</button>
+            </div>
+          </div>
+        {/if}
+        {#if moreOpen && canResign}
+          <div class="sheetnote more" role="group" aria-label="More">
+            {#if confirmResign}
+              <span>Resign this match?</span>
+              <div class="row">
+                <button class="btn" type="button" onclick={() => { moreOpen = false; void resign(); }}>Yes, resign</button>
+                <button class="btn quiet" type="button" onclick={() => { confirmResign = false; moreOpen = false; }}>Keep playing</button>
+              </div>
+            {:else}
+              <button class="btn quiet" type="button" onclick={() => (confirmResign = true)}>Resign</button>
+            {/if}
+          </div>
+        {/if}
+        {#if error}<p class="error pocketerror" role="alert">{error}</p>{/if}
+        {#if view}
+          <div class="seatline" aria-label="Players">
+            {#each ordered as s (s.seat)}
+              {@const out = view.eliminated.includes(s.seat)}
+              <span class="pseat" class:out class:onclock={match.toMove.includes(s.seat) && !out} data-seat={s.seat}>
+                <i class="dot" style:background={colorOf(colors, s.seat)}></i>
+                <IdentityChip identity={s.identity} badge={false} tag={false} />
+                <b>{view.counts[s.seat]?.cells ?? 0}</b>
+                {#if out}<em>· out</em>{:else if match.toMove.includes(s.seat) && secondsLeft !== null && match.status === 'live'}<span class="tick" aria-label="{secondsLeft} seconds left">⏱ {clock(secondsLeft)}</span>{/if}
+              </span>
+            {/each}
+          </div>
+        {/if}
+      {/if}
 
       {#if ll}
         <div class="stage ll">
@@ -388,7 +464,7 @@
       {#if ck}
         <div class="stage ck">
           <div class="boardwrap">
-            <CrownBoard view={ck} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} players={ckPlayers} actions={tableActions} />
+            <CrownBoard view={ck} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} players={ckPlayers} actions={inPocket ? undefined : tableActions} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
           </div>
         </div>
@@ -411,7 +487,7 @@
             {/each}
           </div>
           <div class="boardwrap">
-            <Board {view} {colors} legal={legalCells} interactive={myTurn && !busy} onMove={move} />
+            <Board {view} {colors} legal={legalCells} interactive={myTurn && !busy} onMove={move} startTop={inPocket} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
           </div>
         </div>
@@ -436,9 +512,9 @@
         <footer class="bar bottom">
           <p class="status" role="status">
             <span class="lead">{status.lead}</span>
-            {#if status.detail}<span class="detail">{status.detail}</span>{/if}
+            {#if status.detail && !(inPocket && !ll)}<span class="detail">{status.detail}</span>{/if}
           </p>
-          {@render tableActions()}
+          {#if !inPocket}{@render tableActions()}{/if}
         </footer>
       {/if}
     </section>
@@ -735,6 +811,120 @@
       height: 55dvh;
       padding-bottom: 0;
     }
+  }
+  /* The pocket table (a phone): one column filling the screen; the chat becomes a sheet in a later step. */
+  .table.pocket {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 0;
+    gap: 0;
+  }
+  .pocket .game {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    border-radius: 0;
+    border-inline: 0;
+    border-block: 0;
+  }
+  .pocket .talk {
+    display: none;
+  }
+  .pocket .bar {
+    gap: 0.6rem;
+    padding: 0.4rem 0.75rem;
+  }
+  .pocket .bar.top {
+    padding-top: calc(0.4rem + env(safe-area-inset-top, 0px));
+  }
+  .pocket .bar.bottom {
+    min-height: 0;
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+  }
+  .pocket h1 {
+    font-size: var(--step-0);
+  }
+  .pocket .stage.cm,
+  .pocket .stage.ck,
+  .pocket .stage.ll {
+    height: auto;
+    flex: 1;
+    min-height: 0;
+  }
+  .pocket .corners {
+    display: none;
+  }
+  .icon {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+    background: none;
+    border: 0;
+    border-radius: 0.5rem;
+    color: var(--chalk);
+    font-size: 1.15rem;
+    line-height: 1;
+  }
+  .pocket .rules {
+    padding: 0.5rem 0.25rem;
+  }
+  .sheetnote {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--lattice);
+    background: var(--ink-2, rgb(255 255 255 / 0.04));
+  }
+  .sheetnote p {
+    margin: 0;
+    flex: 1 1 14rem;
+  }
+  .pocketerror {
+    margin: 0;
+    padding: 0.4rem 0.75rem;
+  }
+  .seatline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.9rem;
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--lattice);
+    font-size: var(--step--1);
+  }
+  .pseat {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+  }
+  .pseat.out {
+    opacity: 0.5;
+  }
+  .pseat .dot {
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    flex: none;
+  }
+  .pseat b {
+    font-family: var(--font-silicon);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+  }
+  .pseat em {
+    color: var(--fog);
+    font-style: normal;
+  }
+  .pseat .tick {
+    color: var(--carbon);
+    font-family: var(--font-silicon);
+    font-variant-numeric: tabular-nums;
+  }
+  .pseat.onclock .tick {
+    font-weight: 600;
   }
   .watching {
     margin-left: 0.25rem;
