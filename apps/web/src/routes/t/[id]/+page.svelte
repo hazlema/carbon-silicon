@@ -5,14 +5,14 @@
   import type { CheckersView } from '@cs/checkers';
   import type { CMView } from '@cs/critical-mass';
   import type { LLView } from '@cs/lightline';
-  import { dmParticipants, groupOf, railChannel, tableChannel, type MatchEnvelope, type TableInfo } from '@cs/shared/protocol';
+  import { dmParticipants, groupOf, railChannel, tableChannel, type ChatMessage, type MatchEnvelope, type TableInfo } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
   import ConvMenu from '$lib/components/ConvMenu.svelte';
   import ConvTabs from '$lib/components/ConvTabs.svelte';
   import ChatSheet from '$lib/components/ChatSheet.svelte';
   import Toast from '$lib/components/Toast.svelte';
-  import { ToastQueue, type ToastLine } from '$lib/toasts';
+  import { ToastQueue, recentLines, type ToastLine } from '$lib/toasts';
   import { groupTitle } from '$lib/groups';
   import GatheringCard from '$lib/components/GatheringCard.svelte';
   import Board from '$lib/games/critical-mass/Board.svelte';
@@ -217,7 +217,18 @@
       live.onChat(ch, (m) => q.push(m)),
       live.onChatRemoved(ch, (r) => q.dismiss(r.id)),
     ]);
-    return () => offs.forEach((off) => off());
+    // Lines from the last few seconds (an opening line posted as the page loaded) toast as if they had just arrived;
+    // the queue ignores any that also come in live.
+    let alive = true;
+    for (const ch of toastChannels.split(' ')) {
+      api<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(ch)}?limit=10`)
+        .then((r) => alive && recentLines(r.messages, Date.now(), q.max).forEach((m) => q.push(m)))
+        .catch(() => {});
+    }
+    return () => {
+      alive = false;
+      offs.forEach((off) => off());
+    };
   });
   // DMs and groups you can open from the sheet's tabs toast too; their unread dots (not the queue) feed the badge.
   $effect(() => {

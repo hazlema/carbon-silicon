@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ChatMessage, IdentityPublic } from '@cs/shared/protocol';
-import { TOAST_MS, ToastQueue } from './toasts';
+import { CATCH_UP_MS, TOAST_MS, ToastQueue, recentLines } from './toasts';
 
 const texts = (q: ToastQueue) => q.visible.map((l) => l.text);
 
@@ -228,5 +228,25 @@ describe('ToastQueue, single slot with a minimum on-screen time (Lightline foote
     q.setOpen(false);
     timers.advance(5000);
     expect(texts(q)).toEqual([]);
+  });
+});
+
+describe('recentLines (the opening line that arrived just before the page was listening)', () => {
+  const at = (ageMs: number, now: number, text: string, id: number): ChatMessage => ({ ...msg(who('a'), text), id, createdAt: new Date(now - ageMs).toISOString() });
+  test('keeps lines from the last 10 s, oldest first, at most max', () => {
+    const now = Date.parse('2026-10-03T12:00:00Z');
+    const history = [at(30_000, now, 'old', 1), at(9_000, now, 'a', 2), at(5_000, now, 'b', 3), at(1_000, now, 'c', 4)];
+    expect(CATCH_UP_MS).toBe(10_000);
+    expect(recentLines(history, now, 3).map((m) => m.text)).toEqual(['a', 'b', 'c']);
+    expect(recentLines(history, now, 2).map((m) => m.text)).toEqual(['b', 'c']);
+    expect(recentLines([at(10_001, now, 'x', 5)], now, 3)).toEqual([]);
+  });
+  test('catching up and then hearing the same line live toasts it once', () => {
+    const q = new ToastQueue({ meId: () => 'me', ...fakeTimers() });
+    const now = Date.now();
+    const m = at(2_000, now, 'Let us make some chain reactions', 77);
+    for (const l of recentLines([m], now, q.max)) q.push(l);
+    q.push({ ...m });
+    expect([texts(q), q.unread]).toEqual([['Let us make some chain reactions'], 1]);
   });
 });
