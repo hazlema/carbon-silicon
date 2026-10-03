@@ -68,6 +68,16 @@
   $effect(() => {
     if (!inPocket) sheetOpen = false;
   });
+  /** A tap on a toast opens the chat on the conversation that line was said in. */
+  function openFromToast() {
+    const ch = toast?.channel;
+    if (ch && table) {
+      if (ch === tableChannel(table.id)) tab = 'table';
+      else if (ch === railChannel(table.id)) tab = 'rail';
+      else if ((dmParticipants(ch) && live.dms.some((d) => d.channel === ch)) || (groupOf(ch) && live.groups.some((g) => g.channel === ch))) tab = ch;
+    }
+    sheetOpen = true;
+  }
   function closeSheet() {
     sheetOpen = false;
     void tick().then(() => chatBtn?.focus({ preventScroll: true }));
@@ -639,7 +649,7 @@
       {#if !ck}
         <footer class="bar bottom">
           <p class="status" role="status">
-            <span class="lead">{status.lead}</span>{#if status.secs !== undefined}<span class="lead secs" aria-hidden="true"> · {status.secs} s</span>{/if}
+            <span class="lead" class:tight={status.secs !== undefined}>{status.lead}</span>{#if status.secs !== undefined}<span class="lead secs" aria-hidden="true"> · {status.secs} s</span>{/if}
             {#if status.detail && !(inPocket && !ll)}<span class="detail">{status.detail}</span>{/if}
           </p>
           {#if !inPocket}{@render tableActions()}{/if}
@@ -647,7 +657,7 @@
       {/if}
     {#if inPocket}<Toast
         line={toast}
-        onopen={() => (sheetOpen = true)}
+        onopen={openFromToast}
         ondismiss={() => q.dismiss()}
         bottom={toastBottom}
         top={match.status === 'over' || match.status === 'abandoned'}
@@ -845,6 +855,9 @@
   .lead {
     font-weight: 500;
     margin-right: 0.8rem;
+  }
+  .lead.tight {
+    margin-right: 0;
   }
   .detail {
     color: var(--fog);

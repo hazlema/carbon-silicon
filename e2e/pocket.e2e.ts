@@ -176,9 +176,11 @@ test('a DM from another player while you sit at the table bumps the badge and to
   await expect(p.locator('.toast')).toContainText('psst, carbon');
   await expect(p.locator('.toast')).toContainText(handle);
   await expect(p.getByRole('button', { name: 'Open chat (1 unread)' })).toBeVisible();
-  // Opening the chat from the toast shows that conversation's line somewhere in the sheet's tabs.
-  await p.getByRole('button', { name: 'Open chat (1 unread)' }).click();
-  await expect(p.getByRole('dialog', { name: 'Chat' })).toBeVisible();
+  // Tapping the toast opens the sheet on that conversation, not the table tab.
+  await p.locator('.toast').click();
+  const sheet = p.getByRole('dialog', { name: 'Chat' });
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByRole('log').getByText('psst, carbon')).toBeVisible();
 });
 
 test('after the match the chat button is above the verdict, and later toasts sit at the top', async ({ browser, request }) => {
@@ -200,8 +202,10 @@ test('after the match the chat button is above the verdict, and later toasts sit
   await expect(toast).toContainText('good game, carbon');
   const t = (await toast.boundingBox())!;
   expect(t.y + t.height).toBeLessThanOrEqual(v.y);
+  const tc = { x: t.x + t.width / 2, y: t.y + t.height / 2 };
+  expect(await p.evaluate(([x, y]) => (globalThis as any).document.elementFromPoint(x, y)?.closest('.toast') !== null, [tc.x, tc.y])).toBe(true); // nothing covers it
   await p.screenshot({ path: '.superpowers/sdd/2026-10-03-m5a-pocket/final-verdict.png' });
-  const hit = await p.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.chat-fab') !== null, [f.x + f.width / 2, f.y + f.height / 2]);
+  const hit = await p.evaluate(([x, y]) => (globalThis as any).document.elementFromPoint(x, y)?.closest('.chat-fab') !== null, [f.x + f.width / 2, f.y + f.height / 2]);
   expect(hit).toBe(true);
   await fab.click();
   await expect(p.getByRole('dialog', { name: 'Chat' })).toBeVisible();
@@ -234,9 +238,9 @@ test('Lightline held sideways: the toast shows but lets steering swipes and taps
     }
     const toast = p.locator('.toast');
     await expect(toast).toBeVisible();
-    expect(await toast.evaluate((e) => getComputedStyle(e).pointerEvents)).toBe('none');
+    expect(await toast.evaluate((e) => (globalThis as any).getComputedStyle(e).pointerEvents)).toBe('none');
     const b = (await toast.boundingBox())!;
-    const over = await p.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.toast') !== null, [b.x + b.width / 2, b.y + b.height / 2]);
+    const over = await p.evaluate(([x, y]) => (globalThis as any).document.elementFromPoint(x, y)?.closest('.toast') !== null, [b.x + b.width / 2, b.y + b.height / 2]);
     expect(over).toBe(false);
     const fits = async () => {
       const vp = p.viewportSize()!;

@@ -5,6 +5,8 @@ export const TOAST_MS = 5000;
 
 export interface ToastLine {
   id: number;
+  /** Where the line was said, so a tap opens the chat on that conversation. */
+  channel: string;
   text: string;
   /** null for a system line ("@ann dozed off …"). */
   author: { handle: string; kind: 'human' | 'agent' } | null;
@@ -34,7 +36,7 @@ export class ToastQueue {
     if (m.author && m.author.id === this.opts.meId()) return;
     if (m.author && this.opts.hidden?.().has(m.author.id)) return;
     if (o.count !== false) this.unread += 1;
-    this.current = { id: m.id, text: m.text, author: m.author ? { handle: m.author.handle, kind: m.author.kind } : null };
+    this.current = { id: m.id, channel: m.channel, text: m.text, author: m.author ? { handle: m.author.handle, kind: m.author.kind } : null };
     this.#clear(this.#timer);
     this.#timer = this.#set(() => {
       this.current = null;

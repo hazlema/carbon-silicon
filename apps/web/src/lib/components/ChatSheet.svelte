@@ -69,7 +69,7 @@
 <svelte:window onkeydown={keydown} />
 
 {#if open && tapToClose}
-  <div class="overlay" onpointerdown={overlayDown} onclick={overlayClick} aria-hidden="true" style:bottom="calc(55dvh + {kb}px)"></div>
+  <div class="overlay" onpointerdown={overlayDown} onclick={overlayClick} aria-hidden="true" style:bottom="calc(min(55dvh, {vvh === null ? '100dvh' : `${vvh}px`} - 1rem) + {kb}px)"></div>
 {/if}
 <div
   class="sheet"

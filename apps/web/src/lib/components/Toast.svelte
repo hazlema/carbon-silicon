@@ -62,6 +62,7 @@
     pointer-events: none;
   }
   .toast-slot.top {
+    z-index: 11; /* above the verdict, which owns the bottom after the match */
     bottom: auto;
     top: calc(3.5rem + env(safe-area-inset-top, 0px));
   }

@@ -169,6 +169,7 @@
   .fit .riders {
     gap: 0.1rem 1rem;
     font-size: var(--step--1);
+    padding-right: 4.25rem; /* room for the chat button, as the toast keeps */
   }
   /* A soft halo on your head while the countdown runs; a CSS animation, not canvas redraws. */
   .pulse {
