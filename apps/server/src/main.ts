@@ -45,7 +45,7 @@ const core = await createCore({
 const llmEnvPath = env.LLM_ENV_FILE || join(root, '.env');
 const llmUsage = new LlmUsage({
   settings: async () => {
-    const merged = { ...env, ...((await readEnvFile(llmEnvPath)) ?? {}) };
+    const merged = { ...env, ...((await readEnvFile(llmEnvPath).catch(() => null)) ?? {}) };
     return { baseUrl: merged.LLM_BASE_URL?.trim() || 'http://127.0.0.1:1234/v1', apiKey: merged.LLM_API_KEY?.trim() || null };
   },
   clock: systemClock,
