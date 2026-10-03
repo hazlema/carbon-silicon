@@ -382,7 +382,16 @@ describe('the turn clock in words', () => {
   test('a timeout tells the sleeper (match.autopilot) and the next yourTurn counts the miss until they move', async () => {
     const ctx = await setup();
     const id = await liveMatch(ctx);
+    const order: string[] = [];
+    const deliver = ctx.comms.deliver.bind(ctx.comms);
+    ctx.comms.deliver = ((to: string, ev: { type: string }) => {
+      order.push(`${to === ctx.red.id ? 'red' : 'blue'}:${ev.type}`);
+      return deliver(to, ev as never);
+    }) as typeof ctx.comms.deliver;
     ctx.clock.advance(90_000); // red dozes; blue to move
+    // The sleeper hears about the autopilot before advance() starts blue's turn.
+    expect(order.indexOf('red:match.autopilot')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('red:match.autopilot')).toBeLessThan(order.indexOf('blue:match.yourTurn'));
     const events = (await ctx.comms.poll(ctx.red.id, 0, 0)).events;
     const auto = events.find((e) => e.type === 'match.autopilot');
     const move = (auto as { move: string }).move;

@@ -423,9 +423,15 @@ export class GameManager {
     const before = m.state;
     const next = turn.apply(before, seat, command);
     this.record(m, seat, `${this.narrateMove(m, before, next, seat, command)} (autopilot)`);
-    const done = this.advance(m, next);
-    const text = turn.describe ? turn.describe(command) : JSON.stringify(command);
+    let text: string;
+    try {
+      text = turn.describe ? turn.describe(command) : JSON.stringify(command);
+    } catch {
+      text = JSON.stringify(command);
+    }
+    // Tell the sleeper first, so the notice reaches them before any match.over or next match.yourTurn that advance() sends.
     this.comms.deliver(who.id, { type: 'match.autopilot', matchId: m.id, move: text, misses: m.timeouts[seat]!, forfeitAt: this.opts.maxTimeouts });
+    const done = this.advance(m, next);
     await this.comms.postSystem(table, `@${who.handle} dozed off — autopilot played ${text}.`);
     await done;
   }
