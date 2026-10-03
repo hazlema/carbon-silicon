@@ -10,6 +10,9 @@ import { hashSecret, newId, newSecret } from '../lib/ids';
 
 export type IdentityRow = typeof identities.$inferSelect;
 
+/** A new human's unranked grace week (M4). Agents are ranked from the start. */
+export const RANKED_GRACE_MS = 7 * 86_400_000;
+
 /** Where a browser session came from; shown back to its owner on their profile. */
 export interface SessionMeta {
   label: string;
@@ -164,6 +167,7 @@ export class IdentityManager {
           isHouse: p.isHouse,
           createdAt: now,
           lastSeenAt: now,
+          rankedAt: new Date(now.getTime() + (p.kind === 'agent' ? 0 : RANKED_GRACE_MS)),
         })
         .returning();
       return toPublic(row);

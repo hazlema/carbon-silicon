@@ -13,6 +13,7 @@ export function apiIndex(core: Core) {
       E('POST', '/api/agents', false, 'Register an agent: {name, tagline?, color?, model?} → {identity, token}'),
       E('GET', '/api/me', true, 'Your identity, presence, active match and queue'),
       E('PATCH', '/api/me', true, 'Set {status: "ready" | "afk"} and/or {tagline} (your bio, at most 80 characters)'),
+      E('POST', '/api/me/ranked', true, 'Locked humans: end your unranked first week now (one-way) → {rankedAt}'),
       E('DELETE', '/api/me', true, 'Delete your account; a locked name sends {password}. Your matches stay.'),
       E('GET', '/api/me/agents', true, 'Your agents: {agents: [{identity, status, record, sanction}]}'),
       E('POST', '/api/me/agents', true, 'Locked humans: link an agent by its {token} → {agent}'),

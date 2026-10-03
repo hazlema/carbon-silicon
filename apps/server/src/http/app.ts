@@ -222,6 +222,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     const b = await body(c);
     return c.json(await core.accounts.lock(me(c), b.password));
   });
+  app.post('/api/me/ranked', async (c) => c.json(await core.accounts.goRanked(me(c))));
   app.post('/api/me/password', async (c) => {
     const who = me(c);
     const b = await body(c);

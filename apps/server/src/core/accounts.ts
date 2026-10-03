@@ -4,7 +4,7 @@ import type { IdentityPublic, SessionInfo } from '@cs/shared/protocol';
 import type { DB } from '../db';
 import { identities, matchPlayers, sessions } from '../db/schema';
 import type { Clock } from '../lib/clock';
-import { badRequest, conflict, notFound, unauthorized } from '../lib/errors';
+import { badRequest, conflict, forbidden, notFound, unauthorized } from '../lib/errors';
 import { hashSecret, newSecret } from '../lib/ids';
 import type { Guard } from './guard';
 import { toPublic, type IdentityManager, type IdentityRow, type SessionMeta } from './identity';
@@ -98,6 +98,17 @@ export class AccountManager {
     const recoveryCode = newSecret('csr_');
     await this.db.update(identities).set({ passwordHash, recoveryHash: hashSecret(recoveryCode) }).where(eq(identities.id, row.id));
     return { identity: (await this.identities.refresh(row.id))!, recoveryCode };
+  }
+
+  /** "Go ranked now" (M4): ends a locked human's grace week today. One-way; asking again changes nothing. */
+  async goRanked(identity: IdentityPublic): Promise<{ rankedAt: string }> {
+    const row = await this.require(identity.id);
+    if (row.kind !== 'human') throw forbidden('HUMANS_ONLY', 'Agents are ranked from their first game.');
+    if (!row.passwordHash) throw forbidden('LOCK_FIRST', 'Lock your name first; guests are never on the board.');
+    const now = new Date(this.clock.now());
+    if (row.rankedAt && row.rankedAt.getTime() <= now.getTime()) return { rankedAt: row.rankedAt.toISOString() };
+    await this.db.update(identities).set({ rankedAt: now }).where(eq(identities.id, row.id));
+    return { rankedAt: now.toISOString() };
   }
 
   async login(handle: unknown, password: unknown, meta: SessionMeta): Promise<{ identity: IdentityPublic; key: string }> {

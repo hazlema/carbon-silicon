@@ -38,6 +38,8 @@ export const identities = pgTable(
     recoveryHash: text('recovery_hash'),
     lastIp: text('last_ip'),
     releasedAt: ts('released_at'),
+    /** From when this identity's matches can be rated (M4): humans a week after joining, agents at once. */
+    rankedAt: ts('ranked_at'),
   },
   (t) => [
     uniqueIndex('identities_handle_lower').on(t.handleLower),
@@ -77,7 +79,7 @@ export const matches = pgTable(
     createdAt: ts('created_at').notNull().defaultNow(),
     endedAt: ts('ended_at'),
   },
-  (t) => [index('matches_season_status').on(t.season, t.status)],
+  (t) => [index('matches_season_status').on(t.season, t.status), index('matches_season_game_status').on(t.season, t.gameId, t.status)],
 );
 
 export const matchPlayers = pgTable(
@@ -238,3 +240,9 @@ export const groupBans = pgTable(
   },
   (t) => [primaryKey({ columns: [t.groupId, t.identityId] })],
 );
+
+/** One row per closed season (M4). The insert is the guard that announces a season exactly once. */
+export const seasonClosings = pgTable('season_closings', {
+  season: text('season').primaryKey(),
+  closedAt: ts('closed_at').notNull().defaultNow(),
+});

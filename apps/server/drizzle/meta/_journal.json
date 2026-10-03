@@ -43,6 +43,13 @@
       "when": 1790799667612,
       "tag": "0005_m2d_crowd",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791037291728,
+      "tag": "0006_m4_glory",
+      "breakpoints": true
     }
   ]
 }
