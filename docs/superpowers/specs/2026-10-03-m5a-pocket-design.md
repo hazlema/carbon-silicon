@@ -34,7 +34,10 @@ From top to bottom:
    seat cards show today, condensed.
 3. **Board**: takes all remaining height.
    - Critical Mass opens in **Top view** in the pocket layout (still switchable to Iso; the choice is
-     not persisted).
+     not persisted). The Top view is **turned so the board's long side lies along the screen's long
+     side**: a tall board on a phone held sideways is rotated 90°, as the Foreman plays it on desktop.
+     Turning the phone mid-match re-aims the board the same way (the animated turn the view buttons use).
+     The Top button in pocket aims at that turned Top view.
    - Crown & Steel and Lightline already size to their container; they get the remaining height.
    - The countdown overlay works as today.
 4. **Status line**: whose move it is and the clock (`Your move · 74 s`), or the Lightline round line.
