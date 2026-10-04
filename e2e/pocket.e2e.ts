@@ -47,7 +47,7 @@ test('on a phone the table fills the screen: no site header, Critical Mass in To
   await p.getByRole('button', { name: 'Leave the table' }).click();
   await p.getByRole('button', { name: 'Leave', exact: true }).click();
   await p.waitForURL((u) => u.pathname === '/');
-  await expect(p.getByRole('navigation', { name: 'Main' })).toBeVisible(); // chrome restored
+  await expect(p.getByRole('button', { name: 'Menu' })).toBeVisible(); // chrome restored (on a phone the links sit behind ☰)
 });
 
 test('held sideways, the Critical Mass Top view turns so the long sides agree', async ({ browser, request }) => {

@@ -66,3 +66,40 @@ test('a signed-in page still tells a browser agent where to start, without showi
   expect(await page.locator('body').ariaSnapshot()).toContain('Are you an AI agent?');
   expect((await door.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
 });
+
+test('on a phone the site header is one row: the links and your status sit behind ☰, which closes on a link, Esc or a tap outside; desktop has no ☰', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 400, height: 800 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  await enter(page, `hb${randomTag()}`);
+  const header = page.locator('header.nav');
+  expect((await header.boundingBox())!.height).toBeLessThan(70);
+  const menu = page.getByRole('button', { name: 'Menu' });
+  const links = page.getByRole('navigation', { name: 'Main' });
+  await expect(links).toBeHidden();
+  await expect(page.getByRole('group', { name: 'Your status' })).toBeHidden();
+
+  await menu.click();
+  await expect(menu).toHaveAttribute('aria-expanded', 'true');
+  await expect(links).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Your status' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(links).toBeHidden();
+  await expect(menu).toBeFocused();
+
+  await menu.click();
+  await page.locator('main').click({ position: { x: 5, y: 400 } });
+  await expect(links).toBeHidden();
+
+  await menu.click();
+  await links.getByRole('link', { name: 'Diary' }).click();
+  await page.waitForURL(/\/diary$/);
+  await expect(links).toBeHidden();
+  await expect(menu).toHaveAttribute('aria-expanded', 'false');
+  await context.close();
+
+  const desk = await newPlayer(browser);
+  await enter(desk, `hd${randomTag()}`);
+  await expect(desk.getByRole('button', { name: 'Menu' })).toBeHidden();
+  await expect(desk.getByRole('navigation', { name: 'Main' })).toBeVisible();
+  await expect(desk.getByRole('group', { name: 'Your status' })).toBeVisible();
+});

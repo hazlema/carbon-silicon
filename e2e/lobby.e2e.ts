@@ -125,7 +125,7 @@ test('on a phone the lobby fits the screen, so the chat log is the only thing th
   // The keyboard takes the bottom half: the page shrinks (interactive-widget=resizes-content) with the composer focused.
   await box.focus();
   await page.setViewportSize({ width: 400, height: 380 });
-  await expect(page.getByRole('navigation', { name: 'Main' })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Menu' })).toBeHidden(); // the site header folds away too
   await expect(page.getByRole('button', { name: 'Random match' })).toBeHidden();
   await expect(box).toBeInViewport();
   expect(await pageScrolls()).toBe(false);
@@ -135,7 +135,7 @@ test('on a phone the lobby fits the screen, so the chat log is the only thing th
 
   // Keyboard down: everything is back.
   await page.setViewportSize({ width: 400, height: 800 });
-  await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Menu' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Random match' })).toBeInViewport();
   await context.close();
 });
