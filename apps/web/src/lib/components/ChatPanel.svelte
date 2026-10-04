@@ -108,6 +108,17 @@
     untrack(() => void tick().then(() => document.getElementById(inputId)?.focus()));
   });
 
+  // The log shrinking (a phone keyboard opening) keeps the newest line in view.
+  $effect(() => {
+    if (!log) return;
+    const el = log;
+    const ro = new ResizeObserver(() => {
+      if (pinned) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
   function onScroll() {
     if (log) pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
   }

@@ -84,7 +84,7 @@
             <ConvMenu {channel} />
             <p class="about">{about}</p>
           </div>
-          <Scoreboard />
+          <div class="score"><Scoreboard /></div>
         </div>
       {/snippet}
     </ChatPanel>
@@ -179,16 +179,17 @@
     }
   }
   @media (max-width: 960px) {
+    /* One column: Play (and forming tables), the tabs, then the chat or Here now. */
     .lobby {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-areas: 'right' 'tabs' 'center';
+      display: flex;
+      flex-direction: column;
       height: auto;
     }
     .right {
-      padding-bottom: 0;
+      display: contents;
     }
     .tabs {
-      grid-area: tabs;
+      order: 1;
       display: flex;
       gap: 0.4rem;
     }
@@ -205,11 +206,66 @@
       background: var(--panel-2);
       color: var(--chalk);
     }
+    .center,
+    .whowrap {
+      order: 2;
+    }
     .center {
       height: 75dvh;
     }
     .hide {
       display: none;
+    }
+  }
+  /* Phones: the lobby is exactly one screen tall, so the chat log (or Here now) is the only thing that
+     scrolls. A log inside a scrolling page trapped the thumb: a swipe on the log never reached the page.
+     Held sideways (short and wide) there is no room for that; the page scrolls as before. */
+  @media (max-width: 960px) and (min-height: 521px) {
+    :global(body .shell:has(.lobby)) {
+      height: 100dvh;
+      min-height: 0;
+    }
+    :global(body .shell:has(.lobby) > main) {
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 0.75rem;
+    }
+    .lobby {
+      flex: 1;
+      min-height: 0;
+    }
+    .center,
+    .whowrap {
+      flex: 1;
+      height: auto;
+      min-height: 12rem;
+    }
+  }
+  /* The keyboard is up (the page shrinks above it): only the conversation, so it keeps its room. */
+  @media (max-width: 960px) and (max-height: 520px) {
+    :global(body .shell:has(.lobby textarea:focus)) {
+      height: 100dvh;
+      min-height: 0;
+    }
+    :global(body .shell:has(.lobby textarea:focus) > .nav) {
+      display: none;
+    }
+    :global(body .shell:has(.lobby textarea:focus) > main) {
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 0.5rem;
+    }
+    .lobby:has(:global(textarea:focus)) {
+      flex: 1;
+      min-height: 0;
+    }
+    .lobby:has(:global(textarea:focus)) :is(.right, .tabs, .score) {
+      display: none;
+    }
+    .lobby:has(:global(textarea:focus)) .center {
+      flex: 1;
+      height: auto;
+      min-height: 0;
     }
   }
 </style>

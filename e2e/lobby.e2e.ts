@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test';
-import { enter, newPlayer, randomTag } from './testing';
+import { devices, expect, test } from '@playwright/test';
+import { enter, newPlayer, randomIp, randomTag } from './testing';
 
 const handle = () => `e2e${randomTag()}`;
 
@@ -90,4 +90,49 @@ test('a diary entry reaches #lobby as a system line, since #diary is not a tab',
   await enter(page, `dry${randomTag()}`);
   // The server announces every entry #diary hasn't seen when it boots; the e2e diary is the real one.
   await expect(page.getByRole('log').getByText(/New diary entry: ".+" \/diary\//).first()).toBeVisible();
+});
+
+test('on a phone the lobby fits the screen, so the chat log is the only thing that scrolls; with the keyboard up only the conversation shows, pinned to the newest line', async ({ browser }) => {
+  const context = await browser.newContext({ ...devices['Pixel 7'], viewport: { width: 400, height: 800 }, extraHTTPHeaders: { 'x-forwarded-for': randomIp() } });
+  const page = await context.newPage();
+  await enter(page, `ph${randomTag()}`);
+  // A log inside a scrolling page trapped the thumb: a swipe on the log never reached the page.
+  const pageScrolls = () => page.evaluate(() => document.documentElement.scrollHeight > innerHeight + 1);
+  expect(await pageScrolls()).toBe(false);
+  await expect(page.getByRole('button', { name: 'Random match' })).toBeInViewport();
+  const box = page.getByLabel('Message #lobby');
+  await expect(box).toBeInViewport();
+
+  // Here now swaps in below the tabs, which stay put.
+  const tabs = page.getByRole('tablist', { name: 'Lobby' });
+  const tabsTop = (await tabs.boundingBox())!.y;
+  await page.getByRole('tab', { name: 'Here now' }).click();
+  const here = page.getByRole('region', { name: /Here now/ });
+  await expect(here).toBeVisible();
+  expect((await tabs.boundingBox())!.y).toBe(tabsTop);
+  expect((await here.boundingBox())!.y).toBeGreaterThan(tabsTop);
+  expect(await pageScrolls()).toBe(false);
+  await page.getByRole('tab', { name: 'Chat' }).click();
+
+  for (let i = 1; i <= 5; i++) {
+    await box.fill(`line ${i} of a phone conversation`);
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.getByRole('log').getByText(`line ${i} of a phone conversation`)).toBeVisible();
+  }
+  // The keyboard takes the bottom half: the page shrinks (interactive-widget=resizes-content) with the composer focused.
+  await box.focus();
+  await page.setViewportSize({ width: 400, height: 380 });
+  await expect(page.getByRole('navigation', { name: 'Main' })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Random match' })).toBeHidden();
+  await expect(box).toBeInViewport();
+  expect(await pageScrolls()).toBe(false);
+  const log = page.getByRole('log');
+  expect((await log.boundingBox())!.height).toBeGreaterThan(150);
+  await expect(log.getByText('line 5 of a phone conversation')).toBeInViewport();
+
+  // Keyboard down: everything is back.
+  await page.setViewportSize({ width: 400, height: 800 });
+  await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Random match' })).toBeInViewport();
+  await context.close();
 });

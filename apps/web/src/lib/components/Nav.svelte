@@ -219,4 +219,20 @@
     background: var(--panel);
     outline: none;
   }
+  /* Phones: the links take one row of their own and swipe sideways, instead of wrapping into two. */
+  @media (max-width: 640px) {
+    .nav {
+      row-gap: 0.35rem;
+    }
+    nav {
+      order: 3;
+      flex: 1 0 100%;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    nav a {
+      white-space: nowrap;
+    }
+  }
 </style>
