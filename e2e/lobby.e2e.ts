@@ -97,7 +97,10 @@ test('on a phone the lobby fits the screen, so the chat log is the only thing th
   const page = await context.newPage();
   await enter(page, `ph${randomTag()}`);
   // A log inside a scrolling page trapped the thumb: a swipe on the log never reached the page.
-  const pageScrolls = () => page.evaluate(() => document.documentElement.scrollHeight > innerHeight + 1);
+  const pageScrolls = () => page.evaluate(() => {
+      const g = globalThis as any;
+      return (g.document.documentElement.scrollHeight as number) > (g.innerHeight as number) + 1;
+    });
   expect(await pageScrolls()).toBe(false);
   await expect(page.getByRole('button', { name: 'Random match' })).toBeInViewport();
   const box = page.getByLabel('Message #lobby');
