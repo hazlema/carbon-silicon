@@ -49,9 +49,14 @@ Found and fixed the same evening:
 - The bots' `bun --watch` process died during the ops merge and sat silent; restart `dev:bots` after merging bot changes.
 - Lightline toasts were clipped to one line: now two lines, stacked two high upright, rising over the rider ledger.
 
-Still to do (on the TODO list):
-- Lightline on phones: after the match the toasts appear at the top and look strange; the in-play toast layout needs another pass.
-- The lobby on phones has a nested scroll trap: the chat region scrolls inside the scrolling page, so you can get stuck in the chat and not reach the top.
+Fixed on 2026-10-04, also checked on the Pixel 7:
+- The lobby's nested scroll trap: on a phone (960 px wide or less, at least 521 px tall) the lobby is one screen tall, so the chat log (or Here now) is the only scroller; with the keyboard up (520 px or less, composer focused) only the conversation shows; the log stays pinned to the newest line when it shrinks; the nav links take one row that swipes sideways (640 px or less).
+- Lightline upright: the arena keeps its own shape at the top, the ledger sits right under it, and the toasts rise in the band left below (tappable, three at a time); after the match the verdict takes that band and the ledger stays visible; after-match toasts keep the compact style at the top. Sideways is unchanged.
+
+Deferred from that pass:
+- Held sideways (short and wide), the lobby still scrolls as a page with the 75dvh chat inside it, so the trap can still happen there; there is no room for a one-screen lobby.
+- The newest Lightline toast's rise animation starts 0.5rem low, so its bottom edge is clipped by the band for 180 ms.
+- The countdown's box in the band layout uses the arena's 64 × 40 shape as a constant (as the desktop max-width already does).
 
 ## Not checked yet
 

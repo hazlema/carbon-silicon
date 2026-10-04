@@ -278,15 +278,20 @@
   );
   const view = $derived(env?.match.gameId === 'critical-mass' ? (env.view as CMView) : undefined);
   const ll = $derived(env?.match.gameId === 'lightline' ? (env.view as LLView) : undefined);
-  // During a Lightline match the toasts rise from the status line over the rider ledger, never the arena: two
-  // at a time on an upright phone, one on a sideways one (less room under the arena). After the match they move
-  // to the top and stack again.
+  // During a Lightline match the toasts never cover the arena. Upright, the arena and the rider ledger sit at the
+  // top and the toasts rise in the room left under them, above the status line (three, tappable). Sideways there
+  // is no such room: one at a time over the status line, letting steering through. After the match the verdict
+  // takes that room and the toasts move to the top.
   let vw = $state(0);
   let vh = $state(0);
+  const llPlaying = $derived(!!ll && env?.match.status !== 'over' && env?.match.status !== 'abandoned');
+  /** Upright phone: the board takes only the height it needs and leaves a band under the ledger (the verdict sits there after the match). */
+  const llUpright = $derived(inPocket && !!ll && vw <= vh);
+  /** …and while the match is on, the toasts live in that band. */
+  const llBand = $derived(llUpright && llPlaying);
   $effect(() => {
-    const footer = !!ll && env?.match.status !== 'over' && env?.match.status !== 'abandoned';
-    const sideways = vw > vh;
-    q.setLimits(footer ? (sideways ? 1 : 2) : 3, footer && sideways ? 2500 : 0);
+    const sideways = llPlaying && vw > vh;
+    q.setLimits(sideways ? 1 : 3, sideways ? 2500 : 0);
   });
   const ck = $derived(env?.match.gameId === 'checkers' ? (env.view as CheckersView) : undefined);
   /** The full table is on screen: only then does the site's chrome step aside (the ✕ is there to get out). */
@@ -393,8 +398,8 @@
     if (myTurn) return { lead: 'Your move.', detail: ck ? 'Select a knight, then a gold destination. Captures are mandatory.' : 'Place an orb on an empty cell or one of yours.' };
     return { lead: `Waiting for ${handleOf(match.toMove[0] ?? '')}…` };
   });
-  /** How far above the bottom the toast sits: clear of Critical Mass's camera pill, Lightline's status line (it sits over the footer, covering no arena), Crown & Steel's footer band. */
-  const toastBottom = $derived(view ? '7rem' : ll ? '0.3rem' : '5.5rem');
+  /** How far above the bottom the toast sits: clear of Critical Mass's camera pill, Lightline's status line (sideways it sits over the footer, covering no arena; upright it has its own band), Crown & Steel's footer band. */
+  const toastBottom = $derived(view ? '7rem' : ll ? (llBand ? '0.4rem' : '0.3rem') : '5.5rem');
   const colors = $derived(tableColors(match?.seats ?? []));
   /** You first, then the rest in seat order: top-left, top-right, bottom-left, bottom-right. */
   const ordered = $derived.by(() => {
@@ -625,6 +630,7 @@
           <div class="boardwrap">
             <LightlineBoard view={ll} {colors} seats={match.seats} fired={env.realtime?.fired ?? {}} you={mySeat} countdown={countdown !== null} {pressed} onSteer={steerable ? (k) => steer(env!.match.id, k) : null} fit={inPocket} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
+            {#if llUpright}<div class="band">{#if llBand}{@render toastStack()}{/if}</div>{/if}
           </div>
           {#if steerable && countdown !== null}
             <p class="hint" data-testid="steer-hint">{coarse ? 'Swipe to steer · Tap to boost' : 'Arrows or WASD to steer · Space to boost'}</p>
@@ -687,15 +693,16 @@
           {#if !inPocket}{@render tableActions()}{/if}
         </footer>
       {/if}
-    {#if inPocket}<Toast
+    {#snippet toastStack()}<Toast
         lines={toasts}
         onopen={openFromToast}
         ondismiss={(id) => q.dismiss(id)}
         bottom={toastBottom}
         top={match.status === 'over' || match.status === 'abandoned'}
         compact={ll !== undefined}
-        passthrough={ll !== undefined && steerable}
-      />{/if}
+        passthrough={ll !== undefined && steerable && !llBand}
+      />{/snippet}
+    {#if inPocket && !llBand}{@render toastStack()}{/if}
     </section>
 
     {#if inPocket}
@@ -1085,6 +1092,26 @@
     display: flex;
     flex-direction: column;
     place-items: stretch;
+  }
+  /* Upright, the board takes only the height it needs (arena, then ledger) and the toasts rise in the room left. */
+  .pocket .stage.ll .boardwrap:has(.band) > :global(.lightline) {
+    flex: 0 1 auto;
+  }
+  .band {
+    position: relative;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .stage .band > :global(.toast-slot) {
+    left: 0;
+    right: 3.5rem; /* the chat button reaches up into the band */
+    bottom: 0.4rem;
+  }
+  /* With the band, the arena sits at the top at its own shape (64 × 40): the countdown covers just that. */
+  .boardwrap:has(.band) > .countdown {
+    bottom: auto;
+    aspect-ratio: 64 / 40;
   }
   .pocket .stage.ll .boardwrap > :global(.lightline) {
     flex: 1;

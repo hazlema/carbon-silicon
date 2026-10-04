@@ -351,3 +351,55 @@ test('Lightline held sideways: the toast shows but lets steering swipes and taps
     await request.patch('/api/me', { data: { status: 'afk' }, headers: auth });
   }
 });
+
+test('Lightline upright: arena and ledger at the top, toasts in the room under the ledger (tappable, covering neither); after the match the arena keeps its size and the verdict sits under the ledger', async ({ browser, request }) => {
+  const reg = await request.post('/api/agents', { headers: { 'x-forwarded-for': randomIp() }, data: { name: `pu${randomTag()}` } });
+  const { token } = await reg.json();
+  const auth = { authorization: `Bearer ${token}` };
+  agents.push(auth);
+  await request.patch('/api/me', { data: { status: 'ready' }, headers: auth });
+  const { table } = await (await request.post('/api/tables', { data: { gameId: 'lightline', open: true }, headers: auth })).json();
+  const p = await phone(browser, { width: 400, height: 800 });
+  let matchId: string | null = null;
+  try {
+    await p.goto('/');
+    await p.getByLabel('Your handle').fill(`plu${randomTag()}`);
+    await p.getByRole('button', { name: 'Enter the parlor' }).click();
+    await expect(p.getByLabel('Your handle')).toHaveCount(0);
+    expect((await p.request.post(`/api/tables/${table.id}/sit`)).ok()).toBe(true);
+    await p.goto(`/t/${table.id}`);
+    const started = await request.post(`/api/tables/${table.id}/start`, { headers: auth });
+    matchId = (await started.json()).match.id;
+    await expect.poll(async () => (await (await request.get(`/api/matches/${matchId}`, { headers: auth })).json()).match.status, { timeout: 10_000 }).toBe('live');
+    for (let i = 0; i < 20 && (await p.locator('.toast').count()) === 0; i++) {
+      await request.post(`/api/chat/table:${table.id}`, { headers: auth, data: { text: 'probe' } });
+      await p.waitForTimeout(250);
+    }
+    const toast = p.locator('.toast').last();
+    await expect(toast).toBeVisible();
+    const t = (await toast.boundingBox())!;
+    const ledger = (await p.locator('.riders').boundingBox())!;
+    const field = (await p.locator('.field').boundingBox())!;
+    const foot = (await p.locator('footer.bottom').boundingBox())!;
+    expect(ledger.y).toBeLessThan(field.y + field.height + 20); // the ledger right under the arena, no gap
+    expect(t.y).toBeGreaterThanOrEqual(ledger.y + ledger.height - 1); // under the ledger
+    expect(t.y + t.height).toBeLessThanOrEqual(foot.y + 1); // above the status line
+    expect(await toast.evaluate((e) => (globalThis as any).getComputedStyle(e).pointerEvents)).toBe('auto');
+
+    // The agent resigns, then the phone if the match is still on (Sprocket may be seated, or busy elsewhere):
+    // the match ends with the phone at the table for the verdict.
+    await request.post(`/api/matches/${matchId}/resign`, { headers: auth });
+    const still = (await (await request.get(`/api/matches/${matchId}`, { headers: auth })).json()).match.status;
+    if (still === 'live' || still === 'countdown') expect((await p.request.post(`/api/matches/${matchId}/resign`)).ok()).toBe(true);
+    await expect(p.getByRole('dialog').getByRole('heading')).toBeVisible({ timeout: 20_000 });
+    const after = (await p.locator('.field').boundingBox())!;
+    expect(after.width).toBeLessThanOrEqual(400);
+    expect(Math.abs(after.width - field.width)).toBeLessThan(2); // the arena keeps its size
+    const verdict = (await p.locator('.verdict').boundingBox())!;
+    const ledgerAfter = (await p.locator('.riders').boundingBox())!;
+    expect(verdict.y).toBeGreaterThanOrEqual(ledgerAfter.y + ledgerAfter.height - 1); // the final ledger stays in view
+  } finally {
+    if (matchId) await request.post(`/api/matches/${matchId}/resign`, { headers: auth });
+    await request.patch('/api/me', { data: { status: 'afk' }, headers: auth });
+  }
+});

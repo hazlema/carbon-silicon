@@ -42,7 +42,7 @@
   }
 </script>
 
-<div class="toast-slot" class:top class:compact={compact && !top} role="status" aria-live="polite" style:--toast-bottom={bottom}>
+<div class="toast-slot" class:top class:compact role="status" aria-live="polite" style:--toast-bottom={bottom}>
   {#each lines as line (line.id)}
     <button type="button" class="toast" class:passthrough tabindex={passthrough ? -1 : undefined} out:fade={{ duration: leave() }} onpointerdown={down} onpointerup={(e) => up(e, line)} onclick={() => click(line)} onpointercancel={() => (start = null)} onkeydown={(e) => e.key === 'Escape' && ondismiss(line.id)}>
       {#if line.author}
@@ -71,7 +71,7 @@
     bottom: auto;
     top: calc(3.5rem + env(safe-area-inset-top, 0px));
   }
-  /* Lightline during play: opaque over the status line and the rider ledger (never the arena), name inline,
+  /* Lightline: opaque (sideways it covers the status line, whose text must not show through), name inline,
      up to two lines so a taunt reads in full. */
   .compact .toast {
     display: flex;

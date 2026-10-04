@@ -98,7 +98,7 @@
 </script>
 
 <div class="lightline" class:fit>
-  <div class="arena" role="img" aria-label="Lightline arena, round {view.round}: {view.cycles.map((c) => `@${handleOf(c.seat)} ${c.alive ? 'riding' : 'crashed'}`).join(', ')}">
+  <div class="arena" style:--cols={cols} style:--rows={rows} role="img" aria-label="Lightline arena, round {view.round}: {view.cycles.map((c) => `@${handleOf(c.seat)} ${c.alive ? 'riding' : 'crashed'}`).join(', ')}">
     <div class="field" style:--cols={cols} style:--rows={rows}>
     <canvas
       bind:this={canvas}
@@ -151,12 +151,18 @@
   /* Fitting: the arena is the leftover box (a size container) and the field is the biggest board that fits it. */
   .lightline.fit {
     height: 100%;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
     gap: 0.4rem;
   }
   .fit .arena {
     container-type: size;
     min-height: 0;
+    /* Its natural height is the field's (so a page that gives the board only what it needs gets arena, then
+       ledger, with no gap); stretched into a shorter row it gives way and the field shrinks to fit. */
+    aspect-ratio: var(--cols) / var(--rows);
+    width: 100%; /* the ratio sets the height, never the width */
+    align-self: stretch;
     display: grid;
     place-items: center;
   }
