@@ -21,3 +21,14 @@ export function neighbours(entries: DiaryEntrySummary[], slug: string): { newer:
   if (i < 0) return { newer: null, older: null };
   return { newer: entries[i - 1] ?? null, older: entries[i + 1] ?? null };
 }
+
+const noon = (date: string) => Date.parse(`${date}T12:00:00Z`);
+
+/** Which day of the build `date` is: the oldest entry's day is day 1. */
+export function dayNumber(date: string, entries: DiaryEntrySummary[]): number {
+  const first = entries.reduce((min, e) => (e.date < min ? e.date : min), date);
+  return Math.round((noon(date) - noon(first)) / 86_400_000) + 1;
+}
+
+/** Minutes to read `words` at an unhurried 230 a minute. */
+export const readMinutes = (words: number): number => Math.max(1, Math.round(words / 230));

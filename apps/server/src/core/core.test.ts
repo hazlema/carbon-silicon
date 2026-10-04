@@ -6,7 +6,7 @@ import { identities } from '../db/schema';
 import { FakeClock } from '../lib/clock';
 import { waitFor } from '../lib/testing';
 import { createCore } from './core';
-import { parseEntry } from './diary';
+import { excerpt, parseEntry } from './diary';
 
 const diaryDir = fileURLToPath(new URL('../__fixtures__/diary', import.meta.url));
 const core = await createCore({ databaseUrl: await testDatabaseUrl(), houseKey: 'hk', diaryDir });
@@ -18,14 +18,25 @@ describe('parseEntry', () => {
       slug: '2026-01-01-first',
       title: 'Hi',
       date: '2026-01-01',
+      excerpt: 'Body',
+      words: 1,
       markdown: 'Body',
     });
     expect(parseEntry('2026-02-03-bare.md', 'Just text')).toEqual({
       slug: '2026-02-03-bare',
       title: '2026-02-03-bare',
       date: '2026-02-03',
+      excerpt: 'Just text',
+      words: 2,
       markdown: 'Just text',
     });
+  });
+  test('the excerpt is the opening paragraph in plain words, cut at a word when it runs long', () => {
+    expect(excerpt('## A heading\n\n> a quote\n\nThe **first** [real](/x) paragraph,\nwith `code`.\n\nThe second.')).toBe('The first real paragraph, with code.');
+    const long = excerpt(`${'word '.repeat(80)}end.`);
+    expect(long.length).toBeLessThanOrEqual(241);
+    expect(long.endsWith('word…')).toBe(true);
+    expect(excerpt('## Only a heading')).toBe('');
   });
 });
 

@@ -158,17 +158,45 @@ input::placeholder {
   font-family: var(--font-carbon);
   font-weight: 600;
   line-height: 1.2;
+  text-wrap: balance;
 }
 .prose h1 {
   font-size: var(--step-3);
 }
 .prose h2 {
   font-size: var(--step-2);
-  margin-top: 2.2em;
+  margin: 2.4em 0 0.6em;
+}
+.prose h3 {
+  font-size: var(--step-1);
+  margin: 1.9em 0 0.5em;
+}
+.prose :is(p, ul, ol, table, pre, blockquote) {
+  margin-block: 0 1.1em;
+}
+.prose :is(ul, ol) {
+  padding-left: 1.4em;
+}
+.prose li + li {
+  margin-top: 0.3em;
+}
+.prose li::marker {
+  color: var(--dust);
+}
+.prose a {
+  text-decoration-color: var(--carbon);
+  text-decoration-thickness: 1px;
+}
+.prose a:hover {
+  color: var(--carbon);
+}
+.prose strong {
+  font-weight: 600;
+  color: #ffffff;
 }
 .prose code {
   font-family: var(--font-silicon);
-  font-size: 0.9em;
+  font-size: 0.88em;
   background: var(--ink-deep);
   border: 1px solid var(--lattice);
   border-radius: 4px;
@@ -176,7 +204,7 @@ input::placeholder {
 }
 /* Inline code in running text can be one long unbroken token (a query string); let it wrap rather than
    widen the page. Code blocks and tables keep their layout and scroll on their own. */
-.prose :is(p, li) > code {
+.prose :is(p, li, td) > code {
   overflow-wrap: anywhere;
 }
 .prose pre {
@@ -184,17 +212,34 @@ input::placeholder {
   background: var(--ink-deep);
   border: 1px solid var(--lattice);
   border-radius: var(--r-control);
-  padding: 1rem;
+  padding: 0.9rem 1rem;
+  line-height: 1.55;
+  scrollbar-width: thin;
+  scrollbar-color: var(--lattice) transparent;
 }
 .prose pre code {
   border: 0;
   padding: 0;
   background: none;
 }
+/* Something somebody said: quoted chat, set in the room's own voice. */
+.prose blockquote {
+  margin-inline: 0;
+  padding: 0.15rem 0 0.15rem 1rem;
+  border-left: 2px solid var(--silicon);
+  color: var(--fog);
+}
+.prose blockquote > :last-child {
+  margin-bottom: 0;
+}
 .prose hr {
   border: 0;
   border-top: 1px solid var(--lattice);
   margin: 2.5rem 0;
+}
+/* A section's own heading already makes the break; the rule before it only doubles the gap. */
+.prose hr + h2 {
+  margin-top: 0;
 }
 .prose img {
   display: block;
@@ -202,17 +247,29 @@ input::placeholder {
   height: auto;
   border-radius: var(--r-control);
 }
+/* Tables read as ruled rows, not a grid of boxes. */
 .prose table {
   border-collapse: collapse;
   display: block;
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--lattice) transparent;
 }
 .prose th,
 .prose td {
-  border: 1px solid var(--lattice);
-  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--lattice);
+  padding: 0.55rem 1rem 0.55rem 0;
   text-align: left;
   vertical-align: top;
+}
+.prose th {
+  border-bottom-color: var(--dust);
+  color: var(--fog);
+  font-size: var(--step--1);
+  font-weight: 600;
+}
+.prose tr:last-child td {
+  border-bottom: 0;
 }
 
 /* A page of reading (games' rules, the diary, the API reference): one panel that hugs a readable

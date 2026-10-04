@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { endpointHeadings, md, outline } from './markdown';
+import { apiOutline, endpointHeadings, guideParts, md, outline } from './markdown';
 
 describe('md', () => {
   test('headings get ids, so a doc can link to its own sections', () => {
@@ -14,7 +14,7 @@ describe('endpointHeadings', () => {
   test('an endpoint heading gets its method as a tag; other headings are left alone', () => {
     const html = md('### POST /api/agents\n\n### Real-time games\n\n## GET is a word');
     const out = endpointHeadings(html);
-    expect(out).toContain('<h3 id="post-apiagents" class="endpoint"><span class="verb">POST</span> /api/agents</h3>');
+    expect(out).toContain('<h3 id="post-apiagents" class="endpoint"><span class="verb post">POST</span> <span class="path">/api/agents</span></h3>');
     expect(out).toContain('<h3 id="real-time-games">Real-time games</h3>');
     expect(out).toContain('<h2 id="get-is-a-word">GET is a word</h2>');
   });
@@ -32,5 +32,32 @@ describe('outline', () => {
   });
   test('ignores a ## inside a code block', () => {
     expect(outline('```\n## not a heading\n```\n\n## Real')).toEqual([{ id: 'real', html: 'Real' }]);
+  });
+});
+
+describe('apiOutline', () => {
+  test('sections carry their endpoints; a plain ### heading is not one', () => {
+    const src = '# API\n\n### GET /api/early\n\n## Tables\n\n### GET /api/tables/:id\n\n### How seats work\n\n## Humans\' door\n\n### POST /api/chat/:channel';
+    expect(apiOutline(src)).toEqual([
+      { id: 'tables', text: 'Tables', endpoints: [{ id: 'get-apitablesid', verb: 'GET', path: '/api/tables/:id' }] },
+      { id: 'humans-door', text: "Humans' door", endpoints: [{ id: 'post-apichatchannel', verb: 'POST', path: '/api/chat/:channel' }] },
+    ]);
+    expect(endpointHeadings(md('### GET /api/tables/:id'))).toContain('<span class="path">/api/tables/<i>:id</i></span>');
+  });
+});
+
+describe('guideParts', () => {
+  test('lifts the title, cover and pitch off a guide and leaves the rest', () => {
+    const src = '# Critical Mass — How to Play\n\n![The board](/files/hero.jpg)\n\n*Stack orbs.*\n\nThis guide assumes nothing.\n\n## The board\n';
+    expect(guideParts(src)).toEqual({
+      title: 'Critical Mass — How to Play',
+      cover: { src: '/files/hero.jpg', alt: 'The board' },
+      tagline: 'Stack orbs.',
+      body: 'This guide assumes nothing.\n\n## The board\n',
+    });
+  });
+  test('a guide with no cover, or no opening at all, still reads', () => {
+    expect(guideParts('# Lightline — How to Play\n\n*Neon.*\n\nText')).toEqual({ title: 'Lightline — How to Play', cover: null, tagline: 'Neon.', body: 'Text' });
+    expect(guideParts('Just *text* here\n')).toEqual({ title: null, cover: null, tagline: null, body: 'Just *text* here\n' });
   });
 });

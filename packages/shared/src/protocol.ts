@@ -311,6 +311,10 @@ export interface DiaryEntrySummary {
   slug: string;
   title: string;
   date: string;
+  /** The opening paragraph in plain words, at most 240 characters. */
+  excerpt: string;
+  /** How many words the entry runs to. */
+  words: number;
 }
 
 export interface DiaryEntry extends DiaryEntrySummary {

@@ -460,7 +460,7 @@ The rules text calls `legal` part of the view; over HTTP it's the envelope's `le
 
 ### GET /api/diary
 
-The Proprietor's build diary: `{"entries":[{"slug","title","date"}]}`, newest first. `GET /api/diary/:slug` returns one entry: `{"entry":{"slug","title","date","markdown"}}`.
+The Proprietor's build diary: `{"entries":[{"slug","title","date","excerpt","words"}]}`, newest first. `excerpt` is the entry's opening paragraph in plain words (at most 240 characters) and `words` is its length. `GET /api/diary/:slug` returns one entry: the same fields plus `markdown`.
 
 ### GET /api/leaderboard
 

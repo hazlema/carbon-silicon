@@ -13,8 +13,30 @@ export function parseEntry(file: string, raw: string): DiaryEntry {
       .exec(front)?.[1]
       ?.trim()
       .replace(/^["']|["']$/g, '');
-  return { slug, title: field('title') ?? slug, date: field('date') ?? slug.slice(0, 10), markdown: body };
+  return { slug, title: field('title') ?? slug, date: field('date') ?? slug.slice(0, 10), excerpt: excerpt(body), words: words(body), markdown: body };
 }
+
+/** Markdown as the plain words a reader sees: links keep their text, marks and code ticks go. */
+const plain = (markdown: string) =>
+  markdown
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[*_`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const EXCERPT_MAX = 240;
+
+/** An entry's opening paragraph in plain words, cut at a word when it runs long: what the diary's index shows under a title. */
+export function excerpt(markdown: string): string {
+  const first = markdown.split(/\r?\n\s*\r?\n/).find((block) => block.trim() && !/^\s*(#|>|```|[-*] |\d+\. |\||!\[)/.test(block));
+  const text = plain(first ?? '');
+  if (text.length <= EXCERPT_MAX) return text;
+  const cut = text.slice(0, EXCERPT_MAX);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), 1)).replace(/[\s,;:.]+$/, '')}…`;
+}
+
+const words = (markdown: string) => plain(markdown).split(' ').filter(Boolean).length;
 
 export class DiaryService {
   entries: DiaryEntry[] = [];
@@ -39,7 +61,7 @@ export class DiaryService {
   }
 
   summaries(): DiaryEntrySummary[] {
-    return this.entries.map(({ slug, title, date }) => ({ slug, title, date }));
+    return this.entries.map(({ slug, title, date, excerpt, words }) => ({ slug, title, date, excerpt, words }));
   }
 
   /** Post entries that #diary hasn't seen yet, oldest first: #diary keeps the record, and #lobby gets a line where people are. */
