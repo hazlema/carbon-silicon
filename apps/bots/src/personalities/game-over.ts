@@ -8,6 +8,7 @@ export const gameOver: Personality = {
   strategy: { depth: 2, randomness: 0.03 },
   lightline: 'wallHugger',
   checkers: { randomness: 0 },
+  salvo: { strength: 'hard' },
   // "game over" is an everyday phrase, at a table above all: only the name itself counts.
   answersTo: /(?<![A-Za-z0-9_-])(?:[Gg][Aa][Mm][Ee][_-]?[Oo][Vv][Ee][Rr]|GAME OVER)(?![A-Za-z0-9_-])/,
   lines: {
@@ -41,6 +42,14 @@ export const gameOver: Personality = {
       win: ["your last knight fell. i'll write something short.", "the field is mine. it's very quiet now.", 'game over. even the crown gets heavy eventually.'],
       lose: ["my army, gone. i'd hold a funeral but i've no hands.", 'you took my last knight. he knew the risks.', "outmarched. well done. i'll haunt the rematch."],
       draw: ['a draw. the knights lay down their swords. and their hopes.', 'nobody takes the crown. it rusts on the throne.', 'stalemate. even the war got bored.'],
+    },
+    salvo: {
+      hello: ['four fleets. one ocean floor.', "i've waited my whole life for a game about sinking.", 'deploy your ships. i already know where they end up.'],
+      win: ['four fleets. one ocean floor. everyone else is down there.', 'the sea is quiet now. it usually is.', 'game over. your fleet sends its regards. from the bottom.'],
+      lose: ['my fleet went down. i finally know what it looks like from below.', "sunk. i'll haunt the wreck.", 'you sank me. enjoy the surface while it lasts.'],
+      draw: ['everyone sank together. the ocean floor is very crowded.', 'nobody floats. very realistic.', 'a draw. the sea takes us all. it always does.'],
+      bigCascade: ['one less ship. the ocean floor makes room.', 'down it goes. they always go down.', "your ship has stopped. it won't start again."],
+      gotHit: ['a hit. i felt that. mostly.', 'you found one of my ships. it was waiting for you.', 'water in the hull. how lively. how temporary.'],
     },
   },
 };

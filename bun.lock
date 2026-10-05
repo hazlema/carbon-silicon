@@ -18,6 +18,7 @@
         "@cs/critical-mass": "workspace:*",
         "@cs/game-api": "workspace:*",
         "@cs/lightline": "workspace:*",
+        "@cs/salvo": "workspace:*",
         "@cs/shared": "workspace:*",
       },
       "devDependencies": {

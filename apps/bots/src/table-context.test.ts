@@ -70,6 +70,23 @@ describe('tableContext', () => {
     expect(ctx.turn).toBe('Round 3');
     expect(ctx.standing).toBe('you lead with 2 rounds, Frosty has 1');
   });
+  test('Salvo: ship cells afloat with scrap, my own sea from my fleet, who the round waits for', () => {
+    const seats = [seat('north', 'Frosty', 'human'), seat('east', 'Fable', 'agent'), seat('south', 'OLD_IRON', 'agent'), seat('west', 'Sprocket', 'agent')];
+    const view = {
+      round: 4,
+      mySea: { ships: [], port: [], shots: { a1: 'hit', a2: 'miss', b3: 'hit' } },
+      targets: [
+        { sea: 'north', afloat: 12 },
+        { sea: 'east', afloat: 7 },
+      ],
+      scrap: { north: 2, east: 9, south: 4, west: 1 },
+      eliminated: ['west'],
+    };
+    const ctx = tableContext(env({ gameId: 'salvo', seats, you: 'south', toMove: ['north', 'south'], recent: [], view }));
+    expect(ctx.standing).toBe('Frosty leads with 12 ship cells afloat (2 scrap), you hold 10 (4 scrap), Fable is down to 7 (9 scrap), Sprocket is out');
+    expect(ctx.turn).toBe('Round 4 — waiting for @Frosty, you');
+    expect(tableContext(env({ gameId: 'salvo', seats, you: 'south', toMove: ['east'], recent: [], view: { ...view, round: 0 } })).turn).toBe('Deployment — waiting for @Fable');
+  });
   test('before the start and after the end; an unknown game has no standing', () => {
     expect(tableContext(env({ gameId: 'mystery', seats: three, status: 'countdown', view: {} })).turn).toBe('The match is about to start');
     const over = tableContext(env({ gameId: 'mystery', seats: three, status: 'over', view: {} }));
