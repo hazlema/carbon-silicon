@@ -24,6 +24,8 @@ export interface Moment {
   answering?: ChatLine;
   /** The game being played, for every moment spoken at a table. */
   game?: { name: string; tagline: string };
+  /** The game's id, known even when the catalog could not be read. */
+  gameId?: string;
   /** The table as it stands, for every moment spoken at a table the bot is playing at. */
   table?: TableContext;
 }
@@ -99,10 +101,10 @@ export function describeMoment(m: Moment): string {
       return `The match against ${them} ended in a draw.`;
     case 'bigCascade':
       // Salvo has four seats firing at once: the opponent named for the table may not be the one in the volley.
-      if (m.game?.name === 'Salvo') return 'Your shell just sank a ship in the last volley.';
+      if (m.gameId === 'salvo') return 'Your shell just sank a ship in the last volley.';
       return `You just set off a big chain reaction against ${them}.`;
     case 'gotHit':
-      if (m.game?.name === 'Salvo') return 'A shell just hit your fleet in the last volley.';
+      if (m.gameId === 'salvo') return 'A shell just hit your fleet in the last volley.';
       return `${them} just set off a big chain reaction that took your cells.`;
     case 'ambient':
       return `The lobby has been quiet; say something to liven it up: grumble, reminisce, or dare someone to play you.`;

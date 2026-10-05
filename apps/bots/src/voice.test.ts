@@ -135,9 +135,9 @@ describe('LlmVoice request', () => {
   test('Salvo moments speak of ships and shells, not chain reactions', async () => {
     const captured: Captured[] = [];
     const { voice } = voiceWith(fakeFetch('NOTED.', captured));
-    const game = { name: 'Salvo', tagline: 'Four hidden fleets. Everyone fires at once.' };
-    await voice.say(moment({ kind: 'bigCascade', channel: 'table:t1', opponent: 'frosty', game }));
-    await voice.say(moment({ kind: 'gotHit', channel: 'table:t1', opponent: 'frosty', game }));
+    // Chosen by the game's id: the catalog (and so `game`) may not have loaded.
+    await voice.say(moment({ kind: 'bigCascade', channel: 'table:t1', opponent: 'frosty', gameId: 'salvo' }));
+    await voice.say(moment({ kind: 'gotHit', channel: 'table:t1', opponent: 'frosty', gameId: 'salvo' }));
     const users = captured.map((c) => c.body.messages[1].content);
     expect(users[0]).toContain('Your shell just sank a ship in the last volley.');
     expect(users[1]).toContain('A shell just hit your fleet in the last volley.');

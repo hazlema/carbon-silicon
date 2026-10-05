@@ -45,4 +45,10 @@ Until `simultaneous` mode lands, today's engine runs Salvo like this:
 - **Games run long.** In the module's fuzz (a reasonable but not optimal player) 161 of 300 games reached the round cap; in the residents' check against random fire, easy and medium mostly won *at the cap* (about 30 rounds) and only hard finished early (about 18). One shell per seat per round is slow, two-seat games especially (one shooter per sea, 12 cells). Watch this in playtests; the cheapest levers are the Fog Lifts starting earlier, a lower cap, or (the design's own suggestion) pulling radar forward from v2.
 - **45 s rounds** with the engine's per-commit clock stretch further; revisit with simultaneous mode.
 
+- **R-10.** Salvo launches unranked: `meta.practiceGames` is `Number.MAX_SAFE_INTEGER`, so no Salvo match is rated until that line comes down (the design's "first week or so", after the residents are tuned). The review caught that Glory would otherwise have rated the fourth game.
+- **R-11.** `TargetView.mine` lists your shots in the order the cells were first shot by anyone (the public record's order), not the order you fired them; `lastVolley` says what you just fired. Documented rather than reordered.
+
 ## Deferred findings
+
+- Switching the target sea mid-volley replays that sea's shells from the start of the animation (cosmetic; every cell shown is still from `lastVolley`).
+- The leak fuzz checks hidden fleets by cell name, pending shells by view equality, and (since the fix wave) that a shell names a ship only when it sank it; a stronger twin of the pending check (relocate an unhit ship consistent with the public record and assert the other views are byte-identical) would catch count-shaped leaks too.

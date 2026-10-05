@@ -113,7 +113,11 @@ function assertNoLeaks(s: SalvoState, step: number): void {
       for (const str of strings(t)) check(!hidden.has(str), `${where}: hidden ship cell ${t.sea} ${str}`);
     }
     if (v.lastVolley) {
-      for (const x of v.lastVolley.shells) check(s.shots[x.sea][x.cell] !== undefined, `${where}: unresolved shell in lastVolley`);
+      for (const x of v.lastVolley.shells) {
+        check(s.shots[x.sea][x.cell] !== undefined, `${where}: unresolved shell in lastVolley`);
+        // A ship is named only by the shell that sank it: naming it on a hit would tell its length.
+        check(x.result === 'sunk' ? x.ship !== null : x.ship === null, `${where}: a shell names a ship it did not sink`);
+      }
       for (const b of v.lastVolley.blasts) for (const c of b.cells) check(s.shots[b.sea][c] !== undefined, `${where}: unresolved blast cell`);
     }
     // Nothing outside mySea, targets and lastVolley names a cell.

@@ -68,12 +68,16 @@
   // ── Fire: click selects, Fire (or Enter on the selected cell) sends ──
   let selected = $state<string | null>(null);
   const round = $derived(view.round);
+  const iAmReady = $derived(!!me && view.ready.includes(me));
+  // A new round clears the aim; so does looking at another sea, unless the shell is already away (then it stays on show).
   $effect(() => {
     void round;
-    void targetSea;
     selected = null;
   });
-  const iAmReady = $derived(!!me && view.ready.includes(me));
+  $effect(() => {
+    void targetSea;
+    if (!untrack(() => iAmReady)) selected = null;
+  });
   const fireCmd = $derived(selected && targetSea ? (legal.filter(isFire).find((l) => l.at === targetSea && l.cell === selected) ?? null) : null);
   function fire() {
     if (!interactive || !fireCmd) return;

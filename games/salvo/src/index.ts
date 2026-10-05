@@ -92,7 +92,7 @@ export type SalvoCommand =
 
 export interface TargetView {
   sea: SeatId;
-  /** Your own shots at this sea, oldest first; 'sunk' once the ship there has gone down. */
+  /** Your own shots at this sea, in the order the cells were first shot by anyone; 'sunk' once the ship there has gone down. */
   mine: { cell: string; result: ShotResult }[];
   /** Every hit cell anyone landed (public), in board order. */
   hits: string[];
@@ -569,6 +569,8 @@ export const salvoGame: GameModule<SalvoState> & { turn: SimultaneousTurnRules<S
     humans: true,
     thumbnail: 'thumbnail.jpg',
     houseFill: true,
+    // Unranked for now (the design's "first week or so"): the residents are tuned first, then this comes down.
+    practiceGames: Number.MAX_SAFE_INTEGER,
   },
   setup({ seats, seed }) {
     if (seats.length < 2 || seats.length > 4) throw new GameRuleError('BAD_SEATS', 'Salvo takes 2–4 players.');

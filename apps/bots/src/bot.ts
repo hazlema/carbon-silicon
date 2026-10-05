@@ -202,6 +202,7 @@ async function speak(
         ...who,
         ...(answering ? { answering: toChatLine(answering) } : {}),
         ...(game ? { game } : {}),
+        ...(gameId ? { gameId } : {}),
         ...(table ? { table } : {}),
       };
       // At a table the game clock is running, so the voice gets a short deadline (table talk, which
