@@ -30,7 +30,7 @@ test('the Play panel: choose a game (it is remembered), cancel it, or take a ran
   await play.getByRole('button', { name: 'Random match' }).click();
   await page.waitForURL(/\/t\/t_/, { timeout: 20_000 });
   // Either game can come up now; the table shows its own name.
-  await expect(page.getByRole('region', { name: /Critical Mass|Lightline|Crown & Steel/ }).first()).toBeVisible();
+  await expect(page.getByRole('region', { name: /Critical Mass|Lightline|Crown & Steel|Salvo/ }).first()).toBeVisible();
   // Resign, so the house machine is free for the tests after this one.
   await page.getByRole('button', { name: 'Resign' }).click();
   await page.getByRole('button', { name: 'Yes, resign' }).click();
