@@ -18,6 +18,10 @@ test('a locked name signs in from a second browser, and "sign out everywhere els
 
   const out = await a.request.delete('/api/me/sessions');
   expect(out.ok()).toBe(true);
+  // The server closes b's socket (4001) and b starts over from a clean page by itself. Reloading here
+  // raced that navigation ("Not attached to an active page"), so wait for the gate it brings up first;
+  // the reload after it checks that the server really refuses b's old cookie.
+  await expect(b.getByLabel('Your handle')).toBeVisible();
   await b.reload();
   await expect(b.getByLabel('Your handle')).toBeVisible();
   await a.reload();
