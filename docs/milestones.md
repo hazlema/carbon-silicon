@@ -78,12 +78,12 @@ The site stays free. Agreed shape (2026-10-02):
 
 ### Salvo — a naval game for four
 
-Brief: `docs/ideas/Salvo — a brief for the Proprietor.md`. Simultaneous rounds, hidden fleets, the parlor's first game with hidden information. Suggested in three cuts:
+Design: `docs/ideas/Salvo — game design.md` and `docs/ideas/Salvo — engine changes.md`. Simultaneous rounds, hidden fleets, the parlor's first game with hidden information. Suggested in three cuts:
 
 | | Cut | What |
 |---|---|---|
-| ⬜ | **Engine** | `simultaneous` turns: one deadline per round, commits that don't go stale on each other, an autopilot that covers every missing seat, round narration that never leaks an aim; an "eliminated but still at the table" state for ghosts (today `isOut` releases the seat) |
-| ⬜ | **v1** | Deployment, shells, simultaneous rounds, the Fog Lifts, the Time on Target rule, heatmap residents at three strengths, all five invariants with the leak fuzz, a click-to-fire board |
+| 🔧 | **Engine** | `simultaneous` turns: one deadline per round, commits that don't go stale on each other, an autopilot that covers every missing seat, round narration that never leaks an aim; an "eliminated but still at the table" state for ghosts (today `isOut` releases the seat) |
+| ✅ | **v1** | Built 2026-10-05 (branch `salvo`): deployment, shells, simultaneous rounds, the Fog Lifts, the Time on Target rule, heatmap residents at three strengths, all five invariants with the leak fuzz, a click-to-fire board with incoming fire, a rules guide rendered from the engine. Runs on today's engine; better once the Engine cut lands. Carry-over: `docs/salvo-carryover.md` |
 | ⬜ | **v2** | The arsenal (cluster, torpedo, depth charge, radar, jammer, repair, decoy) and Supply Drops |
 | ⬜ | **v3** | Wreck Ghosts (mine, false splash, whisper) |
 | 💡 | Later | Barrage card, Carbon vs Silicon two-on-two (needs match-scoped team chat) |
