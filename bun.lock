@@ -83,6 +83,12 @@
         "@cs/game-api": "workspace:*",
       },
     },
+    "games/salvo": {
+      "name": "@cs/salvo",
+      "dependencies": {
+        "@cs/game-api": "workspace:*",
+      },
+    },
     "packages/game-api": {
       "name": "@cs/game-api",
     },
@@ -103,6 +109,8 @@
     "@cs/game-api": ["@cs/game-api@workspace:packages/game-api"],
 
     "@cs/lightline": ["@cs/lightline@workspace:games/lightline"],
+
+    "@cs/salvo": ["@cs/salvo@workspace:games/salvo"],
 
     "@cs/server": ["@cs/server@workspace:apps/server"],
 

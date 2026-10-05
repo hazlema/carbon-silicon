@@ -1,0 +1,7 @@
+{
+  "name": "@cs/salvo",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@cs/game-api": "workspace:*" }
+}
