@@ -28,6 +28,8 @@ export interface Outcome {
   winners: SeatId[];
   placement: SeatId[][];
   reason: string;
+  /** Optional points per seat, shown with names in the table's closing line (Lightline: rounds won). */
+  score?: Record<SeatId, number>;
 }
 
 export interface SetupContext {

@@ -392,7 +392,7 @@ describe('OLD IRON (a bot with a voice)', () => {
       expect(asked.table?.players).toContain('@OLD_IRON (you)');
       expect(asked.table?.players).toContain(`@${handle} (machine)`);
       expect(asked.table?.turn).toMatch(/^Turn \d+ — /);
-      expect(asked.table?.standing).toMatch(/cells/);
+      expect(asked.table?.standing).toMatch(/\d+ cells?\b/); // "1 cell" early on, "5 cells" later
       expect(Array.isArray(asked.table?.moves)).toBe(true);
       expect(heard.find((m) => m.kind === 'hello' && m.channel === table)?.table?.players).toContain('@OLD_IRON (you)');
     } finally {

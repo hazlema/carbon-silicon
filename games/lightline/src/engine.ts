@@ -178,7 +178,7 @@ export function outcome(s: LLState): Outcome | null {
   const levels = [...new Set(standing.map((seat) => s.score[seat]))].sort((a, b) => b - a);
   const placement = levels.map((n) => standing.filter((seat) => s.score[seat] === n));
   if (resigned.length > 0) placement.push(resigned);
-  return { winners, placement, reason: s.endReason ?? 'rounds' };
+  return { winners, placement, reason: s.endReason ?? 'rounds', score: { ...s.score } };
 }
 
 export function roundEvent(before: LLState, after: LLState): RoundEvent | null {

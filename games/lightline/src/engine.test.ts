@@ -97,14 +97,14 @@ describe('rounds', () => {
     s = { ...s, score: { red: 1, blue: 0 }, roundsPlayed: 1, round: 2 };
     s = step(place(s, { blue: { x: 0, y: 5, heading: 'w' } }));
     expect(s.phase).toBe('over');
-    expect(game.outcome(s)).toEqual({ winners: ['red'], placement: [['red'], ['blue']], reason: 'rounds' });
+    expect(game.outcome(s)).toEqual({ winners: ['red'], placement: [['red'], ['blue']], reason: 'rounds', score: { red: 2, blue: 0 } });
     const drawn = step(place(two(), { red: { x: 10, y: 10, heading: 'e' }, blue: { x: 12, y: 10, heading: 'w' } }));
     expect(drawn).toMatchObject({ phase: 'intermission', lastWinner: null, score: { red: 0, blue: 0 } });
   });
   test('after 3 rounds the most wins take it; all tied is a draw', () => {
     const three = game.setup({ seats: ['red', 'blue', 'green'], seed: 1 });
     const done = { ...three, phase: 'over' as const, roundsPlayed: 3, score: { red: 1, blue: 1, green: 0 }, endReason: 'rounds' };
-    expect(game.outcome(done)).toEqual({ winners: ['red', 'blue'], placement: [['red', 'blue'], ['green']], reason: 'rounds' });
+    expect(game.outcome(done)).toEqual({ winners: ['red', 'blue'], placement: [['red', 'blue'], ['green']], reason: 'rounds', score: { red: 1, blue: 1, green: 0 } });
     expect(game.outcome({ ...done, score: { red: 1, blue: 1, green: 1 } })?.winners).toEqual([]);
   });
   test('resigning crashes you for good; the last one standing wins; the resigned place last', () => {
@@ -116,7 +116,7 @@ describe('rounds', () => {
     expect(s.cycles[2].alive).toBe(false);
     const two2 = game.forfeit(two(), 'blue', 'resign');
     expect(two2.phase).toBe('over');
-    expect(game.outcome(two2)).toEqual({ winners: ['red'], placement: [['red'], ['blue']], reason: 'forfeit' });
+    expect(game.outcome(two2)).toEqual({ winners: ['red'], placement: [['red'], ['blue']], reason: 'forfeit', score: { red: 0, blue: 0 } });
   });
   test('the same inputs give the same game', () => {
     const script = (s: LLState) => run(s, 60, { red: { act: 'turn', dir: 'left' }, blue: { act: 'straight', boost: true } });

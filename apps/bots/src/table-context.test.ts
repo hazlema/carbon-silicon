@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { MatchEnvelope } from '@cs/shared/protocol';
-import { ranksLine, standingLine, tableContext } from './table-context';
+import { CELLS, KNIGHTS, ranksLine, ROUNDS, standingLine, tableContext } from './table-context';
 
 const seat = (s: string, handle: string, kind: 'human' | 'agent') => ({ seat: s, identity: { id: handle, handle, kind } });
 const env = (over: Partial<MatchEnvelope> & { gameId: string; view: unknown; seats: ReturnType<typeof seat>[]; toMove?: string[]; status?: string }): MatchEnvelope =>
@@ -17,14 +17,22 @@ const three = [seat('red', 'Frosty', 'human'), seat('blue', 'Fable', 'agent'), s
 describe('standingLine', () => {
   const e = (handle: string, value: number, you = false, out = false, note?: string) => ({ handle, value, you, out, note });
   test('leader first, the bot as you, the last of three as down to', () => {
-    expect(standingLine([e('Frosty', 5), e('Fable', 14), e('OLD_IRON', 11, true)], 'cells')).toBe('Fable leads with 14 cells, you hold 11, Frosty is down to 5');
+    expect(standingLine([e('Frosty', 5), e('Fable', 14), e('OLD_IRON', 11, true)], CELLS)).toBe('Fable leads with 14 cells, you hold 11, Frosty is down to 5');
   });
   test('you in front, a tie at the top, someone out', () => {
-    expect(standingLine([e('Fable', 3), e('OLD_IRON', 8, true)], 'knights')).toBe('you lead with 8 knights, Fable has 3');
-    expect(standingLine([e('Fable', 2), e('OLD_IRON', 2, true), e('Frosty', 0, false, true)], 'rounds')).toBe('Fable and you are level at 2 rounds, Frosty is out');
+    expect(standingLine([e('Fable', 3), e('OLD_IRON', 8, true)], KNIGHTS)).toBe('you lead with 8 knights, Fable has 3');
+    expect(standingLine([e('Fable', 2), e('OLD_IRON', 2, true), e('Frosty', 0, false, true)], ROUNDS)).toBe('Fable and you are level at 2 rounds, Frosty is out');
+  });
+  test('one is singular: "1 cell", not "1 cells"', () => {
+    expect(standingLine([e('Fable', 1), e('OLD_IRON', 0, true)], CELLS)).toBe('Fable leads with 1 cell, you hold 0');
+    expect(standingLine([e('Fable', 1), e('OLD_IRON', 1, true)], ROUNDS)).toBe('Fable and you are level at 1 round');
+    expect(standingLine([e('Fable', 1), e('OLD_IRON', 0, true)], KNIGHTS)).toBe('Fable leads with 1 knight, you hold 0');
+  });
+  test('round wins only go up: the last of three "has", never "is down to"', () => {
+    expect(standingLine([e('Frosty', 0), e('Fable', 2), e('OLD_IRON', 1, true)], ROUNDS)).toBe('Fable leads with 2 rounds, you hold 1, Frosty has 0');
   });
   test('notes ride along', () => {
-    expect(standingLine([e('Fable', 9, false, false, '2 crowned'), e('OLD_IRON', 7, true)], 'knights')).toBe('Fable leads with 9 knights (2 crowned), you hold 7');
+    expect(standingLine([e('Fable', 9, false, false, '2 crowned'), e('OLD_IRON', 7, true)], KNIGHTS)).toBe('Fable leads with 9 knights (2 crowned), you hold 7');
   });
 });
 
@@ -54,6 +62,12 @@ describe('tableContext', () => {
     );
     expect(ctx.turn).toBe('Turn 2 — your move');
     expect(ctx.moves).toEqual(['1. Round 1: nobody survives']);
+  });
+  test('the turn number comes from the game (moveCount), so a log emptied by a restart still says the right turn', () => {
+    const ctx = tableContext(
+      env({ gameId: 'critical-mass', seats: three.slice(0, 2), you: 'red', toMove: ['blue'], recent: [], view: { moveCount: 36, counts: {}, eliminated: [] } }),
+    );
+    expect(ctx.turn).toBe('Turn 37 — @Fable to move');
   });
   test('Crown & Steel counts knights and crowns', () => {
     const p = (side: string, king = false) => ({ side, king });
