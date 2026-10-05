@@ -5,6 +5,7 @@
   import type { CheckersView } from '@cs/checkers';
   import type { CMView } from '@cs/critical-mass';
   import type { LLView } from '@cs/lightline';
+  import type { SalvoView } from '@cs/salvo';
   import { dmParticipants, groupOf, railChannel, tableChannel, type ChatMessage, type MatchEnvelope, type TableInfo } from '@cs/shared/protocol';
   import { api, ApiError } from '$lib/api';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
@@ -19,6 +20,7 @@
   import SeatCard from '$lib/games/critical-mass/SeatCard.svelte';
   import CrownBoard from '$lib/games/checkers/Board.svelte';
   import LightlineBoard from '$lib/games/lightline/Board.svelte';
+  import SalvoBoard from '$lib/games/salvo/Board.svelte';
   import { keyOf, typing, type SteerKey } from '$lib/games/lightline/controls';
   import { live } from '$lib/live.svelte';
   import { pollMatch } from '$lib/match-poll';
@@ -36,6 +38,9 @@
     'no-moves': 'No legal march remained.',
     repetition: 'The same position arose three times: an honorable draw.',
     'quiet-moves': 'Eighty marches without a capture or a crown: an honorable draw.',
+    'last-afloat': 'The last fleet afloat.',
+    tiebreak: 'The last fleets went down together: the tiebreak took it.',
+    'round-cap': 'The last round: the fleet with the most afloat took it.',
   };
 
   let table = $state<TableInfo | null>(null);
@@ -294,8 +299,9 @@
     q.setLimits(sideways ? 1 : 3, sideways ? 2500 : 0);
   });
   const ck = $derived(env?.match.gameId === 'checkers' ? (env.view as CheckersView) : undefined);
+  const sv = $derived(env?.match.gameId === 'salvo' ? (env.view as SalvoView) : undefined);
   /** The full table is on screen: only then does the site's chrome step aside (the ✕ is there to get out). */
-  const fullTable = $derived(!gone && !!(table && table.matchId && env && match && (view || ll || ck)));
+  const fullTable = $derived(!gone && !!(table && table.matchId && env && match && (view || ll || ck || sv)));
   $effect(() => {
     pocket.chromeHidden = inPocket && fullTable;
     return () => {
@@ -305,7 +311,10 @@
   const mySeat = $derived(env?.you ?? null);
   /** Knocked out (or resigned) while the others play on. In Lightline a crash ends only the round. */
   const iAmOut = $derived(
-    !!mySeat && ((!!view && view.eliminated.includes(mySeat)) || (!!ll && !!ll.cycles.find((c) => c.seat === mySeat)?.resigned)),
+    !!mySeat &&
+      ((!!view && view.eliminated.includes(mySeat)) ||
+        (!!sv && sv.eliminated.includes(mySeat)) ||
+        (!!ll && !!ll.cycles.find((c) => c.seat === mySeat)?.resigned)),
   );
   const steerable = $derived(
     !!ll && !!mySeat && live.me?.kind === 'human' && (match?.status === 'live' || match?.status === 'countdown') && !iAmOut,
@@ -394,12 +403,20 @@
           : anyHuman ? 'Humans steer; machines ride their doctrine.' : 'Machines at work: each rides its own doctrine.';
       return { lead: `Round ${ll.round}`, detail };
     }
+    if (sv) {
+      const secs = myTurn && secondsLeft !== null ? secondsLeft : undefined;
+      if (sv.phase === 'deploy') return { lead: myTurn ? 'Place your fleet.' : 'Waiting for the others to deploy…', secs };
+      if (myTurn) return { lead: `Round ${sv.round}: pick a cell and fire.`, secs };
+      const owing = sv.seats.filter((s) => !sv.eliminated.includes(s) && !sv.ready.includes(s)).map(handleOf);
+      const who = owing.length <= 1 ? owing.join('') : `${owing.slice(0, -1).join(', ')} and ${owing.at(-1)}`;
+      return { lead: `Round ${sv.round}: waiting for ${who}…` };
+    }
     if (myTurn && inPocket && secondsLeft !== null) return { lead: 'Your move', secs: secondsLeft };
     if (myTurn) return { lead: 'Your move.', detail: ck ? 'Select a knight, then a gold destination. Captures are mandatory.' : 'Place an orb on an empty cell or one of yours.' };
     return { lead: `Waiting for ${handleOf(match.toMove[0] ?? '')}…` };
   });
   /** How far above the bottom the toast sits: clear of Critical Mass's camera pill, Lightline's status line (sideways it sits over the footer, covering no arena; upright it has its own band), Crown & Steel's footer band. */
-  const toastBottom = $derived(view ? '7rem' : ll ? (llBand ? '0.4rem' : '0.3rem') : '5.5rem');
+  const toastBottom = $derived(view ? '7rem' : ll ? (llBand ? '0.4rem' : '0.3rem') : sv ? '5rem' : '5.5rem');
   const colors = $derived(tableColors(match?.seats ?? []));
   /** You first, then the rest in seat order: top-left, top-right, bottom-left, bottom-right. */
   const ordered = $derived.by(() => {
@@ -534,7 +551,7 @@
     <p>@{table.host.handle} is inviting players from the lobby.</p>
     <a class="btn primary" href="/">Back to the lobby</a>
   </div>
-{:else if table && env && match && (view || ll || ck)}
+{:else if table && env && match && (view || ll || ck || sv)}
   {#snippet chat()}
   <div class="talk">
     <ChatPanel
@@ -581,6 +598,8 @@
           <span class="meta">turn {view.moveCount + 1} · {view.cols}×{view.rows}</span>
         {:else if ck}
           <span class="meta">march {ck.moveCount + 1} · {ck.cols}×{ck.rows}</span>
+        {:else if sv}
+          <span class="meta" data-testid="sv-round">{sv.phase === 'deploy' ? 'deploying' : `round ${sv.round}`}</span>
         {/if}
         <span class="meta watching">Watching: {table.watching}</span>
         <a class="rules" href={gameId ? `/games#${gameId}` : '/games'}>Rules</a>
@@ -641,6 +660,14 @@
         <div class="stage ck">
           <div class="boardwrap">
             <CrownBoard view={ck} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} players={ckPlayers} actions={inPocket ? undefined : tableActions} />
+            {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
+          </div>
+        </div>
+      {/if}
+      {#if sv}
+        <div class="stage sv">
+          <div class="boardwrap">
+            <SalvoBoard view={sv} {colors} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} seats={match.seats} you={mySeat} fit={inPocket} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
           </div>
         </div>
@@ -816,6 +843,19 @@
     padding: 1.5rem;
     min-height: 0;
   }
+  /* Salvo lays out its own seas, compass and controls; it fills the stage. */
+  .stage.sv {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0;
+    overflow: hidden;
+  }
+  .stage.sv .boardwrap {
+    flex: 1;
+    min-height: 0;
+    display: block;
+  }
   /* Critical Mass: the board owns the stage; players float in its corners. */
   .stage.cm {
     position: relative;
@@ -986,6 +1026,9 @@
     .stage.ck {
       height: clamp(32rem, min(88dvh, calc(100vw + 16rem)), 60rem);
     }
+    .stage.sv {
+      height: clamp(36rem, min(92dvh, calc(100vw + 20rem)), 60rem);
+    }
     .talk {
       height: 55dvh;
       padding-bottom: 0;
@@ -1070,6 +1113,7 @@
   }
   .pocket .stage.cm,
   .pocket .stage.ck,
+  .pocket .stage.sv,
   .pocket .stage.ll {
     height: auto;
     flex: 1;
