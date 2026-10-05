@@ -48,19 +48,30 @@ export interface StandingEntry {
 
 const MOVES_SHOWN = 10;
 
-/** Leader first, the bot as "you", the last of three or more as "down to", anyone out at the end. */
-export function standingLine(entries: StandingEntry[], unit: string): string {
+/** What a standing counts: singular and plural, and whether it can fall (cells and knights are lost; round wins only grow). */
+export interface Unit {
+  one: string;
+  many: string;
+  falls: boolean;
+}
+export const CELLS: Unit = { one: 'cell', many: 'cells', falls: true };
+export const KNIGHTS: Unit = { one: 'knight', many: 'knights', falls: true };
+export const ROUNDS: Unit = { one: 'round', many: 'rounds', falls: false };
+
+/** Leader first, the bot as "you", the last of three or more as "down to" (when the count can fall), anyone out at the end. */
+export function standingLine(entries: StandingEntry[], unit: Unit): string {
+  const count = (n: number) => `${n} ${n === 1 ? unit.one : unit.many}`;
   const live = entries.filter((e) => !e.out).sort((a, b) => b.value - a.value);
   const name = (e: StandingEntry) => (e.you ? 'you' : e.handle);
   const note = (e: StandingEntry) => (e.note ? ` (${e.note})` : '');
   const parts: string[] = [];
   if (live.length > 0) {
     const top = live.filter((e) => e.value === live[0].value);
-    if (top.length > 1) parts.push(`${top.map(name).join(' and ')} are level at ${live[0].value} ${unit}`);
-    else parts.push(`${name(live[0])} ${live[0].you ? 'lead' : 'leads'} with ${live[0].value} ${unit}${note(live[0])}`);
+    if (top.length > 1) parts.push(`${top.map(name).join(' and ')} are level at ${count(live[0].value)}`);
+    else parts.push(`${name(live[0])} ${live[0].you ? 'lead' : 'leads'} with ${count(live[0].value)}${note(live[0])}`);
     const rest = live.slice(top.length);
     rest.forEach((e, k) => {
-      const last = live.length >= 3 && k === rest.length - 1;
+      const last = unit.falls && live.length >= 3 && k === rest.length - 1;
       parts.push(last ? `${name(e)} ${e.you ? 'are' : 'is'} down to ${e.value}${note(e)}` : `${name(e)} ${e.you ? 'hold' : 'has'} ${e.value}${note(e)}`);
     });
   }
@@ -76,7 +87,7 @@ function standingOf(env: MatchEnvelope): string | null {
   const seats = env.match.seats;
   switch (env.match.gameId) {
     case 'critical-mass':
-      return standingLine(seats.map((s) => entry(s, v.counts?.[s.seat]?.cells ?? 0, (v.eliminated ?? []).includes(s.seat))), 'cells');
+      return standingLine(seats.map((s) => entry(s, v.counts?.[s.seat]?.cells ?? 0, (v.eliminated ?? []).includes(s.seat))), CELLS);
     case 'checkers':
       return standingLine(
         seats.map((s) => {
@@ -84,10 +95,10 @@ function standingOf(env: MatchEnvelope): string | null {
           const crowns = mine.filter((p) => p.king).length;
           return entry(s, mine.length, false, crowns > 0 ? `${crowns} crowned` : undefined);
         }),
-        'knights',
+        KNIGHTS,
       );
     case 'lightline':
-      return standingLine(seats.map((s) => entry(s, v.score?.[s.seat] ?? 0)), 'rounds');
+      return standingLine(seats.map((s) => entry(s, v.score?.[s.seat] ?? 0)), ROUNDS);
     default:
       return null;
   }
@@ -98,7 +109,9 @@ function turnOf(env: MatchEnvelope): string {
   if (match.status === 'countdown') return 'The match is about to start';
   if (match.status !== 'live') return 'The match is over';
   if (env.realtime) return `Round ${(env.view as { round?: number } | null)?.round ?? 1}`;
-  const n = (env.recent?.at(-1)?.number ?? 0) + 1;
+  // The game's own count first: the narrated log lives in memory and starts empty after a restart.
+  const moveCount = (env.view as { moveCount?: unknown } | null)?.moveCount;
+  const n = (typeof moveCount === 'number' ? moveCount : (env.recent?.at(-1)?.number ?? 0)) + 1;
   const mover = match.toMove[0];
   if (!mover) return `Turn ${n}`;
   if (mover === env.you) return `Turn ${n} — your move`;

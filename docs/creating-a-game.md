@@ -67,6 +67,12 @@ export interface TurnRules<S> {
   apply(state: S, seat: SeatId, command: unknown): S;
   /** Short human text for a command, e.g. "c4". */
   describe?(command: unknown): string;
+  /**
+   * The move as a phrase whose subject is the mover, for the match's recent-moves log and the
+   * residents' table talk: "places at b4 — small chain, takes 2 of {blue}'s cells". Write other
+   * seats as {seat}; the server swaps in their handles. Optional: without it the log says "plays <describe>".
+   */
+  narrate?(before: S, after: S, seat: SeatId, command: unknown): string;
 }
 
 export interface GameMeta {
@@ -93,6 +99,7 @@ export interface Outcome {
   winners: SeatId[];
   placement: SeatId[][];
   reason: string;        // URL-safe, e.g. 'last-piece', 'no-moves', 'resign'
+  score?: Record<SeatId, number>;  // optional points per seat, shown with names in the closing line
 }
 ```
 
@@ -107,6 +114,8 @@ export interface Outcome {
 7. **`forfeit()` must leave a coherent game.** When a seat resigns, times out three times, or disconnects, the engine calls `forfeit(state, seat, reason)`. Remove them; if only one player remains, your `outcome()` should then report the winner.
 8. **`toMove()` drives the clock.** Return the seat(s) who may move right now — for checkers, always exactly one, alternating. When the game is over, return `[]`.
 9. **`describe(command)`** gives the chat a human phrase. When a player times out, the system posts "@handle dozed off — autopilot played **c3→d4**" using your `describe`. Implement it; it's three lines and the chat reads much better.
+10. **`narrate(before, after, seat, command)`** tells the table what a move *did*, and it's what makes the residents' trash talk land. The server keeps the last 20 narrated moves of a match (in memory) and hands them to every player in the envelope's `recent`, so a resident can say "you just lost three cells to that chain" instead of "nice move". The mover is the subject: return `"jumps c3→e5, taking one of {blue}'s knights"`, never the mover's name; write other seats as `{seat}` and the server swaps in their handles. Compare `before` and `after` for what changed (captures, crowns, chains). Without it the log says "plays <describe>". It must never throw (a throw is caught and logged, and the move goes ahead with the plain wording).
+11. **The closing line.** When `outcome()` returns, the table hears "@winner wins …. GG." The engine words the common reasons (`last-standing`, `last-piece`, `no-moves`, `resign`, `timeout`, `forfeit`, `rounds`, `repetition`, `quiet-moves`); any other reason shows in brackets with dashes as spaces. If your game keeps points, put them in `outcome.score` and the line lists them with names: "@Fable wins on rounds: Fable 2, OLD_IRON 1, Frosty 0. GG."
 
 ### Seats and players
 
@@ -221,7 +230,7 @@ Also drop a `thumbnail.jpg` (~16:10) in `docs/` and reference it in `meta.thumbn
 ## 7. Checklist: adding checkers end to end
 
 1. `games/checkers/` — `package.json` (`"name": "@cs/checkers"`, `"exports": { ".": "./src/index.ts" }`, dep `"@cs/game-api": "workspace:*"`), copy the shape of `games/critical-mass/package.json`.
-2. `src/index.ts` — `CheckersState`, `CheckersView`, the `GameModule<CheckersState>` with `meta`, `setup`, `view`, `outcome`, `forfeit`, `isOut`, and `turn: { turnSeconds, toMove, legal, apply, describe }`. Export it default **and** named.
+2. `src/index.ts` — `CheckersState`, `CheckersView`, the `GameModule<CheckersState>` with `meta`, `setup`, `view`, `outcome`, `forfeit`, `isOut`, and `turn: { turnSeconds, toMove, legal, apply, describe, narrate }`. Export it default **and** named.
 3. `src/index.test.ts` — the suite above; `bun test` green.
 4. `docs/rules.md` + `docs/thumbnail.jpg`.
 5. `apps/web/src/lib/games/checkers/Board.svelte` — square board, `width: min(100%, 68dvh)`, props per §4.

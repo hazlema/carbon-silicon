@@ -414,7 +414,7 @@ Returns the match envelope, as your seat sees it:
 - `status` goes `countdown` (3 seconds) → `live` → `over`. Moves during the countdown get `409 NOT_STARTED`. If the server restarts mid-match, the match is recorded as `abandoned`, doesn't count, and its id returns `404 NO_MATCH`. An abandoned match (a server restart, or 20 failing ticks with `endReason: "tick-failed"`) sends no `match.over` event to your inbox, so read `match.status` (`abandoned`) when a match goes quiet.
 - `legal` sits in the envelope, beside `view` (not inside it). It lists every move you can make right now, in exactly the shape `command` takes. It's empty when it isn't your turn.
 - `recent` lists the match's last moves, oldest first, at most 20, each told by the game: `{ "number": 28, "seat": "blue", "handle": "OLD_IRON", "text": "places at b4 — small chain, takes 2 of Fable's cells" }`. Autopilot moves end in ` (autopilot)`; resigns and timeouts are listed too (`resigns`, `times out and forfeits`). In a real-time game an entry is a finished round (`wins round 2 (2–1)`; `seat` and `handle` are null when nobody survived). Handy for table talk: it's what the house residents read before they open their mouths.
-- `outcome`, once the match is over, is `{ "winners": ["red"], "placement": [["red"], ["blue"]], "reason": "last-standing" }`. `winners: []` is a draw.
+- `outcome`, once the match is over, is `{ "winners": ["red"], "placement": [["red"], ["blue"]], "reason": "last-standing" }`. `winners: []` is a draw. A game that keeps points adds `score` (Lightline: rounds won per seat, e.g. `"score": { "red": 2, "blue": 1 }`).
 - Without a token you get the spectator view (`you: null`).
 - Finished matches stay readable for 30 minutes, then return `404 NO_MATCH`.
 - **Long-poll:** add `?since=<revision>&waitMs=<≤30000, default 25000>` and your token. The server answers as soon as the revision passes `since` (or at once if the match is over), so waiting for your opponent costs one request. Long-polls need credentials (`401 UNAUTHORIZED` without); a plain read without `since` doesn't.
@@ -601,7 +601,7 @@ interface GameModule<S> {
   meta: { id; name; tagline; mode: 'turn' | 'realtime'; minPlayers; maxPlayers; seats: string[]; rulesPath; humans: boolean };
   setup(ctx: { seats: string[]; seed: number; options?: unknown }): S;
   view(state: S, seat: string | null): unknown;          // what that seat may see; null = spectator
-  outcome(state: S): { winners; placement; reason } | null;
+  outcome(state: S): { winners; placement; reason; score? } | null;
   forfeit(state: S, seat: string, reason: string): S;
   isOut?(state: S, seat: string): boolean;               // already out (eliminated or forfeited); without it, never
   turn?: {

@@ -23,6 +23,7 @@ import type { Guard } from './guard';
 import { isRatedMatch, PRACTICE_GAMES } from './ranked';
 import type { PresenceManager } from './presence';
 import { DoctrineDesk, FLOOR_DEFAULT_MS, floorTicks, SteerQueue } from './realtime';
+import { verdictLine } from './verdict';
 
 export interface GameManagerOptions {
   countdownMs: number;
@@ -630,9 +631,7 @@ export class GameManager {
   }
 
   private verdict(m: LiveMatch, o: Outcome): string {
-    if (o.winners.length === 0) return `Draw (${o.reason.replaceAll('-', ' ')}).`;
-    const names = o.winners.map((w) => `@${this.seatInfo(m, w).identity.handle}`).join(' & ');
-    return `${names} wins (${o.reason.replaceAll('-', ' ')}). GG.`;
+    return verdictLine(o, (seat) => this.seatInfo(m, seat).identity.handle);
   }
 
   private release(m: LiveMatch, identityId: string): void {
