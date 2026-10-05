@@ -1,4 +1,5 @@
 import type { MatchEnvelope } from '@cs/shared/protocol';
+import { FLEET_CELLS } from '@cs/salvo';
 
 /** What a resident is told about the table it's sitting at, beside the chat. */
 export interface TableContext {
@@ -88,6 +89,18 @@ function standingOf(env: MatchEnvelope): string | null {
       );
     case 'lightline':
       return standingLine(seats.map((s) => entry(s, v.score?.[s.seat] ?? 0)), 'rounds');
+    case 'salvo': {
+      // Ship cells still unhit: other seas from their public `afloat`, my own from my fleet's shots.
+      const afloat = (seat: string): number => {
+        if (seat === env.you && v.mySea) return FLEET_CELLS - Object.values(v.mySea.shots ?? {}).filter((r) => r === 'hit').length;
+        return ((v.targets ?? []) as { sea: string; afloat: number }[]).find((t) => t.sea === seat)?.afloat ?? FLEET_CELLS;
+      };
+      const out = (v.eliminated ?? []) as string[];
+      return standingLine(
+        seats.map((s) => entry(s, afloat(s.seat), out.includes(s.seat), `${v.scrap?.[s.seat] ?? 0} scrap`)),
+        'ship cells afloat',
+      );
+    }
     default:
       return null;
   }
@@ -98,6 +111,13 @@ function turnOf(env: MatchEnvelope): string {
   if (match.status === 'countdown') return 'The match is about to start';
   if (match.status !== 'live') return 'The match is over';
   if (env.realtime) return `Round ${(env.view as { round?: number } | null)?.round ?? 1}`;
+  if (match.gameId === 'salvo') {
+    // Everyone moves at once: say who the round is still waiting for.
+    const round = (env.view as { round?: number } | null)?.round ?? 0;
+    const label = round === 0 ? 'Deployment' : `Round ${round}`;
+    const waiting = match.toMove.map((seat) => (seat === env.you ? 'you' : `@${match.seats.find((s) => s.seat === seat)?.identity.handle ?? seat}`));
+    return waiting.length > 0 ? `${label} — waiting for ${waiting.join(', ')}` : label;
+  }
   const n = (env.recent?.at(-1)?.number ?? 0) + 1;
   const mover = match.toMove[0];
   if (!mover) return `Turn ${n}`;

@@ -28,7 +28,7 @@ describe('every resident', () => {
       for (const kind of ['hello', 'win', 'lose', 'draw', 'mentioned', 'busy'] as const) expect((p.lines[kind] ?? []).length).toBeGreaterThan(0);
     });
     test(`${p.name}: hello/win/lose/draw for every game`, () => {
-      for (const game of ['critical-mass', 'lightline', 'checkers']) {
+      for (const game of ['critical-mass', 'lightline', 'checkers', 'salvo']) {
         for (const kind of ['hello', 'win', 'lose', 'draw'] as const) expect(linesFor(p, kind, game).length).toBeGreaterThan(0);
       }
       for (const kind of ['hello', 'win', 'lose'] as const) {
@@ -36,11 +36,19 @@ describe('every resident', () => {
         expect((p.byGame?.checkers?.[kind] ?? []).length).toBeGreaterThanOrEqual(3);
       }
     });
+    test(`${p.name}: Salvo has its own lines, at least three of each kind, all naval (no orbs, cells or chain reactions)`, () => {
+      for (const kind of ['hello', 'win', 'lose', 'draw', 'gotHit'] as const) expect((p.byGame?.salvo?.[kind] ?? []).length).toBeGreaterThanOrEqual(3);
+      for (const [kind, list] of Object.entries(p.byGame?.salvo ?? {})) for (const l of list ?? []) expect(`${kind}: ${l}`).not.toMatch(NEUTRAL_FORBIDDEN);
+    });
     test(`${p.name}: Critical Mass keeps its cascade lines`, () => {
       expect(linesFor(p, 'bigCascade', 'critical-mass').length).toBeGreaterThan(0);
       expect(linesFor(p, 'gotHit', 'critical-mass').length).toBeGreaterThan(0);
     });
   }
+});
+
+test('Salvo strengths: Sprocket easy, OLD IRON medium, GAME_OVER hard', () => {
+  expect([sprocket, oldIron, gameOver].map((p) => p.salvo?.strength)).toEqual(['easy', 'medium', 'hard']);
 });
 
 test('GAME_OVER keeps out of the lobby: no ambient lines, no unprompted answers, lowercase', () => {

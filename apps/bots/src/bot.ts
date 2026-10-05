@@ -7,9 +7,11 @@ import { DmBudget } from './dm-budget';
 import { callName, DEFAULT_STRATEGY, line, linesFor, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
 import { chooseCheckersMove } from './strategies/checkers';
+import { chooseSalvoMove, volleyMoment } from './strategies/salvo';
 import { ranksLine, type RankRow, tableContext } from './table-context';
 import { TableGames } from './table-games';
 import type { CheckersState } from '@cs/checkers';
+import type { SalvoCommand, SalvoView } from '@cs/salvo';
 import { lightlineDoctrine } from './strategies/lightline';
 import type { ChatLine, Moment, MomentKind, Voice } from './voice';
 
@@ -273,6 +275,9 @@ function chooseMove(env: MatchEnvelope, personality: Personality, think: { rng: 
   if (env.match.gameId === 'checkers' && (env.you === 'red' || env.you === 'blue')) {
     return chooseCheckersMove(env.view as CheckersState, env.you, { randomness: personality.checkers?.randomness ?? 0.5, rng: think.rng });
   }
+  if (env.match.gameId === 'salvo' && env.you) {
+    return chooseSalvoMove(env.view as SalvoView, env.legal as SalvoCommand[], { strength: personality.salvo?.strength ?? 'easy', rng: think.rng });
+  }
   return env.legal[Math.floor(think.rng() * env.legal.length)];
 }
 
@@ -355,6 +360,7 @@ async function playMatch(
     env = await playRealtime(client, opts, matchId, env, log);
   } else {
     let lastSeenMove = -1;
+    let lastSeenVolley = -1;
     while (!opts.signal?.aborted && (env.match.status === 'countdown' || env.match.status === 'live')) {
       const view = env.view as { lastMove?: { seat: string; waves: string[][] } | null; moveCount?: number };
       if (view.lastMove && view.moveCount !== lastSeenMove) {
@@ -362,6 +368,14 @@ async function playMatch(
         const big = view.lastMove.waves.length >= 3;
         if (big && view.lastMove.seat === env.you && Math.random() < 0.6) chatter('bigCascade');
         if (big && view.lastMove.seat !== env.you && Math.random() < 0.5) chatter('gotHit');
+      }
+      // Salvo: once per volley, a word when I sank someone's ship or someone landed a shell on mine.
+      const volley = env.match.gameId === 'salvo' ? (env.view as SalvoView).lastVolley : null;
+      if (volley && volley.round !== lastSeenVolley) {
+        lastSeenVolley = volley.round;
+        const moment = volleyMoment(env.view as SalvoView);
+        if (moment === 'bigCascade' && Math.random() < 0.6) chatter('bigCascade');
+        if (moment === 'gotHit' && Math.random() < 0.5) chatter('gotHit');
       }
       if (env.match.status === 'live' && env.you && env.match.toMove.includes(env.you) && env.legal.length > 0) {
         const [lo, hi] = opts.thinkMs;

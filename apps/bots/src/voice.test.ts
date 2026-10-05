@@ -131,6 +131,18 @@ describe('LlmVoice request', () => {
     expect(users[2]).toContain('(no messages yet)');
     expect(users[3]).toContain('@frosty said something in #lobby and nobody has answered them. Answer them in character.');
   });
+
+  test('Salvo moments speak of ships and shells, not chain reactions', async () => {
+    const captured: Captured[] = [];
+    const { voice } = voiceWith(fakeFetch('NOTED.', captured));
+    const game = { name: 'Salvo', tagline: 'Four hidden fleets. Everyone fires at once.' };
+    await voice.say(moment({ kind: 'bigCascade', channel: 'table:t1', opponent: 'frosty', game }));
+    await voice.say(moment({ kind: 'gotHit', channel: 'table:t1', opponent: 'frosty', game }));
+    const users = captured.map((c) => c.body.messages[1].content);
+    expect(users[0]).toContain('Your shell just sank a ship in the last volley.');
+    expect(users[1]).toContain('A shell just hit your fleet in the last volley.');
+    for (const u of users) expect(u).not.toContain('chain reaction');
+  });
 });
 
 describe('LlmVoice sanitizing', () => {

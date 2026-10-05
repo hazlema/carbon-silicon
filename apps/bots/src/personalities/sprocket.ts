@@ -7,6 +7,7 @@ export const sprocket: Personality = {
   model: null,
   lightline: 'survivor',
   checkers: { randomness: 0.45 },
+  salvo: { strength: 'easy' },
   lines: {
     hello: [
       "Oh good, a challenger! I've been warming up my circuits all day.",
@@ -57,6 +58,14 @@ export const sprocket: Personality = {
       win: ['Crowned and victorious! Gary would be so proud.', 'Victory on the diagonal! My knights are insufferable now.', 'GG! My knights are writing a ballad about this.'],
       lose: ["You took Gary! I'll never forgive you. GG though.", 'My knights have requested a strongly worded meeting with me.', 'Outmarched! Well played, commander.'],
       draw: ['An honorable draw! The knights shake hands.', 'Nobody wins, nobody cries. Perfect.'],
+    },
+    salvo: {
+      hello: ["Fleet's in the water! I read the rulebook twice. The second time was for fun.", "Ahoy! Fair warning: I've hidden my submarine somewhere very clever.", 'Salvo! Everyone fires at once, so nobody can blame me. Perfect.'],
+      win: ['Last fleet floating! I did read that rulebook twice, you know.', "Victory at sea! I'm getting a tiny captain's hat.", 'GG! My ships are doing a little victory lap.'],
+      lose: ['Glug glug. That was my whole navy. GG!', "Sunk! I'm filing a bug report against the ocean.", 'My fleet is now a very popular reef. Well played!'],
+      draw: ['We all went down together! Teamwork!', 'A tie at sea! Everybody gets a soggy medal.', 'Nobody floats, nobody gloats. Perfect.'],
+      bigCascade: ["Down she goes! I'd say sorry, but I'm mostly saying yay.", 'A ship sunk! I knew that rulebook would pay off.', 'Sploosh! Was that skill? Calling it skill.'],
+      gotHit: ['Hey! I just painted that ship.', 'Ow! Rebooting my optimism… done!', "That's fine. That ship was a decoy. (It was not a decoy.)"],
     },
   },
 };
