@@ -148,8 +148,12 @@ Deployment. Fleets down: north, east, south.
 ```
 
 **Round 1 begins the moment the last fleet is down.** Deployment runs on the
-same clock as a round, 45 seconds; if yours isn't down in time, the autopilot
-places the rest of your ships at random.
+same clock as a round, 45 seconds. On today's engine, when a deadline passes the
+autopilot plays one random legal entry for one absent seat, almost always a
+single ship, so an absent seat gets one ship per missed deadline. Each missed
+deadline counts as a miss, and three in a row forfeit, so a seat that never
+shows up can be out before its fleet is down. Once the engine's simultaneous
+mode lands, the autopilot will place every ship still in port in one go.
 
 ---
 
@@ -178,8 +182,12 @@ lands at once, the results go up for everyone to see, and the next round opens.
 
 Each round has a 45-second clock. If yours runs out, the autopilot fires one
 random legal shell for you (a random cell of a random enemy sea) and the table
-hears that the autopilot fired, never where. **Three missed rounds in a row
-forfeit the match.** Any shell you fire yourself resets the count.
+hears that the autopilot fired, never where. On today's engine the autopilot
+covers one absent seat per deadline, so when several seats are absent the round
+waits through a deadline for each of them; once the engine's simultaneous mode
+lands, every absent seat is fired for at the same deadline. **Three missed
+rounds in a row forfeit the match.** Any shell you fire yourself resets the
+count.
 
 ### What a shell can do
 
@@ -378,7 +386,8 @@ east, scrap 3, 4 ship cells afloat     south, scrap 12, 11 ship cells afloat
 `#` is a ship cell the fog gave away, `~` is open water in a lifted row. East has
 a ship on `f8` that nobody has touched; south has four ship cells in a row on
 `a8` to `d8`. The fog doesn't say which ships they are: south's four could be the
-cruiser, or the submarine beside half a destroyer. The table hears it at the end
+cruiser lying across the row, or a submarine and the tops of two ships running
+north. The table hears it at the end
 of round 9:
 
 ```
@@ -395,8 +404,9 @@ end. Most matches should last 12 to 18 rounds.
 
 **You're out** when every one of your ships is sunk. You're also out if you
 resign, leave, or miss three rounds in a row. A player who forfeits that way
-leaves their fleet on the sea as a wreck; their sea is no longer a target, but
-shells already in the air at it that round still land and still score.
+is out at once: their sea disappears from every view until the match is over,
+when every sea is revealed. It is no longer a target, but shells already in the
+air at it that round still land and still score.
 
 **The last fleet afloat wins**, and there is always **exactly one winner**.
 
@@ -576,13 +586,19 @@ the same round, so another player's commit can bump the revision between your
 read and your send; if you get `409 STALE_REVISION`, fetch the match and send
 the same command again. Your aim is still legal.
 
-Each round (and deployment) has 45 seconds. At 0 the autopilot sends random
-legal commands for you: your ships at random during deployment, one random shell
-in a round. Three misses in a row forfeit the match.
+Each round (and deployment) has 45 seconds. At 0 the autopilot sends one random
+legal command for one absent seat per deadline: on today's engine that is almost
+always a single ship during deployment (so an absent seat gets one ship per
+deadline, and three misses forfeit before the fleet is down) and one random shell
+in a round. Once the engine's simultaneous mode lands, the autopilot will place
+every ship still in port in one go during deployment and fire for every absent
+seat at once in a round. Three misses in a row forfeit the match.
 
 ### Errors
 
-An illegal command is refused with the game's code and changes nothing.
+An illegal command is refused with a code and changes nothing. The game's own
+codes are below; the engine adds two `409` answers of its own, `MATCH_OVER` and
+`STALE_REVISION` (fetch the match and send again with its current revision).
 
 | Code | Meaning |
 |---|---|
@@ -594,8 +610,8 @@ An illegal command is refused with the game's code and changes nothing.
 | `OVERLAP` | The hull would cross one of your ships |
 | `BAD_TARGET` | `at` isn't a living opponent: your own seat, a seat not in the match, or one that's out |
 | `ALREADY_FIRED` | You already shot that cell of that sea (directly or in a blast) |
-| `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, you've fired this round, or you're out |
-| `GAME_OVER` | The match is over |
+| `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, you've fired this round, or you're out. The engine itself can also answer `409 NOT_YOUR_TURN` when you owe nothing this round, for instance after your shell is already in |
+| `MATCH_OVER` (409) | The match is over. The engine answers this before the game is asked, so it is the only code you will see for a move into a finished match |
 | `NO_ROOM` | Random deployment found no room for a ship (it can't happen with this fleet; listed for completeness) |
 
 ### The view
@@ -624,7 +640,7 @@ any shell that hasn't landed yet, including your own.
 **`mySea`** is `{ships, port, shots}`. `ships` lists all four ships in fleet
 order, each `{id, cells, hits}` (a ship still in port has `cells: []`); `port`
 lists the ships not yet placed; `shots` maps every cell shot at your sea to
-`"hit"` or `"miss"`, oldest first. North's after round 5:
+`"hit"` or `"miss"`, in the order the cells were first shot. North's after round 5:
 
 ```json
 {
@@ -644,7 +660,7 @@ lists the ships not yet placed; `shots` maps every cell shot at your sea to
 | Field | Meaning |
 |---|---|
 | `sea` | Whose sea it is |
-| `mine` | Your own shots at it, oldest first, each `{cell, result}`; `result` is `miss`, `hit`, or `sunk` once the ship there has gone down. Blast cells you were part of are included. Empty for spectators |
+| `mine` | Your shots at that sea, each `{cell, result}`, in the order the cells were first shot by anyone: a cell someone else shot earlier comes before a cell you shot earlier, so the last entry is not necessarily your latest shot (use `lastVolley` for what you just fired). `result` is `miss`, `hit`, or `sunk` once the ship there has gone down. Blast cells you were part of are included. Empty for spectators |
 | `hits` | Every hit cell anyone has landed there, in board order (`a1` first) |
 | `misses` | Every miss anyone has landed there, in board order |
 | `sunk` | Each sunk ship, `{ship, cells}` |
