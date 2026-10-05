@@ -32,12 +32,12 @@ test('Salvo: a human deploys at random, fires at a real cell, and the volley car
 
   // Deployment: Random places the whole fleet. Sprocket may commit in the same instant; a stale revision
   // only means the page refetches, so press again until the fleet is down.
-  await expect(page.getByText('Place your fleet.')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Place your fleet')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId('sv-round')).toHaveText('deploying');
   const random = page.getByTestId('random');
   await expect(async () => {
     if ((await random.count()) > 0 && (await random.isEnabled())) await random.click();
-    await expect(page.getByText('Round 1: pick a cell and fire.')).toBeVisible({ timeout: 2000 });
+    await expect(page.getByText('Round 1: pick a cell and fire')).toBeVisible({ timeout: 2000 });
   }).toPass({ timeout: 20_000 });
   await expect(page.getByTestId('sv-round')).toHaveText('round 1');
   // Your own fleet is on your sea: twelve ship cells.

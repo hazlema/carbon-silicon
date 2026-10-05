@@ -405,8 +405,8 @@
     }
     if (sv) {
       const secs = myTurn && secondsLeft !== null ? secondsLeft : undefined;
-      if (sv.phase === 'deploy') return { lead: myTurn ? 'Place your fleet.' : 'Waiting for the others to deploy…', secs };
-      if (myTurn) return { lead: `Round ${sv.round}: pick a cell and fire.`, secs };
+      if (sv.phase === 'deploy') return { lead: myTurn ? 'Place your fleet' : 'Waiting for the others to deploy…', secs };
+      if (myTurn) return { lead: `Round ${sv.round}: pick a cell and fire`, secs };
       const owing = sv.seats.filter((s) => !sv.eliminated.includes(s) && !sv.ready.includes(s)).map(handleOf);
       const who = owing.length <= 1 ? owing.join('') : `${owing.slice(0, -1).join(', ')} and ${owing.at(-1)}`;
       return { lead: `Round ${sv.round}: waiting for ${who}…` };
@@ -714,7 +714,7 @@
       {#if !ck}
         <footer class="bar bottom">
           <p class="status" role="status">
-            <span class="lead" class:tight={status.secs !== undefined}>{status.lead}</span>{#if status.secs !== undefined}<span class="lead secs" aria-hidden="true"> · {status.secs} s</span>{/if}
+            <span class="lead" class:tight={status.secs !== undefined}>{status.lead}</span>{#if status.secs !== undefined}<span class="lead secs" aria-hidden="true">· {status.secs} s</span>{/if}
             {#if status.detail && !(inPocket && !ll)}<span class="detail">{status.detail}</span>{/if}
           </p>
           {#if !inPocket}{@render tableActions()}{/if}
@@ -937,6 +937,10 @@
   }
   .lead.tight {
     margin-right: 0;
+  }
+  /* The clock follows the lead with a real gap: a leading space in the span is trimmed. */
+  .secs {
+    margin-left: 0.35em;
   }
   .detail {
     color: var(--fog);
