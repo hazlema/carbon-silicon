@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ShellResult, Volley } from '@cs/salvo';
-import { FLIGHT_MS, MAX_TOTAL_MS, planVolley, sideOf } from './volley';
+import { BEAT_MS, FLIGHT_MS, incoming, LEAD_MS, MAX_TOTAL_MS, planVolley, sideOf } from './volley';
 
 const shell = (from: string, sea: string, cell: string, more: Partial<ShellResult> = {}): ShellResult => ({
   from,
@@ -124,5 +124,38 @@ describe('planVolley', () => {
     const plan = planVolley(volley([]), (s) => sideOf(s, 'north'));
     expect(plan.shells).toEqual([]);
     expect(plan.total).toBe(0);
+  });
+
+  test("with you at the table: a warning first, then the shells at your sea fly last, after a beat", () => {
+    const plan = planVolley(
+      volley([shell('east', 'north', 'a1'), shell('south', 'west', 'b2'), shell('west', 'north', 'c3'), shell('north', 'east', 'd4')]),
+      (s) => sideOf(s, 'north'),
+      { you: 'north' },
+    );
+    expect(plan.lead).toBe(LEAD_MS);
+    const [atMe1, other1, atMe2, other2] = plan.shells;
+    expect(other1.delay).toBe(LEAD_MS);
+    expect(other2.delay).toBeGreaterThan(other1.delay);
+    expect(atMe1.delay).toBeGreaterThan(other2.delay + BEAT_MS - 1);
+    expect(atMe2.delay).toBeGreaterThan(atMe1.delay);
+    expect(plan.total - plan.lead - BEAT_MS).toBeLessThanOrEqual(MAX_TOTAL_MS);
+  });
+
+  test('no beat when every shell is at you, and no warning for a spectator or with reduced motion', () => {
+    const v = volley([shell('east', 'north', 'a1'), shell('south', 'north', 'b2')]);
+    expect(planVolley(v, (s) => sideOf(s, 'north'), { you: 'north' }).shells[0].delay).toBe(LEAD_MS);
+    const watching = planVolley(v, (s) => sideOf(s, null));
+    expect([watching.lead, watching.shells[0].delay]).toEqual([0, 0]);
+    const still = planVolley(v, (s) => sideOf(s, 'north'), { you: 'north', reducedMotion: true });
+    expect([still.lead, still.total, still.shells[1].landAt]).toEqual([0, 0, 0]);
+  });
+});
+
+describe('incoming', () => {
+  test('counts the shells at your sea (each Time on Target shell too) and names their senders once', () => {
+    const v = volley([shell('east', 'north', 'a1'), shell('west', 'north', 'e5', { blast: true }), shell('east', 'south', 'b2'), shell('south', 'north', 'e5', { blast: true })]);
+    expect(incoming(v, 'north')).toEqual({ count: 3, from: ['east', 'west', 'south'] });
+    expect(incoming(v, 'west')).toEqual({ count: 0, from: [] });
+    expect(incoming(v, null)).toEqual({ count: 0, from: [] });
   });
 });

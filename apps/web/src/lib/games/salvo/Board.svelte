@@ -5,7 +5,7 @@
   import { fitScale } from '../critical-mass/iso';
   import { createSound } from '../critical-mass/sound';
   import { typing } from '../lightline/controls';
-  import { planVolley, sideOf, type Side, type VolleyPlan } from './volley';
+  import { incoming, planVolley, sideOf, type Side, type VolleyPlan } from './volley';
 
   let {
     view,
@@ -48,6 +48,7 @@
   const live = $derived(view.phase !== 'over');
   const out = (seat: string) => view.eliminated.includes(seat);
   const amOut = $derived(!!me && out(me));
+  const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`);
 
   // ── What `legal` offers ──
   type FireCmd = Extract<SalvoCommand, { fire: 'shell' }>;
@@ -223,15 +224,78 @@
     untrack(() => {
       const v = $state.snapshot(view.lastVolley);
       if (!v) return;
-      const p = planVolley(v, (s) => sideOf(s, me), { reducedMotion: reduced });
+      // A seat whose fleet was afloat for this volley gets the warning, and its own shells last.
+      const atSea = !!me && !!view.mySea && (!out(me) || v.eliminated.includes(me));
+      const p = planVolley(v, (s) => sideOf(s, me), { reducedMotion: reduced, you: atSea ? me : null });
       plan = p;
       planKey += 1;
       playVolley(p);
       clearTimeout(clearFx);
       clearFx = setTimeout(() => (plan = null), p.total + 3000);
+      // The warning hangs there until the first shell at you lands (and is long enough to read with no motion at all).
+      const firstAtYou = Math.min(...p.shells.filter((x) => x.sea === me).map((x) => x.landAt));
+      const warnFor = !atSea ? 0 : reduced ? 2500 : Number.isFinite(firstAtYou) ? firstAtYou : p.lead + 900;
+      if (atSea && me) {
+        const { count, from } = incoming(v, me);
+        announce(
+          count > 0
+            ? { tone: 'hot', text: `⚠ ${count} ${count === 1 ? 'shell' : 'shells'} incoming on your sea — from ${names(from.map(handleOf))}` }
+            : { tone: 'calm', text: 'Quiet waters: nothing aimed at you this round.' },
+          0,
+          warnFor,
+        );
+      }
+      openRound(Math.max(p.total, warnFor) + 400);
     });
   });
   $effect(() => () => clearTimeout(clearFx));
+
+  // ── Banners: the warning before a volley, and the call to fire when a round opens ──
+  type Banner = { tone: 'hot' | 'calm' | 'go'; text: string };
+  let banner = $state<Banner | null>(null);
+  let bannerKey = $state(0);
+  const bannerTimers: ReturnType<typeof setTimeout>[] = [];
+  function announce(b: Banner, afterMs: number, forMs: number) {
+    let mine = -1;
+    bannerTimers.push(
+      setTimeout(() => {
+        banner = b;
+        mine = bannerKey += 1;
+        if (b.tone === 'hot') sound?.pop(-7);
+      }, afterMs),
+      // Only its own banner: a later one may have taken its place.
+      setTimeout(() => {
+        if (bannerKey === mine) banner = null;
+      }, afterMs + forMs),
+    );
+  }
+  /** "Round 7 — fire!" once the volley has played out (if the match goes on and you're still afloat). */
+  function openRound(afterMs: number) {
+    bannerTimers.push(
+      setTimeout(() => {
+        if (view.phase !== 'fire') return;
+        announce({ tone: 'go', text: me && !out(me) ? `Round ${view.round} — fire!` : `Round ${view.round}` }, 0, 1600);
+      }, afterMs),
+    );
+  }
+  $effect(() => () => bannerTimers.forEach(clearTimeout));
+  // Deployment ending opens round 1 with no volley before it.
+  let seenPhase: string | undefined;
+  $effect(() => {
+    const phase = view.phase;
+    if (seenPhase === 'deploy' && phase === 'fire') untrack(() => openRound(0));
+    seenPhase = phase;
+  });
+
+  // ── Locking in: a clink for every other seat that commits (not on first paint) ──
+  let seenReady: Set<string> | undefined;
+  $effect(() => {
+    const now = new Set(view.ready);
+    const before = seenReady;
+    seenReady = now;
+    if (!before) return;
+    if ([...now].some((x) => !before.has(x) && x !== me)) untrack(() => sound?.clink());
+  });
   /** When each cell's new result shows: as its shell lands, or with the flash that took it. */
   const landing = $derived.by(() => {
     const at = new Map<string, number>();
@@ -323,11 +387,17 @@
     step(e, k);
   }
 
-  const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`);
   /** The living seats still owing this round, besides you. */
   const waitingFor = $derived(view.seats.filter((s) => s !== me && !out(s) && !view.ready.includes(s)).map(handleOf));
+  /** The one seat everybody is waiting on, when it comes to that. */
+  const holdout = $derived.by(() => {
+    const living = view.seats.filter((s) => !out(s));
+    const owing = living.filter((s) => !view.ready.includes(s));
+    return live && living.length > 1 && owing.length === 1 ? owing[0] : null;
+  });
   const stateOf = (seat: string) =>
-    out(seat) ? 'out' : view.winner === seat ? 'winner' : !live ? '' : view.ready.includes(seat) ? (view.phase === 'deploy' ? 'deployed' : 'ready') : view.phase === 'deploy' ? 'deploying' : 'aiming';
+    out(seat) ? 'out' : view.winner === seat ? 'winner' : !live ? '' : view.ready.includes(seat) ? (view.phase === 'deploy' ? 'deployed' : 'locked') : view.phase === 'deploy' ? 'deploying' : 'aiming';
+  const STATE_TEXT: Record<string, string> = { locked: 'locked in' };
   const chips = $derived([...view.seats].sort((a, b) => SIDE_ORDER.indexOf(side(a)) - SIDE_ORDER.indexOf(side(b))));
   const mainSea = $derived(deploying ? me : targetSea);
   const mainTitle = $derived(
@@ -441,6 +511,13 @@
 {/snippet}
 
 <div class="salvo" class:fit>
+  <div class="banners" aria-live="polite">
+    {#if banner}
+      {#key bannerKey}
+        <p class="banner {banner.tone}" data-testid="banner">{banner.text}</p>
+      {/key}
+    {/if}
+  </div>
   <div class="layout" class:deploying>
     <div class="main" bind:this={mainEl}>
       {#if mainTitle}
@@ -482,7 +559,7 @@
               <span class="name" class:human={humanSeat(seat)}>{handleOf(seat)}</span>{#if isMe}<span class="you"> (you)</span>{/if}
             </span>
             <span class="stat">{afloatOf(seat)} afloat, {view.scrap[seat] ?? 0} scrap</span>
-            {#if st}<span class="state {st}">{st}</span>{/if}
+            {#if st}<span class="state {st}">{STATE_TEXT[st] ?? st}</span>{/if}
           {/snippet}
           {#if t && !isMe && !deploying}
             <button
@@ -491,12 +568,13 @@
               data-side={side(seat)}
               data-seat={seat}
               data-ready={view.ready.includes(seat)}
+              class:holdout={holdout === seat}
               aria-pressed={targetSea === seat}
               aria-label="{handleOf(seat)}'s sea, {afloatOf(seat)} afloat{st ? `, ${st}` : ''}"
               onclick={() => (picked = seat)}>{@render chipBody()}</button
             >
           {:else}
-            <div class="chip" class:me={isMe} class:gone={out(seat)} data-side={side(seat)} data-seat={seat} data-ready={view.ready.includes(seat)}>
+            <div class="chip" class:me={isMe} class:gone={out(seat)} class:holdout={holdout === seat} data-side={side(seat)} data-seat={seat} data-ready={view.ready.includes(seat)}>
               {@render chipBody()}
             </div>
           {/if}
@@ -535,10 +613,10 @@
           </div>
           <p class="hint">Pick a ship, then a cell; R turns it.</p>
         {:else if deploying}
-          <p class="wait" data-testid="waiting">Fleet deployed. {waitingFor.length ? `Waiting for ${names(waitingFor)}…` : ''}</p>
+          <p class="wait" data-testid="waiting">Fleet deployed. {waitingFor.length ? `Waiting on ${names(waitingFor)}…` : ''}</p>
         {:else if live && me && !amOut}
           {#if iAmReady}
-            <p class="wait" data-testid="waiting">Shell away{selected ? ` at ${selected}` : ''}. Waiting for {names(waitingFor)}…</p>
+            <p class="wait" data-testid="waiting">Locked in{selected ? ` at ${selected}` : ''}. Waiting on {names(waitingFor)}…</p>
           {:else}
             <p class="aim">
               {#if selected}Aim: <b>{selected}</b> on {targetSea ? handleOf(targetSea) : ''}'s sea{:else}Pick a cell on {targetSea ? `${handleOf(targetSea)}'s` : 'a'} sea.{/if}
@@ -754,9 +832,59 @@
     color: var(--dust);
     font-size: 0.6875rem;
   }
-  .state.ready,
+  .state.locked,
   .state.deployed {
     color: var(--ready);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    animation: sv-stamp 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+  }
+  /* The last seat everyone is waiting on. */
+  .chip.holdout {
+    border-color: var(--carbon);
+    animation: sv-holdout 1.1s ease-in-out infinite;
+  }
+  .chip.holdout .state {
+    color: var(--carbon);
+  }
+
+  /* ── Banners: over the board, never in the way of a click ── */
+  .banners {
+    position: absolute;
+    top: 10px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .banner {
+    margin: 0 10px;
+    max-width: 34rem;
+    padding: 0.55rem 1.1rem;
+    border-radius: 999px;
+    border: 1px solid var(--lattice);
+    background: rgba(13, 16, 32, 0.92);
+    color: var(--chalk);
+    font-weight: 600;
+    text-align: center;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+    animation: sv-banner 0.35s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  }
+  .banner.hot {
+    border-color: #ff7a3d;
+    color: #ffd2b8;
+    box-shadow: 0 0 24px rgba(255, 122, 61, 0.45), 0 8px 30px rgba(0, 0, 0, 0.55);
+  }
+  .banner.calm {
+    color: var(--fog);
+  }
+  .banner.go {
+    border-color: var(--ready);
+    font-size: var(--step-1);
+    letter-spacing: 0.04em;
   }
   .state.winner {
     color: var(--carbon);
@@ -1209,6 +1337,18 @@
     0%, 100% { transform: scale(1); }
     50% { transform: scale(0.88); }
   }
+  @keyframes sv-stamp {
+    0% { transform: scale(2.2) rotate(-8deg); opacity: 0; }
+    100% { transform: none; opacity: 1; }
+  }
+  @keyframes sv-holdout {
+    0%, 100% { box-shadow: 0 0 0 rgba(255, 150, 80, 0); }
+    50% { box-shadow: 0 0 14px rgba(255, 150, 80, 0.55); }
+  }
+  @keyframes sv-banner {
+    0% { transform: translateY(-14px) scale(0.92); opacity: 0; }
+    100% { transform: none; opacity: 1; }
+  }
   @keyframes sv-ping {
     0% { transform: scale(2.5); filter: brightness(2.5); }
     100% { transform: none; filter: none; }
@@ -1222,7 +1362,11 @@
     .smoke,
     .bubbles i,
     .reticle,
-    .mini .land {
+    .mini .land,
+    .state.locked,
+    .state.deployed,
+    .chip.holdout,
+    .banner {
       animation: none;
     }
     .smoke,

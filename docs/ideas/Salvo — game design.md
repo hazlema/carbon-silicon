@@ -127,6 +127,14 @@ The board follows the house style Critical Mass set: an isometric CSS 3D slab, h
 
 **Incoming fire (v1).** When a volley resolves, shells arc onto your sea from the attacker's side of the compass, in the attacker's colour, each casting a shadow that grows before impact. A hit leaves a scorch that keeps smoking; a sinking gets a bubble trail; a Time on Target blast lands as one big flash over nine cells. Every shell of the round plays in a staggered three to four seconds across all four seas. Sound is on by default. With `prefers-reduced-motion`, results appear without the flight.
 
+**Suspense (2026-10-06, from the Foreman's first playtest).** The game worked but landed flat, so the board now stages each round:
+
+- **The roster is the compass.** Each seat's chip shows its state; a seat that commits is stamped **LOCKED IN** (a clink for everyone else). When one seat is left owing, its chip pulses and the panel reads "Waiting on @x…": the pressure lands on the holdout.
+- **The warning before the volley.** When a round resolves and before anything flies, each seat afloat gets "⚠ 3 shells incoming on your sea — from @a, @b and @c" (or "Quiet waters"). It hangs there until the first of those shells lands.
+- **Yours land last.** The shells aimed at your own sea fly after everyone else's, after a held beat.
+- **The call.** Once the volley has played out, "Round 8 — fire!" opens the next round.
+- **Why "incoming" waits for the reveal.** The Foreman asked to see, mid-round, how many seats are targeting you. That would break invariant 2: a target who sees "1 incoming" when two allies promised a Time on Target can expose the betrayal in chat before it lands, and there's no defensive move in v1 to justify it. At the reveal every shell is already fired, so the count is honest and still gives the dread. A mid-round count could come back in v2 as something you pay for (a sonar ping bought with scrap).
+
 **Input in v1** is click to fire: pick a target sea, click a cell, confirm. A Fire button commits, and after committing the board shows "waiting for the others" over the seas of anyone not yet `ready`. Deployment is click a ship, click a cell, R to rotate, plus a Random button.
 
 **Input in v2** adds drag and drop: weapons drag from an arsenal tray onto the target sea with their footprint snapped to the grid, and ships drag into place during deployment. Drags start only from the tray or a ship, never from the sea, because a drag on the sea swivels the camera. Same 12-pixel click threshold as Critical Mass.
@@ -177,7 +185,9 @@ A ghost can't win, and its placement is fixed at elimination. Each round it gets
 - **False splash:** one living seat sees a fake hit marker on one of its target seas for one round.
 - **Whisper:** sell one radar reading to a living player for some of their scrap. The ghost offers in chat; the buyer accepts with a command.
 
-Ghosts depend on an engine state that doesn't exist yet: eliminated but still at the table. `isOut()` can't be used, because the runner releases every out seat from the match, so a ghost would be dropped and could even join another table. A ghost still owes a command each round, so it can be autopiloted, and random ghost mischief is funnier than it has any right to be. Three missed rounds forfeit the ghost, and that forfeit must not move its placement.
+**Ghosts get a voice (the Foreman, 2026-10-06).** A ghost's commit shows on the roster as "👻 @x is up to something…", never what. The trick is told at the reveal, with flair: "**Dirty trick!** @x's mine goes off under @Fable — Fable's own cruiser takes the hit." The board stages a ghost's trick like a shell: warned, then landed.
+
+Ghosts depend on an engine state that landed on 2026-10-06: `stillSeated()`, eliminated but still at the table. (`isOut()` alone releases the seat from the match, so a ghost would be dropped and could even join another table.) A ghost still owes a command each round, so it can be autopiloted, and random ghost mischief is funnier than it has any right to be. Three missed rounds forfeit the ghost, and that forfeit must not move its placement.
 
 ## Tests that matter
 

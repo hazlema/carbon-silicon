@@ -45,6 +45,9 @@ test('Salvo: a human deploys at random, fires at a real cell, and the volley car
 
   // Sprocket commits within a blink; once its chip says ready, the human's shot resolves the round.
   await expect(page.locator(`.chip[data-seat="${sprocket}"]`)).toHaveAttribute('data-ready', 'true', { timeout: 10_000 });
+  // Its chip is stamped "locked in", and you, the last one owing, are the holdout.
+  await expect(page.locator(`.chip[data-seat="${sprocket}"] .state`)).toHaveText('locked in');
+  await expect(page.locator(`.chip[data-seat="${me}"]`)).toHaveClass(/holdout/);
   const sea = page.locator('[data-main]');
   await expect(sea).toHaveAttribute('data-sea', sprocket!);
   const cell = sea.locator('[data-cell="e5"]');
@@ -53,6 +56,9 @@ test('Salvo: a human deploys at random, fires at a real cell, and the volley car
   await expect(cell).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('fire')).toHaveText('Fire at e5');
   await page.getByTestId('fire').click();
+  // Before anything flies, you're warned what's coming at your sea, and from whom; then round 2 is called.
+  await expect(page.getByTestId('banner')).toHaveText('⚠ 1 shell incoming on your sea — from Sprocket', { timeout: 10_000 });
+  await expect(page.getByTestId('banner')).toHaveText('Round 2 — fire!', { timeout: 10_000 });
 
   // The resolved volley, read back from the server, holds that shell from that seat.
   await expect
