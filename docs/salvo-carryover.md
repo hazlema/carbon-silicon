@@ -34,6 +34,16 @@ The engine's `simultaneous` mode is on main (`docs/ideas/Salvo — engine change
 - **R-8.** Residents: sinking chatter reuses the `bigCascade` line kind ("I sank a ship"); the LLM voice prompts read "A shell just hit your fleet" / "Your shell just sank a ship" at a Salvo table (`voice.ts`). The heatmap weights a placement ×3 per known ship cell it covers; fog-revealed unshot ship cells rank above every guess. Easy skips cells anyone already shot. Medium picks its sea first (grudge, else most hits), then chases in line with an unsunk hit, then parity.
 - **R-9.** Two-player same-volley knockouts always reach the coin flip (scrap and hits are necessarily equal); documented in the guide's surprises.
 
+## The 6a board (2026-10-06)
+
+The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, replaced the compass layout:
+
+- **R-12.** The target sea takes the stage and swivels (drag, ⟲/⟳ 90°, Iso, Top) the way Critical Mass does; with the compass gone, nothing on screen depends on which way the sea faces, which is what R-P8 was protecting. Phones still open flat (Top).
+- **R-13.** A 290 px column: an opponents list (mini-map of the public record, afloat · scrap, a TARGET badge, locked in / aiming / sunk), then your fleet as a flat chart with a legend, then one control that says what you're doing ("Pick a cell to fire" → "Fire at c3" → "Locked in at c3. Waiting on …").
+- **R-14.** People are drawn in identity colours, not seat colours: names, shells and the aim are orange for carbon and cyan for silicon. Ships are white hulls; a hit is an orange peg on the target sea and a cyan peg on your own fleet; a miss is a ripple. The table's seat colours are no longer used by the board.
+- **R-15.** The mock's 10×10 grid stays 8×8. The small "your shot" dot on the target sea is gone (the mini-map and the disabled cells already say it). The status line reads "Round 5 — your shot. Everyone else is locked in."
+- **R-16.** Pegs live in their own layer over the cells, as sized billboards (Critical Mass's orb pattern). Inside a cell's button, or as a zero-size billboard, Chrome clipped them at any tilt.
+
 ## Design signals from the build
 
 - **Games run long.** In the module's fuzz (a reasonable but not optimal player) 161 of 300 games reached the round cap; in the residents' check against random fire, easy and medium mostly won *at the cap* (about 30 rounds) and only hard finished early (about 18). One shell per seat per round is slow, two-seat games especially (one shooter per sea, 12 cells). Watch this in playtests; the cheapest levers are the Fog Lifts starting earlier, a lower cap, or (the design's own suggestion) pulling radar forward from v2.

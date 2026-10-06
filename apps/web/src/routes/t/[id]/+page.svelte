@@ -406,10 +406,13 @@
     if (sv) {
       const secs = myTurn && secondsLeft !== null ? secondsLeft : undefined;
       if (sv.phase === 'deploy') return { lead: myTurn ? 'Place your fleet' : 'Waiting for the others to deploy…', secs };
-      if (myTurn) return { lead: `Round ${sv.round}: pick a cell and fire`, secs };
-      const owing = sv.seats.filter((s) => !sv.eliminated.includes(s) && !sv.ready.includes(s)).map(handleOf);
+      const owing = sv.seats.filter((s) => !sv.eliminated.includes(s) && !sv.ready.includes(s) && s !== mySeat).map(handleOf);
       const who = owing.length <= 1 ? owing.join('') : `${owing.slice(0, -1).join(', ')} and ${owing.at(-1)}`;
-      return { lead: `Round ${sv.round}: waiting for ${who}…` };
+      if (myTurn) {
+        const detail = owing.length === 0 ? 'Everyone else is locked in.' : `${who} ${owing.length === 1 ? 'is' : 'are'} still aiming.`;
+        return { lead: `Round ${sv.round} — your shot.`, detail, secs };
+      }
+      return { lead: `Round ${sv.round} — waiting on ${who}…` };
     }
     if (myTurn && inPocket && secondsLeft !== null) return { lead: 'Your move', secs: secondsLeft };
     if (myTurn) return { lead: 'Your move.', detail: ck ? 'Select a knight, then a gold destination. Captures are mandatory.' : 'Place an orb on an empty cell or one of yours.' };

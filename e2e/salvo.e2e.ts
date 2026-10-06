@@ -37,7 +37,7 @@ test('Salvo: a human deploys at random, fires at a real cell, and the volley car
   const random = page.getByTestId('random');
   await expect(async () => {
     if ((await random.count()) > 0 && (await random.isEnabled())) await random.click();
-    await expect(page.getByText('Round 1: pick a cell and fire')).toBeVisible({ timeout: 2000 });
+    await expect(page.getByText('Round 1 — your shot.')).toBeVisible({ timeout: 2000 });
   }).toPass({ timeout: 20_000 });
   await expect(page.getByTestId('sv-round')).toHaveText('round 1');
   // Your own fleet is on your sea: twelve ship cells.
@@ -45,9 +45,9 @@ test('Salvo: a human deploys at random, fires at a real cell, and the volley car
 
   // Sprocket commits within a blink; once its chip says ready, the human's shot resolves the round.
   await expect(page.locator(`.chip[data-seat="${sprocket}"]`)).toHaveAttribute('data-ready', 'true', { timeout: 10_000 });
-  // Its chip is stamped "locked in", and you, the last one owing, are the holdout.
+  // Its card is stamped "locked in", and the status line tells you you're the last one owing.
   await expect(page.locator(`.chip[data-seat="${sprocket}"] .state`)).toHaveText('locked in');
-  await expect(page.locator(`.chip[data-seat="${me}"]`)).toHaveClass(/holdout/);
+  await expect(page.getByText('Everyone else is locked in.')).toBeVisible();
   const sea = page.locator('[data-main]');
   await expect(sea).toHaveAttribute('data-sea', sprocket!);
   const cell = sea.locator('[data-cell="e5"]');

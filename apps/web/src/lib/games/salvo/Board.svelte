@@ -1,24 +1,24 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { cellIndex, cellName, hullCells, SHIPS, SIZE, type Facing, type SalvoCommand, type SalvoView, type ShipId, type TargetView } from '@cs/salvo';
-  import { colorOf, type TableColors } from '$lib/seats';
-  import { fitScale } from '../critical-mass/iso';
+  import type { TableColors } from '$lib/seats';
+  import { clampTilt, DRAG_THRESHOLD, fitScale, nearestTurn } from '../critical-mass/iso';
   import { createSound } from '../critical-mass/sound';
   import { typing } from '../lightline/controls';
   import { incoming, planVolley, sideOf, type Side, type VolleyPlan } from './volley';
 
   let {
     view,
-    colors,
-    legal,
     interactive,
+    legal,
     onMove,
     seats,
     you,
     fit = false,
   }: {
     view: SalvoView;
-    colors: TableColors;
+    /** Kept for the table page's call; Salvo draws people in their identity colours (orange carbon, cyan silicon). */
+    colors?: TableColors;
     legal: unknown[];
     interactive: boolean;
     /** Called with ONE entry of `legal`, verbatim. */
@@ -30,21 +30,23 @@
     fit?: boolean;
   } = $props();
 
-  /** The fixed isometric tilt (no swivel: the seas stay where the compass says). */
+  /** The resting isometric view, and the flat one. */
   const ISO = { spin: -28, tilt: 48 };
+  const TOP = { spin: 0, tilt: 0 };
   /** The cell size `fitScale` is asked about; the fit's scale turns it into real pixels. */
   const REF = 60;
+  /** The coordinate gutter beside the big sea, as a share of a cell. */
+  const GUTTER = 0.42;
   const LETTERS = 'abcdefgh';
   /** Cells in DOM order: row 8 first, column a on the left (a1 bottom-left). */
   const ORDER = Array.from({ length: SIZE * SIZE }, (_, k) => cellName((SIZE - 1 - Math.floor(k / SIZE)) * SIZE + (k % SIZE)));
-  /** Where each compass side's chip sits in the narrow row: left to right as you'd look round the table. */
-  const SIDE_ORDER: Side[] = ['west', 'north', 'east', 'south'];
 
   const me = $derived(view.you ?? you);
   const side = (seat: string) => sideOf(seat, me);
   const handleOf = (seat: string) => seats.find((s) => s.seat === seat)?.identity.handle ?? seat;
   const humanSeat = (seat: string) => seats.find((s) => s.seat === seat)?.identity.kind === 'human';
-  const myColor = $derived(colorOf(colors, me));
+  /** A person is orange, a machine cyan, wherever they appear on the board. */
+  const kindColor = (seat: string) => (humanSeat(seat) ? 'var(--carbon)' : 'var(--silicon)');
   const live = $derived(view.phase !== 'over');
   const out = (seat: string) => view.eliminated.includes(seat);
   const amOut = $derived(!!me && out(me));
@@ -60,11 +62,11 @@
   // ── Which sea is big ──
   const deploying = $derived(view.phase === 'deploy' && !!view.mySea && !amOut);
   let picked = $state<string | null>(null);
-  const byCompass = (a: TargetView, b: TargetView) => SIDE_ORDER.indexOf(side(a.sea)) - SIDE_ORDER.indexOf(side(b.sea));
-  /** The sea across the table first (north), then round the compass. */
-  const target = $derived(view.targets.find((t) => t.sea === picked) ?? [...view.targets].sort((a, b) => (side(a.sea) === 'north' ? -1 : side(b.sea) === 'north' ? 1 : byCompass(a, b)))[0] ?? null);
+  const target = $derived(view.targets.find((t) => t.sea === picked) ?? view.targets[0] ?? null);
   const targetSea = $derived(target?.sea ?? null);
   const fireCells = $derived(new Set(legal.filter(isFire).filter((l) => l.at === targetSea).map((l) => l.cell)));
+  /** Everyone at the table but you, in seat order: the seas you can aim at (or, watching, every fleet). */
+  const others = $derived(view.seats.filter((s) => s !== me));
 
   // ── Fire: click selects, Fire (or Enter on the selected cell) sends ──
   let selected = $state<string | null>(null);
@@ -120,7 +122,6 @@
   // ── What each cell shows ──
   type Mark = 'sea' | 'miss' | 'hit' | 'sunk' | 'ship' | 'sighted';
   interface Hull {
-    color: string;
     /** Sides (l r t b) where the hull runs on into the next cell. */
     joins: string;
     wreck: boolean;
@@ -129,10 +130,9 @@
   interface CellModel {
     mark: Mark;
     ship: ShipId | null;
-    mine: boolean;
     hull: Hull | null;
   }
-  const SEA: CellModel = { mark: 'sea', ship: null, mine: false, hull: null };
+  const SEA: CellModel = { mark: 'sea', ship: null, hull: null };
 
   /** For each hull cell, the screen sides where the hull continues (rows grow upward). */
   function joinsOf(cells: string[]): Map<string, string> {
@@ -150,7 +150,7 @@
     );
   }
 
-  function ownModel(m: NonNullable<SalvoView['mySea']>, color: string): Map<string, CellModel> {
+  function ownModel(m: NonNullable<SalvoView['mySea']>): Map<string, CellModel> {
     const cells = new Map<string, CellModel>();
     for (const [c, r] of Object.entries(m.shots)) if (r === 'miss') cells.set(c, { ...SEA, mark: 'miss' });
     for (const s of m.ships) {
@@ -158,7 +158,7 @@
       const joins = joinsOf(s.cells);
       for (const c of s.cells) {
         const mark: Mark = sunk ? 'sunk' : s.hits.includes(c) ? 'hit' : 'ship';
-        cells.set(c, { mark, ship: s.id, mine: false, hull: { color, joins: joins.get(c) ?? '', wreck: sunk, faint: false } });
+        cells.set(c, { mark, ship: s.id, hull: { joins: joins.get(c) ?? '', wreck: sunk, faint: false } });
       }
     }
     return cells;
@@ -166,19 +166,17 @@
 
   function targetModel(t: TargetView): Map<string, CellModel> {
     const cells = new Map<string, CellModel>();
-    const color = colorOf(colors, t.sea);
     for (const s of t.revealed ?? []) {
       const joins = joinsOf(s.cells);
-      for (const c of s.cells) cells.set(c, { mark: 'ship', ship: s.id, mine: false, hull: { color, joins: joins.get(c) ?? '', wreck: false, faint: true } });
+      for (const c of s.cells) cells.set(c, { mark: 'ship', ship: s.id, hull: { joins: joins.get(c) ?? '', wreck: false, faint: true } });
     }
     for (const row of t.lifted) for (const c of row.cells) if (!cells.has(c)) cells.set(c, { ...SEA, mark: 'sighted' });
     for (const c of t.misses) cells.set(c, { ...SEA, mark: 'miss' });
     for (const c of t.hits) cells.set(c, { ...(cells.get(c) ?? SEA), mark: 'hit' });
     for (const s of t.sunk) {
       const joins = joinsOf(s.cells);
-      for (const c of s.cells) cells.set(c, { mark: 'sunk', ship: s.ship, mine: false, hull: { color, joins: joins.get(c) ?? '', wreck: true, faint: false } });
+      for (const c of s.cells) cells.set(c, { mark: 'sunk', ship: s.ship, hull: { joins: joins.get(c) ?? '', wreck: true, faint: false } });
     }
-    for (const x of t.mine) cells.set(x.cell, { ...(cells.get(x.cell) ?? SEA), mine: true });
     return cells;
   }
 
@@ -199,7 +197,7 @@
     }
   }
 
-  const ownCells = $derived(view.mySea ? ownModel(view.mySea, myColor) : null);
+  const ownCells = $derived(view.mySea ? ownModel(view.mySea) : null);
   const targetCells = $derived(target ? targetModel(target) : null);
   const afloatOf = (seat: string): number => {
     if (seat === me && view.mySea) return view.mySea.ships.reduce((n, s) => n + s.cells.length - s.hits.length, 0);
@@ -326,38 +324,103 @@
 
   /** Where a shell starts, in cells from its target, by the side it comes from. */
   const FROM: Record<Side, [number, number]> = { north: [0, -6], south: [0, 6], west: [-6, 0], east: [6, 0] };
-  const centre = (cell: string, size: number) => {
+  const centre = (cell: string, size: number, gutter: number) => {
     const i = cellIndex(cell) ?? 0;
-    return { x: (i % SIZE) * size + size / 2, y: (SIZE - 1 - Math.floor(i / SIZE)) * size + size / 2 };
+    return { x: gutter + (i % SIZE) * size + size / 2, y: (SIZE - 1 - Math.floor(i / SIZE)) * size + size / 2 };
   };
 
-  // ── Sizes: the big sea fits its slot (tilted or flat), your own sea fits the side ──
-  let isoOn = $state(untrack(() => !fit) && (typeof window === 'undefined' || window.innerWidth > 700));
+  // ── The camera: drag to swivel, or the pill's turns and views (a phone's table opens flat) ──
+  const narrowAtStart = typeof window !== 'undefined' && window.innerWidth <= 700;
+  const first = untrack(() => fit) || narrowAtStart ? TOP : ISO;
+  let spin = $state(first.spin);
+  let tilt = $state(first.tilt);
+  /** The angle the fit is computed for: only updated at rest, so the sea doesn't breathe while you drag. */
+  let rest = $state({ spin: first.spin, tilt: first.tilt });
+  let drag: { x: number; y: number; spin: number; tilt: number; touch: boolean; moved: boolean } | null = null;
+  let dragging = $state(false);
+  /** Set for the click that ends a swivel, so it never aims or places. */
+  let suppress = false;
+  function aimCamera(next: { spin: number; tilt: number }) {
+    spin = nearestTurn(spin, next.spin);
+    tilt = clampTilt(next.tilt);
+    rest = { spin, tilt };
+  }
+  const turn = (by: number) => aimCamera({ spin: spin + by, tilt });
   // Becoming a phone's table (a rotation, a narrowed window): the flat Top view keeps the cells big enough to tap.
   $effect(() => {
-    if (fit) isoOn = false;
+    if (fit) untrack(() => aimCamera({ spin: nearestTurn(spin, 0), tilt: 0 }));
   });
-  let mainEl: HTMLDivElement | undefined = $state();
-  let ownEl: HTMLDivElement | undefined = $state();
-  let mainBox = $state({ w: 0, h: 0 });
+  const turnsFrom360 = (a: number, b: number) => (((a - b) % 360) + 360) % 360 === 0;
+  const isView = (v: { spin: number; tilt: number }) => rest.tilt === v.tilt && turnsFrom360(rest.spin, v.spin);
+  function down(e: PointerEvent) {
+    if (e.button !== 0 || (e.target as Element).closest('.pill')) return;
+    drag = { x: e.clientX, y: e.clientY, spin, tilt, touch: e.pointerType === 'touch', moved: false };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+  }
+  function move(e: PointerEvent) {
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    // Touch swivels only sideways: up and down stay with the page's scroll.
+    if (!drag.moved && Math.abs(dx) + (drag.touch ? 0 : Math.abs(dy)) > DRAG_THRESHOLD) {
+      drag.moved = true;
+      dragging = true;
+    }
+    if (!drag.moved) return;
+    // The sea's near edge follows the pointer, like turning a lazy Susan by its front rim.
+    spin = drag.spin - dx * 0.4;
+    if (!drag.touch) tilt = clampTilt(drag.tilt - dy * 0.3);
+  }
+  function up() {
+    if (drag?.moved) {
+      suppress = true;
+      setTimeout(() => (suppress = false), 0);
+      rest = { spin, tilt };
+    }
+    cancel();
+  }
+  function cancel() {
+    drag = null;
+    dragging = false;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', cancel);
+  }
+  $effect(() => cancel);
+
+  // ── Sizes: the big sea fits its stage at rest; your fleet fits its panel ──
+  let rootEl: HTMLDivElement | undefined = $state();
+  let rootBox = $state({ w: 0, h: 0 });
+  let stageEl: HTMLDivElement | undefined = $state();
+  let ownEl: HTMLElement | undefined = $state();
+  let stageBox = $state({ w: 0, h: 0 });
   let ownBox = $state({ w: 0, h: 0 });
-  function observe(el: HTMLElement | undefined, set: (b: { w: number; h: number }) => void) {
+  function observe(el: HTMLElement | undefined, set: (r: DOMRectReadOnly) => void) {
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => set({ w: e.contentRect.width, h: e.contentRect.height }));
+    const ro = new ResizeObserver(([e]) => set(e.contentRect));
     ro.observe(el);
     return () => ro.disconnect();
   }
-  $effect(() => observe(mainEl, (b) => (mainBox = b)));
-  $effect(() => observe(ownEl, (b) => (ownBox = b)));
+  $effect(() => observe(rootEl, (r) => (rootBox = { w: r.width, h: r.height })));
+  $effect(() => observe(stageEl, (r) => (stageBox = { w: r.width, h: r.height })));
+  /** The wide layout (the same test as the container query below): your fleet sits in a column, sized by its width. */
+  const wide = $derived(rootBox.w >= 640 && rootBox.w >= rootBox.h * 1.2);
+  $effect(() => observe(ownEl, (r) => (ownBox = { w: r.width, h: r.height })));
+  /** The big sea's own padding round its cells (see `.main .face`). */
+  const FACE_PAD = 20;
+  const span = SIZE + GUTTER;
   const mainCell = $derived.by(() => {
-    const { w, h } = mainBox;
+    // The stage's content box: its padding already keeps the caption and the pill clear.
+    const { w, h } = stageBox;
     if (!w || !h) return 40;
-    if (!isoOn) return Math.max(16, Math.floor(Math.min(w, h) / SIZE));
-    return Math.max(16, Math.floor(REF * fitScale({ w: SIZE * REF, h: SIZE * REF }, { w, h }, ISO.spin, ISO.tilt, 0)));
+    const room = { w: w - FACE_PAD, h: h - FACE_PAD };
+    if (rest.tilt === 0 && turnsFrom360(rest.spin, 0)) return Math.max(16, Math.floor(Math.min(room.w, room.h) / span));
+    return Math.max(16, Math.floor(REF * fitScale({ w: span * REF, h: span * REF }, room, rest.spin, rest.tilt, 0)));
   });
-  /** Room for your sea's caption above it. */
-  const OWN_CAPTION = 24;
-  const ownCell = $derived(Math.max(12, Math.min(40, Math.floor(Math.min(ownBox.w, ownBox.h - OWN_CAPTION) / SIZE) || 24)));
+  /** Your fleet fills the room its section has (the section's height, less the heading and the legend). */
+  const ownCell = $derived(Math.max(12, Math.min(34, Math.floor(((wide ? ownBox.w : Math.min(ownBox.w, ownBox.h - 52)) - 14) / SIZE) || 24)));
 
   /** Arrow keys move focus within a sea; every cell is focusable, enabled or not. */
   function step(e: KeyboardEvent, k: number) {
@@ -374,7 +437,7 @@
   const enabled = (mode: Mode, cell: string) =>
     interactive && (mode === 'fire' ? fireCells.has(cell) : mode === 'deploy' ? placeable.has(cell) : false);
   function press(mode: Mode, cell: string) {
-    if (!enabled(mode, cell)) return;
+    if (suppress || !enabled(mode, cell)) return;
     if (mode === 'fire') selected = cell;
     else if (mode === 'deploy') place(cell);
   }
@@ -397,19 +460,23 @@
   });
   const stateOf = (seat: string) =>
     out(seat) ? 'out' : view.winner === seat ? 'winner' : !live ? '' : view.ready.includes(seat) ? (view.phase === 'deploy' ? 'deployed' : 'locked') : view.phase === 'deploy' ? 'deploying' : 'aiming';
-  const STATE_TEXT: Record<string, string> = { locked: 'locked in' };
-  const chips = $derived([...view.seats].sort((a, b) => SIDE_ORDER.indexOf(side(a)) - SIDE_ORDER.indexOf(side(b))));
+  const STATE_TEXT: Record<string, string> = { locked: 'locked in', out: 'sunk' };
   const mainSea = $derived(deploying ? me : targetSea);
-  const mainTitle = $derived(
-    deploying ? 'Your sea' : targetSea ? (targetSea === me ? 'Your sea' : `${handleOf(targetSea)}'s sea`) : '',
-  );
 </script>
 
 {#snippet sea(seat: string, model: Map<string, CellModel>, size: number, main: boolean, mode: Mode, own: boolean)}
-  {@const tilted = main && isoOn}
-  <div class="sea3d" class:tilted style:--cell="{size}px" style:--spin="{tilted ? ISO.spin : 0}deg" style:--tilt="{tilted ? ISO.tilt : 0}deg">
-    <div class="slab" style:transform={tilted ? `rotateX(${ISO.tilt}deg) rotateZ(${ISO.spin}deg)` : 'none'}>
-      {#if tilted}<div class="under" aria-hidden="true"></div>{/if}
+  {@const g = main ? Math.round(size * GUTTER) : 0}
+  <div
+    class="sea3d"
+    class:main
+    class:own
+    style:--cell="{size}px"
+    style:--g="{g}px"
+    style:--spin="{main ? spin : 0}deg"
+    style:--tilt="{main ? tilt : 0}deg"
+  >
+    <div class="slab" class:still={dragging} style:transform={main ? `rotateX(${tilt}deg) rotateZ(${spin}deg)` : 'none'}>
+      {#if main}<div class="under" aria-hidden="true"></div>{/if}
       <div
         class="face"
         role="group"
@@ -418,13 +485,14 @@
         data-main={main ? '' : undefined}
         data-mode={mode}
       >
-        {#if tilted}<i class="edge s" aria-hidden="true"></i><i class="edge e" aria-hidden="true"></i><i class="edge n" aria-hidden="true"></i><i class="edge w" aria-hidden="true"></i>{/if}
+        {#if main}<i class="edge s" aria-hidden="true"></i><i class="edge e" aria-hidden="true"></i><i class="edge n" aria-hidden="true"></i><i class="edge w" aria-hidden="true"></i>{/if}
         {#each ORDER as cell, k (cell)}
           {@const m = model.get(cell) ?? SEA}
           {@const ok = enabled(mode, cell)}
           {@const land = landing.get(`${seat} ${cell}`)}
           {@const sinking = m.mark === 'sunk' ? sinkingAt(seat, m.ship) : undefined}
           {@const ghost = mode === 'deploy' && preview?.cells.has(cell)}
+          {#if main && k % SIZE === 0}<span class="tag row" aria-hidden="true">{SIZE - Math.floor(k / SIZE)}</span>{/if}
           <button
             type="button"
             data-cell={cell}
@@ -439,8 +507,6 @@
             onfocus={() => mode === 'deploy' && (hover = cell)}
           >
             <span class="water"></span>
-            {#if main && k >= SIZE * (SIZE - 1)}<span class="tag col" aria-hidden="true">{LETTERS[k % SIZE]}</span>{/if}
-            {#if main && k % SIZE === 0}<span class="tag row" aria-hidden="true">{SIZE - Math.floor(k / SIZE)}</span>{/if}
             {#if m.hull}
               {@const j = m.hull.joins}
               <span
@@ -451,31 +517,46 @@
                 class:jr={j.includes('r')}
                 class:jt={j.includes('t')}
                 class:jb={j.includes('b')}
-                style:--hull={m.hull.color}
               ></span>
             {/if}
             {#if m.mark === 'sighted'}<span class="sighting"></span>{/if}
-            {#if m.mark === 'miss'}<span class="splash" class:land={land !== undefined} style:--d="{land ?? 0}ms"></span>{/if}
+            {#if m.mark === 'miss'}<span class="ripple" class:land={land !== undefined} style:--d="{land ?? 0}ms"><i></i></span>{/if}
             {#if m.mark === 'hit' || m.mark === 'sunk'}
-              <span class="scorch" class:land={land !== undefined} style:--d="{land ?? 0}ms"><i class="smoke"></i></span>
+              <span class="glow" class:land={land !== undefined} style:--d="{land ?? 0}ms"></span>
             {/if}
             {#if sinking !== undefined}
               <span class="bubbles" style:--d="{sinking}ms"><i></i><i></i><i></i></span>
             {/if}
-            {#if m.mine}<span class="mine" style:--c={myColor}></span>{/if}
-            {#if ghost}<span class="ghost" class:bad={!preview?.ok} style:--c={myColor}></span>{/if}
-            {#if mode === 'fire' && selected === cell}<span class="reticle" class:sent={iAmReady} style:--c={myColor}></span>{/if}
+            {#if ghost}<span class="ghost" class:bad={!preview?.ok}></span>{/if}
+            {#if mode === 'fire' && selected === cell}<span class="reticle" class:sent={iAmReady}></span>{/if}
           </button>
         {/each}
+        {#if main}
+          <span class="tag corner" aria-hidden="true"></span>
+          {#each LETTERS as letter (letter)}<span class="tag col" aria-hidden="true">{letter}</span>{/each}
+        {/if}
+        <!-- Pegs stand up out of the water in their own layer: inside a cell's button they'd be clipped to it. -->
+        <div class="pegs" aria-hidden="true">
+          {#each ORDER as cell (cell)}
+            {@const m = model.get(cell) ?? SEA}
+            {#if m.mark === 'hit' || m.mark === 'sunk'}
+              {@const c = centre(cell, size, g)}
+              {@const land = landing.get(`${seat} ${cell}`)}
+              <span class="peg" class:sunk={m.mark === 'sunk'} style:left="{c.x}px" style:top="{c.y}px"
+                ><span class="bb"><i class:land={land !== undefined} style:--d="{land ?? 0}ms"></i></span></span
+              >
+            {/if}
+          {/each}
+        </div>
         {#if plan && !reduced}
           {#key planKey}
             <div class="fx" aria-hidden="true">
               {#each plan.flashes.filter((f) => f.sea === seat) as f, n (n)}
-                {@const c = centre(f.cell, size)}
+                {@const c = centre(f.cell, size, g)}
                 <i class="flash" style:left="{c.x}px" style:top="{c.y}px" style:--d="{f.at}ms"></i>
               {/each}
               {#each plan.shells.filter((s) => s.sea === seat) as s, n (n)}
-                {@const c = centre(s.cell, size)}
+                {@const c = centre(s.cell, size, g)}
                 {@const [fx, fy] = FROM[s.side]}
                 <span
                   class="shell"
@@ -485,7 +566,7 @@
                   style:--sy="{fy * size}px"
                   style:--fly="{s.flightMs}ms"
                   style:--d="{s.delay}ms"
-                  style:--c={colorOf(colors, s.from)}
+                  style:--c={kindColor(s.from)}
                 >
                   <i class="shade"></i>
                   <span class="arc"><span class="bb"><i class="ball"></i></span></span>
@@ -505,12 +586,12 @@
     {#each ORDER as cell (cell)}
       {@const m = model.get(cell) ?? SEA}
       {@const land = landing.get(`${t.sea} ${cell}`)}
-      <i class="m-{m.mark}" class:land={land !== undefined} style:--d="{land ?? 0}ms" style:--hull={m.hull ? m.hull.color : null}></i>
+      <i class="m-{m.mark}" class:land={land !== undefined} style:--d="{land ?? 0}ms"></i>
     {/each}
   </span>
 {/snippet}
 
-<div class="salvo" class:fit>
+<div class="salvo" class:fit class:deploying bind:this={rootEl}>
   <div class="banners" aria-live="polite">
     {#if banner}
       {#key bannerKey}
@@ -518,338 +599,236 @@
       {/key}
     {/if}
   </div>
-  <div class="layout" class:deploying>
-    <div class="main" bind:this={mainEl}>
-      {#if mainTitle}
-        <p class="caption">
-          <span>{mainTitle}</span>
-          {#if !deploying && targetSea && targetSea !== me}<span class="afloat">{afloatOf(targetSea)} afloat</span>{/if}
-        </p>
-      {/if}
-      {#if deploying && ownCells && me}
-        {@render sea(me, ownCells, mainCell, true, 'deploy', true)}
-      {:else if target && targetCells}
-        {@render sea(target.sea, targetCells, mainCell, true, live && !amOut && !!me ? 'fire' : 'view', false)}
-      {/if}
-    </div>
 
+  <div class="layout">
+  <div class="stage" class:dragging bind:this={stageEl} onpointerdown={down} role="presentation">
+    {#if mainSea}
+      <p class="caption">
+        {#if deploying}
+          <span class="kicker">Your sea</span><span class="sub">place your fleet</span>
+        {:else}
+          <span class="kicker">{mainSea === me ? 'Your sea' : 'Target'}</span>
+          {#if mainSea !== me}<span class="who-big" style:color={kindColor(mainSea)}>{handleOf(mainSea)}</span><span class="sub">'s sea · {afloatOf(mainSea)} afloat</span>{/if}
+        {/if}
+      </p>
+    {/if}
+    {#if deploying && ownCells && me}
+      {@render sea(me, ownCells, mainCell, true, 'deploy', true)}
+    {:else if target && targetCells}
+      {@render sea(target.sea, targetCells, mainCell, true, live && !amOut && !!me ? 'fire' : 'view', false)}
+    {/if}
     <div class="pill" role="toolbar" aria-label="Board view">
-      <button type="button" aria-pressed={isoOn} onclick={() => (isoOn = true)}>Iso</button>
-      <button type="button" aria-pressed={!isoOn} onclick={() => (isoOn = false)}>Top</button>
+      <button type="button" class="turn" aria-label="Turn left" onclick={() => turn(-90)}>⟲ 90°</button>
+      <button type="button" aria-pressed={isView(ISO)} onclick={() => aimCamera(ISO)}>Iso</button>
+      <button type="button" aria-pressed={isView(TOP)} onclick={() => aimCamera(TOP)}>Top</button>
+      <button type="button" class="turn" aria-label="Turn right" onclick={() => turn(90)}>90° ⟳</button>
       <button type="button" class="snd" aria-label="Sound" aria-pressed={soundOn} onclick={() => (soundOn = sound?.toggle() ?? false)}>♪</button>
+      <span class="hint-drag">drag to swivel</span>
     </div>
+  </div>
 
-    <div class="side">
-      <div class="compass" role="group" aria-label="Compass: you are south">
-        <svg class="rose" viewBox="-20 -20 40 40" aria-hidden="true">
-          <circle r="15" />
-          {#if targetSea && !deploying}
-            {@const a = { north: 0, east: 90, south: 180, west: 270 }[side(targetSea)]}
-            <path d="M0,-13 L3.5,0 L0,3 L-3.5,0 Z" transform="rotate({a})" style:fill={colorOf(colors, targetSea)} />
-          {/if}
-        </svg>
-        {#each chips as seat (seat)}
+  <aside class="side">
+    <section class="opps" aria-label={me ? 'Opponents' : 'Fleets'}>
+      <p class="head">{me ? 'Opponents' : 'Fleets'}</p>
+      <div class="list">
+        {#each others as seat (seat)}
           {@const t = view.targets.find((x) => x.sea === seat)}
           {@const st = stateOf(seat)}
-          {@const isMe = seat === me}
-          {#snippet chipBody()}
-            {#if t && !isMe}{@render mini(t)}{/if}
+          {@const on = !deploying && targetSea === seat}
+          {#snippet card()}
+            {#if t}{@render mini(t)}{:else}<span class="mini empty" aria-hidden="true"></span>{/if}
             <span class="who">
-              <i class="dot" style:background={colorOf(colors, seat)}></i>
-              <span class="name" class:human={humanSeat(seat)}>{handleOf(seat)}</span>{#if isMe}<span class="you"> (you)</span>{/if}
+              <span class="name" class:human={humanSeat(seat)}>{handleOf(seat)}</span>
+              <span class="stat">{afloatOf(seat)} afloat · {view.scrap[seat] ?? 0} scrap</span>
             </span>
-            <span class="stat">{afloatOf(seat)} afloat, {view.scrap[seat] ?? 0} scrap</span>
-            {#if st}<span class="state {st}">{STATE_TEXT[st] ?? st}</span>{/if}
+            {#if on}<span class="badge">target</span>{/if}
+            {#if st && !(on && st === 'aiming')}<span class="state {st}">{STATE_TEXT[st] ?? st}</span>{/if}
           {/snippet}
-          {#if t && !isMe && !deploying}
+          {#if t && !deploying}
             <button
               type="button"
               class="chip"
-              data-side={side(seat)}
+              class:holdout={holdout === seat}
+              class:on
               data-seat={seat}
               data-ready={view.ready.includes(seat)}
-              class:holdout={holdout === seat}
-              aria-pressed={targetSea === seat}
-              aria-label="{handleOf(seat)}'s sea, {afloatOf(seat)} afloat{st ? `, ${st}` : ''}"
-              onclick={() => (picked = seat)}>{@render chipBody()}</button
+              aria-pressed={on}
+              aria-label="{handleOf(seat)}'s sea, {afloatOf(seat)} afloat{st ? `, ${STATE_TEXT[st] ?? st}` : ''}"
+              onclick={() => (picked = seat)}>{@render card()}</button
             >
           {:else}
-            <div class="chip" class:me={isMe} class:gone={out(seat)} class:holdout={holdout === seat} data-side={side(seat)} data-seat={seat} data-ready={view.ready.includes(seat)}>
-              {@render chipBody()}
-            </div>
+            <div class="chip" class:gone={out(seat)} class:holdout={holdout === seat} data-seat={seat} data-ready={view.ready.includes(seat)}>{@render card()}</div>
           {/if}
         {/each}
       </div>
+    </section>
 
-      {#if !deploying && ownCells && me}
-        <div class="own" bind:this={ownEl}>
-          <p class="caption small"><span>Your sea</span><span class="afloat">{afloatOf(me)} afloat</span></p>
+    {#if !deploying && ownCells && me}
+      <section class="fleet" aria-label="Your fleet" bind:this={ownEl}>
+        <p class="head"><span>Your fleet</span><span class="count">{afloatOf(me)} afloat</span></p>
+        <div class="ownbox">
           {@render sea(me, ownCells, ownCell, false, 'view', true)}
         </div>
-      {/if}
+        <p class="legend"><span><i class="k-hit"></i>hit on you</span><span><i class="k-miss"></i>miss</span></p>
+      </section>
+    {/if}
 
-      <div class="actions">
-        {#if deploying && port.length > 0}
-          <p class="head">Your port</p>
-          <div class="port" role="group" aria-label="Ships in port">
-            {#each SHIPS as s (s.id)}
-              {@const docked = port.includes(s.id)}
-              <button
-                type="button"
-                class="ship"
-                data-ship={s.id}
-                aria-pressed={docked && ship === s.id}
-                disabled={!docked || !interactive}
-                onclick={() => (shipPick = s.id)}
-              >
-                <span class="sname">{s.id}</span>
-                <span class="pips" aria-hidden="true">{#each { length: s.length } as _, i (i)}<i></i>{/each}</span>
-              </button>
-            {/each}
-          </div>
-          <div class="row">
-            <button type="button" class="btn" disabled={!interactive} onclick={rotate} aria-label="Rotate: facing {facing} (R)">Facing {facing}</button>
-            <button type="button" class="btn primary" data-testid="random" disabled={!interactive || !randomCmd} onclick={deployRandom}>Random</button>
-          </div>
-          <p class="hint">Pick a ship, then a cell; R turns it.</p>
-        {:else if deploying}
-          <p class="wait" data-testid="waiting">Fleet deployed. {waitingFor.length ? `Waiting on ${names(waitingFor)}…` : ''}</p>
-        {:else if live && me && !amOut}
-          {#if iAmReady}
-            <p class="wait" data-testid="waiting">Locked in{selected ? ` at ${selected}` : ''}. Waiting on {names(waitingFor)}…</p>
-          {:else}
-            <p class="aim">
-              {#if selected}Aim: <b>{selected}</b> on {targetSea ? handleOf(targetSea) : ''}'s sea{:else}Pick a cell on {targetSea ? `${handleOf(targetSea)}'s` : 'a'} sea.{/if}
-            </p>
-            <button type="button" class="btn primary fire" data-testid="fire" disabled={!interactive || !fireCmd} onclick={fire}
-              >{selected ? `Fire at ${selected}` : 'Fire'}</button
+    <div class="actions">
+      {#if deploying && port.length > 0}
+        <p class="head">Your port</p>
+        <div class="port" role="group" aria-label="Ships in port">
+          {#each SHIPS as s (s.id)}
+            {@const docked = port.includes(s.id)}
+            <button
+              type="button"
+              class="ship"
+              data-ship={s.id}
+              aria-pressed={docked && ship === s.id}
+              disabled={!docked || !interactive}
+              onclick={() => (shipPick = s.id)}
             >
-          {/if}
-        {:else if live && amOut}
-          <p class="wait">Your fleet is down. The others play on.</p>
-        {:else if !live}
-          <p class="wait">Every fleet is shown.</p>
+              <span class="sname">{s.id}</span>
+              <span class="pips" aria-hidden="true">{#each { length: s.length } as _, i (i)}<i></i>{/each}</span>
+            </button>
+          {/each}
+        </div>
+        <div class="row">
+          <button type="button" class="btn" disabled={!interactive} onclick={rotate} aria-label="Rotate: facing {facing} (R)">Facing {facing}</button>
+          <button type="button" class="btn primary" data-testid="random" disabled={!interactive || !randomCmd} onclick={deployRandom}>Random</button>
+        </div>
+        <p class="hint">Pick a ship, then a cell; R turns it.</p>
+      {:else if deploying}
+        <p class="slot" data-testid="waiting">Fleet deployed. {waitingFor.length ? `Waiting on ${names(waitingFor)}…` : ''}</p>
+      {:else if live && me && !amOut}
+        {#if iAmReady}
+          <p class="slot locked" data-testid="waiting">Locked in{selected ? ` at ${selected}` : ''}. Waiting on {names(waitingFor)}…</p>
+        {:else if fireCmd}
+          <button type="button" class="firebtn" data-testid="fire" disabled={!interactive} onclick={fire}>Fire at {selected}</button>
+        {:else}
+          <button type="button" class="slot" data-testid="fire" disabled>Pick a cell to fire</button>
         {/if}
-      </div>
+      {:else if live && amOut}
+        <p class="slot">Your fleet is down. The others play on.</p>
+      {:else if !live}
+        <p class="slot">Every fleet is shown.</p>
+      {/if}
     </div>
+  </aside>
   </div>
 </div>
 
 <style>
   .salvo {
-    --ocean: #071a30;
     container: salvo / size;
     position: relative;
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: radial-gradient(ellipse at 40% 45%, #0e2240 0%, transparent 65%);
     user-select: none;
   }
-  /* Narrow (a phone, a narrow window): the big sea on top, the view pill, then compass, your sea and the controls. */
   .layout {
-    display: grid;
     height: 100%;
+    display: grid;
+    /* Narrow (a phone, a narrow window): the target sea on top, the opponents, then your fleet beside the controls. */
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(0, 1fr);
-    grid-template-areas: 'main' 'pill' 'side';
+    grid-template-rows: min(calc(100cqw + 64px), 62cqh) minmax(0, 1fr);
+    grid-template-areas: 'stage' 'side';
   }
-  .main {
-    grid-area: main;
+  /* Wide: the target sea takes the stage, a 290 px column beside it. */
+  @container salvo (min-width: 640px) and (min-aspect-ratio: 6 / 5) {
+    .layout {
+      grid-template-columns: minmax(0, 1fr) 290px;
+      grid-template-rows: minmax(0, 1fr);
+      grid-template-areas: 'stage side';
+    }
+  }
+
+  /* ── The stage ── */
+  .stage {
+    grid-area: stage;
     position: relative;
+    min-height: 0;
+    min-width: 0;
     display: grid;
     place-items: center;
-    height: min(calc(100cqw + 24px), 60cqh);
-    min-height: 0;
-    /* The caption sits in the room above the sea; no side padding, so a 340 px column still gets 42 px cells. */
-    padding: 24px 0 0;
+    padding: 40px 8px 56px;
+    overflow: hidden;
+    cursor: grab;
+    touch-action: pan-y;
+    background: radial-gradient(ellipse at 50% 55%, #152238 0%, transparent 62%);
+  }
+  .stage.dragging {
+    cursor: grabbing;
+  }
+  .caption {
+    position: absolute;
+    top: 14px;
+    left: 18px;
+    margin: 0;
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .kicker,
+  .head {
+    font: 500 11px var(--font-ui);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--dust);
+  }
+  .who-big {
+    font: 600 16px var(--font-silicon);
+  }
+  .sub {
+    color: var(--dust);
+    font-size: 12px;
   }
   .pill {
-    grid-area: pill;
-    justify-self: center;
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    translate: -50% 0;
     display: flex;
-    gap: 4px;
-    margin: 6px 0;
-    padding: 3px;
+    align-items: center;
+    gap: 2px;
+    padding: 4px;
     background: rgba(13, 16, 32, 0.9);
     border: 1px solid var(--lattice);
     border-radius: 999px;
-    font-size: var(--step--1);
+    font: 500 12px var(--font-ui);
+    color: var(--fog);
+    cursor: default;
     z-index: 3;
+    white-space: nowrap;
   }
   .pill button {
-    padding: 4px 12px;
+    padding: 6px 11px;
     border: 0;
     border-radius: 999px;
     background: none;
-    color: var(--fog);
+    color: inherit;
+    font: inherit;
   }
+  .pill button:hover,
   .pill button[aria-pressed='true'] {
     background: var(--panel-2);
     color: var(--chalk);
   }
-  .side {
-    grid-area: side;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(8.5rem, 42%);
-    grid-template-rows: auto minmax(0, 1fr);
-    grid-template-areas: 'compass compass' 'own actions';
-    gap: 6px 10px;
-    padding: 0 8px 8px;
-  }
-  .layout.deploying .side {
-    grid-template-areas: 'compass compass' 'actions actions';
-  }
-  /* Wide: the big sea on the left, a side column with the compass, your sea and the controls. */
-  @container salvo (min-width: 600px) and (min-aspect-ratio: 6 / 5) {
-    .layout {
-      grid-template-columns: minmax(0, 1fr) clamp(15rem, 32cqw, 21rem);
-      grid-template-rows: minmax(0, 1fr) auto;
-      grid-template-areas: 'main side' 'pill side';
-    }
-    .main {
-      height: auto;
-      padding: 28px 8px 8px;
-    }
-    .pill {
-      margin: 0 0 12px;
-    }
-    .side,
-    .layout.deploying .side {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: auto minmax(0, 1fr) auto;
-      grid-template-areas: 'compass' 'own' 'actions';
-      padding: 12px 14px 12px 4px;
-      gap: 10px;
-    }
-    .layout.deploying .side {
-      grid-template-rows: auto auto;
-      grid-template-areas: 'compass' 'actions';
-      align-content: start;
-    }
-  }
-
-  .caption {
-    position: absolute;
-    top: 6px;
-    left: 10px;
-    margin: 0;
-    display: flex;
-    gap: 0.6rem;
-    align-items: baseline;
-    font-size: var(--step--1);
-    color: var(--fog);
-    z-index: 2;
-    pointer-events: none;
-  }
-  .caption span:first-child {
-    color: var(--chalk);
-    font-weight: 600;
-  }
-  .caption.small {
-    position: static;
-    margin-bottom: 4px;
-  }
-  .afloat {
-    font-family: var(--font-silicon);
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* ── The compass: you at the foot, the others where they sit round the table. ── */
-  .compass {
-    grid-area: compass;
-    display: flex;
-    gap: 6px;
-    align-items: stretch;
-  }
-  .rose {
-    display: none;
-  }
-  .chip {
-    flex: 1 1 0;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
-    padding: 5px 4px;
-    border: 1px solid var(--lattice);
-    border-radius: var(--r-tile);
-    background: rgba(13, 16, 32, 0.55);
-    color: var(--chalk);
-    font-size: 0.75rem;
-    line-height: 1.2;
-    text-align: center;
-  }
-  .chip[data-side='west'] { order: 1; }
-  .chip[data-side='north'] { order: 2; }
-  .chip[data-side='east'] { order: 3; }
-  .chip[data-side='south'] { order: 4; }
-  button.chip[aria-pressed='true'] {
-    border-color: var(--chalk);
-    background: var(--panel-2);
-  }
-  .chip.gone {
-    opacity: 0.5;
-  }
-  .who {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    max-width: 100%;
-    min-width: 0;
-  }
-  .who .name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--silicon);
-    font-family: var(--font-silicon);
-  }
-  .who .name.human {
-    color: var(--carbon);
-    font-family: var(--font-carbon);
-    font-style: italic;
-    font-weight: 600;
-  }
-  .you {
-    color: var(--fog);
-    white-space: nowrap;
-  }
-  .dot {
-    width: 0.5rem;
-    height: 0.5rem;
-    border-radius: 50%;
-    flex: none;
-  }
-  .stat {
-    color: var(--fog);
-    font-family: var(--font-silicon);
-    font-size: 0.6875rem;
-  }
-  .state {
+  .hint-drag {
+    padding: 6px 11px 6px 9px;
+    border-left: 1px solid var(--lattice);
     color: var(--dust);
-    font-size: 0.6875rem;
   }
-  .state.locked,
-  .state.deployed {
-    color: var(--ready);
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    animation: sv-stamp 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) both;
-  }
-  /* The last seat everyone is waiting on. */
-  .chip.holdout {
-    border-color: var(--carbon);
-    animation: sv-holdout 1.1s ease-in-out infinite;
-  }
-  .chip.holdout .state {
-    color: var(--carbon);
+  @container salvo (max-width: 520px) {
+    .hint-drag,
+    .pill .turn {
+      display: none;
+    }
   }
 
-  /* ── Banners: over the board, never in the way of a click ── */
+  /* ── Banners: over the stage, never in the way of a click ── */
   .banners {
     position: absolute;
     top: 10px;
@@ -874,7 +853,7 @@
     animation: sv-banner 0.35s cubic-bezier(0.2, 1.4, 0.4, 1) both;
   }
   .banner.hot {
-    border-color: #ff7a3d;
+    border-color: var(--carbon);
     color: #ffd2b8;
     box-shadow: 0 0 24px rgba(255, 122, 61, 0.45), 0 8px 30px rgba(0, 0, 0, 0.55);
   }
@@ -886,88 +865,251 @@
     font-size: var(--step-1);
     letter-spacing: 0.04em;
   }
+
+  /* ── The side column ── */
+  .side {
+    grid-area: side;
+    min-height: 0;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(8.5rem, 44%);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: 'opps opps' 'fleet actions';
+    gap: 8px 10px;
+    padding: 6px 8px 8px;
+    border-top: 1px solid var(--lattice);
+  }
+  .salvo.deploying .side {
+    grid-template-areas: 'opps opps' 'actions actions';
+  }
+  .stage {
+    padding: 34px 2px 50px;
+  }
+  @container salvo (min-width: 640px) and (min-aspect-ratio: 6 / 5) {
+    .stage {
+      padding: 40px 8px 56px;
+    }
+    .side,
+    .salvo.deploying .side {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto auto minmax(0, 1fr);
+      grid-template-areas: 'opps' 'fleet' 'actions';
+      align-content: start;
+      gap: 14px;
+      padding: 16px;
+      border-top: 0;
+      border-left: 1px solid var(--lattice);
+      overflow-y: auto;
+    }
+    .salvo.deploying .side {
+      grid-template-rows: auto auto;
+      grid-template-areas: 'opps' 'actions';
+    }
+  }
+  .head {
+    margin: 0 0 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .count {
+    font: 12px var(--font-ui);
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--fog);
+  }
+
+  /* Opponents: one card each, with your shot history on a mini-map. */
+  .opps {
+    grid-area: opps;
+    min-width: 0;
+  }
+  .list {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+  }
+  @container salvo (min-width: 640px) and (min-aspect-ratio: 6 / 5) {
+    .list {
+      flex-direction: column;
+      overflow: visible;
+    }
+    .list .chip {
+      flex: none;
+    }
+  }
+  .chip {
+    flex: 1 0 9.5rem;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    column-gap: 10px;
+    align-items: center;
+    padding: 7px 9px;
+    border: 1px solid var(--lattice);
+    border-radius: var(--r-control);
+    background: #141829;
+    color: var(--chalk);
+    text-align: left;
+    font: inherit;
+  }
+  button.chip:hover {
+    border-color: #2f3658;
+  }
+  .chip.on {
+    border-color: color-mix(in oklab, var(--carbon) 55%, var(--lattice));
+    background: color-mix(in oklab, var(--carbon) 7%, #141829);
+  }
+  .chip.gone {
+    opacity: 0.5;
+  }
+  .chip .mini {
+    grid-row: 1 / 3;
+  }
+  .chip .who {
+    grid-row: 1 / 3;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: 600 13px var(--font-silicon);
+    color: var(--silicon);
+  }
+  .name.human {
+    color: var(--carbon);
+    font-family: var(--font-carbon);
+    font-style: italic;
+  }
+  .stat {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--dust);
+    white-space: nowrap;
+  }
+  .badge {
+    justify-self: end;
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: var(--carbon);
+    color: #1a0d06;
+    font: 600 10px var(--font-ui);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .state {
+    justify-self: end;
+    grid-column: 3;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--dust);
+    white-space: nowrap;
+  }
+  .badge + .state {
+    grid-row: 2;
+  }
+  .state.locked,
+  .state.deployed {
+    color: var(--ready);
+    font-weight: 600;
+    animation: sv-stamp 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+  }
+  .state.locked::before,
+  .state.deployed::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--ready);
+  }
   .state.winner {
     color: var(--carbon);
     font-weight: 600;
   }
+  /* The last seat everyone is waiting on. */
+  .chip.holdout {
+    border-color: var(--carbon);
+    animation: sv-holdout 1.1s ease-in-out infinite;
+  }
+  .chip.holdout .state {
+    color: var(--carbon);
+  }
   .mini {
     display: grid;
-    grid-template-columns: repeat(8, 6px);
+    grid-template-columns: repeat(8, 1fr);
     gap: 1px;
+    width: 42px;
+    height: 42px;
     padding: 2px;
-    background: var(--ocean);
-    border-radius: 3px;
+    border-radius: 4px;
+    background: #0f2134;
+  }
+  .mini.empty {
+    opacity: 0.4;
   }
   .mini i {
-    width: 6px;
-    height: 6px;
     border-radius: 1px;
-    background: rgba(120, 170, 255, 0.12);
+    background: rgba(120, 190, 220, 0.1);
   }
-  .mini .m-miss { background: rgba(220, 235, 255, 0.55); }
-  .mini .m-hit { background: #ff7a3d; }
-  .mini .m-sunk { background: #6b2a1f; box-shadow: inset 0 0 0 1px #ff7a3d; }
+  .mini .m-miss { background: rgba(220, 240, 250, 0.45); }
+  .mini .m-hit { background: var(--carbon); }
+  .mini .m-sunk { background: #6b2a1f; box-shadow: inset 0 0 0 1px var(--carbon); }
   .mini .m-sighted { background: rgba(255, 255, 255, 0.28); }
-  .mini .m-ship { background: color-mix(in oklab, var(--hull) 60%, transparent); }
+  .mini .m-ship { background: rgba(226, 231, 245, 0.55); }
   .mini .land {
     animation: sv-ping 0.5s ease-out var(--d) both;
   }
-  @container salvo (min-width: 600px) and (min-aspect-ratio: 6 / 5) {
-    /* A real compass: across the table at the top, left and right beside the rose, you at the foot. */
-    .compass {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      grid-template-rows: auto auto auto;
-      grid-template-areas: '. north .' 'west rose east' '. south .';
-      gap: 4px;
-      align-items: center;
-      justify-items: center;
-    }
-    .rose {
-      display: block;
-      grid-area: rose;
-      width: 40px;
-      height: 40px;
-    }
-    .rose circle {
-      fill: none;
-      stroke: var(--lattice);
-      stroke-width: 1.5;
-    }
-    .chip {
-      width: 100%;
-      max-width: 9rem;
-    }
-    .chip[data-side='north'] { grid-area: north; }
-    .chip[data-side='west'] { grid-area: west; }
-    .chip[data-side='east'] { grid-area: east; }
-    .chip[data-side='south'] { grid-area: south; }
-    .mini {
-      grid-template-columns: repeat(8, 7px);
-    }
-    .mini i {
-      width: 7px;
-      height: 7px;
-    }
-  }
 
-  .own {
-    grid-area: own;
+  /* Your fleet: a flat chart, hits on you in cyan. */
+  .fleet {
+    grid-area: fleet;
     min-height: 0;
     min-width: 0;
     display: flex;
     flex-direction: column;
+  }
+  .ownbox {
+    min-width: 0;
+    padding: 6px;
+    border-radius: var(--r-control);
+    background: linear-gradient(160deg, #10304a, #0a1c2f);
+    border: 1px solid #1d3550;
+    display: grid;
+    place-items: center;
+  }
+  .legend {
+    display: flex;
+    gap: 14px;
+    margin: 8px 0 0;
+    font-size: 11px;
+    color: var(--dust);
+  }
+  .legend span {
+    display: flex;
     align-items: center;
+    gap: 5px;
   }
-  .own > .sea3d {
-    flex: 1;
-    min-height: 0;
-    align-items: start;
+  .k-hit,
+  .k-miss {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
   }
+  .k-hit { background: var(--silicon); }
+  .k-miss { border: 1.5px solid rgba(79, 216, 238, 0.6); }
+
+  /* The controls: one place that says what you're doing. */
   .actions {
     grid-area: actions;
     display: flex;
     flex-direction: column;
+    justify-content: flex-end;
     gap: 6px;
     min-width: 0;
     font-size: var(--step--1);
@@ -975,17 +1117,8 @@
   .actions p {
     margin: 0;
   }
-  .head {
-    color: var(--chalk);
-    font-weight: 600;
-  }
-  .hint,
-  .wait {
+  .hint {
     color: var(--fog);
-  }
-  .aim b {
-    font-family: var(--font-silicon);
-    color: var(--chalk);
   }
   .actions .row {
     display: flex;
@@ -995,8 +1128,38 @@
   .actions .btn {
     padding: 0.45rem 0.8rem;
   }
-  .fire {
-    min-height: 2.75rem;
+  .firebtn,
+  .slot {
+    width: 100%;
+    min-height: 3rem;
+    padding: 12px;
+    border-radius: var(--r-control);
+    text-align: center;
+    font: 600 15px var(--font-ui);
+  }
+  .firebtn {
+    border: 0;
+    background: var(--carbon);
+    color: #1a0d06;
+    box-shadow: 0 8px 24px rgba(255, 122, 61, 0.25);
+    cursor: pointer;
+  }
+  .firebtn:hover {
+    background: #ff9d6c;
+  }
+  .slot {
+    display: grid;
+    place-items: center;
+    border: 1px dashed #2f3658;
+    background: none;
+    color: var(--dust);
+    font-weight: 500;
+    font-size: 14px;
+  }
+  .slot.locked {
+    border-style: solid;
+    border-color: color-mix(in oklab, var(--ready) 40%, transparent);
+    color: var(--ready);
   }
   .port {
     display: flex;
@@ -1032,31 +1195,32 @@
     background: var(--fog);
   }
 
-  /* ── A sea: a slab of dark ocean, every cell a real button a hair above it. ── */
+  /* ── A sea: a slab of dark water, every cell a real button a hair above it. ── */
   /* The perspective lives here and the wrapper stays flat: a preserve-3d wrapper at z = 0 would sit in front
      of the slab's far half (tilted away, below z = 0) and take its clicks. Only the cells take pointer events. */
   .sea3d {
     display: grid;
     place-items: center;
-    perspective: 1900px;
-    perspective-origin: 50% 40%;
     pointer-events: none;
   }
-  .own > .sea3d {
-    perspective: 900px;
-    perspective-origin: 50% 50%;
+  .sea3d.main {
+    perspective: 1900px;
+    perspective-origin: 50% 38%;
   }
   .slab {
     position: relative;
     transform-style: preserve-3d;
     transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
+  .slab.still {
+    transition: none;
+  }
   .under {
     position: absolute;
-    inset: -30px;
-    border-radius: 30px;
+    inset: -50px;
+    border-radius: 50px;
     background: radial-gradient(closest-side, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0));
-    transform: translateZ(-40px);
+    transform: translateZ(-50px);
   }
   .face {
     position: relative;
@@ -1064,23 +1228,39 @@
     grid-template-columns: repeat(8, var(--cell));
     grid-auto-rows: var(--cell);
     transform-style: preserve-3d;
-    border-radius: 2px;
+  }
+  .main .face {
+    grid-template-columns: var(--g) repeat(8, var(--cell));
+    grid-template-rows: repeat(8, var(--cell)) var(--g);
+    padding: 8px 14px 4px 6px;
+    border-radius: 3px;
     background:
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.012 .06' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .55 0 0 0 0 .75 0 0 0 0 1 0 0 0 .16 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 220px,
-      radial-gradient(ellipse at 28% 22%, rgba(60, 120, 190, 0.35), transparent 55%),
-      radial-gradient(ellipse at 78% 80%, rgba(10, 50, 110, 0.5), transparent 60%),
-      linear-gradient(165deg, #0c2d50, #061629 70%, #040c1a);
-    box-shadow: inset 0 0 0 1px rgba(140, 190, 255, 0.16), inset 0 0 40px rgba(0, 0, 0, 0.5);
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.012 .06' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .55 0 0 0 0 .8 0 0 0 0 .95 0 0 0 .14 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 220px,
+      radial-gradient(ellipse at 30% 25%, rgba(70, 150, 190, 0.3), transparent 55%),
+      linear-gradient(165deg, #123a52, #0b2338 65%, #071626);
+    box-shadow: inset 0 0 0 1px rgba(140, 210, 240, 0.14), inset 0 0 70px rgba(0, 0, 0, 0.5);
+  }
+  .main .fx,
+  .main .pegs {
+    left: 6px;
+    top: 8px;
   }
   .edge {
     position: absolute;
-    background: linear-gradient(#0a1f3a, #030a16);
+    background: linear-gradient(#123049, #071320);
     pointer-events: none;
   }
-  .edge.s { left: 0; top: 100%; width: 100%; height: 18px; transform-origin: top; transform: rotateX(-90deg); }
-  .edge.n { left: 0; bottom: 100%; width: 100%; height: 18px; transform-origin: bottom; transform: rotateX(90deg); }
-  .edge.w { right: 100%; top: 0; width: 18px; height: 100%; transform-origin: right; transform: rotateY(-90deg); }
-  .edge.e { left: 100%; top: 0; width: 18px; height: 100%; transform-origin: left; transform: rotateY(90deg); }
+  .edge.s { left: 0; top: 100%; width: 100%; height: 22px; transform-origin: top; transform: rotateX(-90deg); }
+  .edge.n { left: 0; bottom: 100%; width: 100%; height: 22px; transform-origin: bottom; transform: rotateX(90deg); }
+  .edge.w { right: 100%; top: 0; width: 22px; height: 100%; transform-origin: right; transform: rotateY(-90deg); }
+  .edge.e { left: 100%; top: 0; width: 22px; height: 100%; transform-origin: left; transform: rotateY(90deg); }
+  .tag {
+    display: grid;
+    place-items: center;
+    font: 500 clamp(9px, calc(var(--cell) * 0.21), 11px) var(--font-silicon);
+    color: rgba(170, 215, 235, 0.55);
+    transform: translateZ(1px);
+  }
   .face > button {
     position: relative;
     width: var(--cell);
@@ -1091,10 +1271,13 @@
     /* A hair above the slab: coplanar with it, the slab can win the hit test and eat the click. */
     transform: translateZ(1px);
     transform-style: preserve-3d;
-    cursor: pointer;
+    cursor: crosshair;
     pointer-events: auto;
   }
   .face > button[aria-disabled='true'] {
+    cursor: inherit;
+  }
+  .own .face > button {
     cursor: default;
   }
   .face > button > * {
@@ -1103,29 +1286,29 @@
   .water {
     position: absolute;
     inset: 0;
-    box-shadow: inset 0 0 0 0.5px rgba(130, 180, 255, 0.16);
+    border-right: 1px solid rgba(150, 210, 240, 0.13);
+    border-bottom: 1px solid rgba(150, 210, 240, 0.13);
+  }
+  .own .water {
+    inset: 1px;
+    border: 0;
+    border-radius: 2px;
+    background: rgba(140, 200, 230, 0.06);
   }
   button[aria-disabled='false']:hover .water,
   button[aria-disabled='false']:focus-visible .water {
-    background: rgba(233, 236, 255, 0.12);
+    background: rgba(255, 122, 61, 0.12);
   }
   button:focus-visible .water {
     outline: 2px solid var(--chalk);
     outline-offset: -2px;
   }
-  .tag {
-    position: absolute;
-    font: 500 clamp(8px, calc(var(--cell) * 0.2), 11px) var(--font-silicon);
-    color: rgba(170, 200, 255, 0.45);
-  }
-  .tag.col { right: 3px; bottom: 1px; }
-  .tag.row { left: 3px; top: 1px; }
   .hull {
     position: absolute;
     inset: 14%;
     border-radius: 999px;
-    background: linear-gradient(180deg, color-mix(in oklab, var(--hull) 75%, white), color-mix(in oklab, var(--hull) 70%, black));
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25), 0 2px 4px rgba(0, 0, 0, 0.5);
+    background: linear-gradient(#e2e7f5, #9aa5c4);
+    box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.2), 0 2px 4px rgba(0, 0, 0, 0.45);
   }
   /* A hull runs on into the next cell: no gap, no rounding on that side. */
   .hull.jl { left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
@@ -1133,7 +1316,7 @@
   .hull.jt { top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
   .hull.jb { bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
   .hull.faint {
-    opacity: 0.55;
+    opacity: 0.5;
   }
   .hull.wreck {
     background: linear-gradient(180deg, #3a2a26, #140c0a);
@@ -1145,41 +1328,95 @@
     border: 1.5px dashed rgba(233, 236, 255, 0.55);
     border-radius: 999px;
   }
-  .splash {
+  /* A miss: a ripple with a drop at its heart. */
+  .ripple {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 34%;
-    height: 34%;
+    width: 50%;
+    height: 50%;
     translate: -50% -50%;
     border-radius: 50%;
-    border: 2px solid rgba(220, 235, 255, 0.7);
+    border: 2px solid rgba(220, 240, 250, 0.75);
+    box-shadow: 0 0 0 calc(var(--cell) * 0.1) rgba(220, 240, 250, 0.08);
   }
-  .splash.land {
+  .ripple i {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 24%;
+    height: 24%;
+    translate: -50% -50%;
+    border-radius: 50%;
+    background: rgba(230, 245, 255, 0.85);
+  }
+  .own .ripple {
+    width: 56%;
+    height: 56%;
+    border: 1.5px solid rgba(79, 216, 238, 0.6);
+    box-shadow: none;
+  }
+  .own .ripple i {
+    display: none;
+  }
+  .ripple.land {
     animation: sv-splash 0.5s ease-out var(--d) both;
   }
-  .scorch {
+  /* A hit: an orange glow on the water and a peg standing up out of it (cyan on your own fleet). */
+  .glow {
     position: absolute;
-    inset: 12%;
-    border-radius: 50%;
-    background: radial-gradient(circle, #ffd27a 0%, #ff7a3d 28%, #7a1f10 60%, transparent 72%);
+    inset: 8%;
+    border-radius: 4px;
+    background: radial-gradient(circle, rgba(255, 122, 61, 0.55), rgba(255, 122, 61, 0) 70%);
   }
-  .scorch.land {
-    animation: sv-hit 0.55s ease-out var(--d) both;
+  .own .glow {
+    display: none;
   }
-  [data-mark='sunk'] .scorch {
-    inset: 26%;
-    opacity: 0.75;
+  .glow.land {
+    animation: sv-glow 0.5s ease-out var(--d) both;
   }
-  .smoke {
+  .pegs {
     position: absolute;
-    left: 30%;
-    top: 0;
-    width: 40%;
-    height: 40%;
+    inset: 0;
+    transform-style: preserve-3d;
+    pointer-events: none;
+  }
+  .peg {
+    position: absolute;
+    width: 0;
+    height: 0;
+    transform-style: preserve-3d;
+    --pc: var(--carbon);
+  }
+  .own .peg {
+    --pc: var(--silicon);
+  }
+  /* Billboard (as Critical Mass's orbs): a sized box, lifted off the water, that undoes the sea's spin and tilt. */
+  .peg .bb {
+    position: absolute;
+    left: calc(var(--cell) * -0.21);
+    top: calc(var(--cell) * -0.21);
+    width: calc(var(--cell) * 0.42);
+    height: calc(var(--cell) * 0.42);
+    transform: translateZ(var(--lift, 1px)) rotateZ(calc(-1 * var(--spin))) rotateX(calc(-1 * var(--tilt)));
+  }
+  .peg .bb i {
+    position: absolute;
+    inset: 0;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(200, 200, 210, 0.35), transparent 70%);
-    animation: sv-smoke 2.6s ease-out infinite;
+    background: radial-gradient(circle at 35% 30%, color-mix(in oklab, var(--pc) 25%, white) 0%, var(--pc) 45%, color-mix(in oklab, var(--pc) 45%, black) 100%);
+    box-shadow: 0 0 calc(var(--cell) * 0.27) color-mix(in oklab, var(--pc) 70%, transparent);
+  }
+  /* On the big sea the peg stands on the water, not half under it. */
+  .main .peg {
+    --lift: calc(var(--cell) * 0.22);
+  }
+  .peg.sunk .bb i {
+    scale: 0.7;
+    filter: saturate(0.6) brightness(0.8);
+  }
+  .peg .bb i.land {
+    animation: sv-drop 0.6s ease-out var(--d) both;
   }
   .bubbles i {
     position: absolute;
@@ -1194,42 +1431,34 @@
   .bubbles i:nth-child(1) { left: 22%; --k: 0ms; }
   .bubbles i:nth-child(2) { left: 48%; --k: 250ms; }
   .bubbles i:nth-child(3) { left: 66%; --k: 500ms; }
-  .mine {
-    position: absolute;
-    right: 5px;
-    top: 5px;
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--c);
-  }
   .ghost {
     position: absolute;
     inset: 10%;
     border-radius: 6px;
-    background: color-mix(in oklab, var(--c) 45%, transparent);
-    border: 1.5px solid var(--c);
+    background: color-mix(in oklab, var(--carbon) 40%, transparent);
+    border: 1.5px solid var(--carbon);
   }
   .ghost.bad {
     background: color-mix(in oklab, var(--danger) 30%, transparent);
     border-color: var(--danger);
   }
+  /* Your aim: a pulsing square with crosshairs running past it. */
   .reticle {
     position: absolute;
-    inset: 8%;
-    border: 2px solid var(--c);
-    border-radius: 50%;
-    box-shadow: 0 0 10px var(--c);
-    animation: sv-aim 1.2s ease-in-out infinite;
+    inset: 6%;
+    border: 2px solid var(--carbon);
+    border-radius: 4px;
+    box-shadow: 0 0 16px rgba(255, 122, 61, 0.6), inset 0 0 12px rgba(255, 122, 61, 0.3);
+    animation: sv-aim 1.1s ease-in-out infinite;
   }
   .reticle::before,
   .reticle::after {
     content: '';
     position: absolute;
-    background: var(--c);
+    background: rgba(255, 122, 61, 0.7);
   }
-  .reticle::before { left: 50%; top: -20%; bottom: -20%; width: 2px; translate: -50% 0; }
-  .reticle::after { top: 50%; left: -20%; right: -20%; height: 2px; translate: 0 -50%; }
+  .reticle::before { left: 50%; top: -18%; bottom: -18%; width: 1px; }
+  .reticle::after { top: 50%; left: -18%; right: -18%; height: 1px; }
   .reticle.sent {
     animation: none;
     opacity: 0.6;
@@ -1267,7 +1496,7 @@
     transform-style: preserve-3d;
     animation: sv-arc var(--fly) linear var(--d) both;
   }
-  .bb {
+  .arc .bb {
     position: absolute;
     transform: rotateZ(calc(-1 * var(--spin))) rotateX(calc(-1 * var(--tilt)));
   }
@@ -1310,18 +1539,20 @@
   }
   @keyframes sv-splash {
     0% { transform: scale(0.2); opacity: 0; }
-    40% { transform: scale(1.8); opacity: 1; }
+    40% { transform: scale(1.6); opacity: 1; }
     100% { transform: none; opacity: 1; }
   }
-  @keyframes sv-hit {
-    0% { transform: scale(0.1); opacity: 0; filter: brightness(3); }
-    35% { transform: scale(1.5); opacity: 1; }
-    100% { transform: none; filter: none; }
+  @keyframes sv-glow {
+    0% { opacity: 0; filter: brightness(3); }
+    35% { opacity: 1; }
+    100% { filter: none; }
   }
-  @keyframes sv-smoke {
-    0% { transform: translateY(20%) scale(0.6); opacity: 0; }
-    30% { opacity: 1; }
-    100% { transform: translateY(-120%) scale(1.6); opacity: 0; }
+  @keyframes sv-drop {
+    0% { transform: translateY(calc(var(--cell) * -1.4)); opacity: 0; }
+    50% { transform: translateY(0) scale(1.18, 0.8); opacity: 1; }
+    70% { transform: translateY(calc(var(--cell) * -0.12)) scale(0.95, 1.06); }
+    85% { transform: translateY(0) scale(1.04, 0.96); }
+    100% { transform: none; }
   }
   @keyframes sv-bubble {
     0% { transform: translateY(0) scale(0.4); opacity: 0; }
@@ -1334,8 +1565,12 @@
     100% { transform: translateZ(4px) scale(1.1); opacity: 0; }
   }
   @keyframes sv-aim {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(0.88); }
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(0.88); opacity: 0.7; }
+  }
+  @keyframes sv-ping {
+    0% { transform: scale(2.5); filter: brightness(2.5); }
+    100% { transform: none; filter: none; }
   }
   @keyframes sv-stamp {
     0% { transform: scale(2.2) rotate(-8deg); opacity: 0; }
@@ -1349,17 +1584,13 @@
     0% { transform: translateY(-14px) scale(0.92); opacity: 0; }
     100% { transform: none; opacity: 1; }
   }
-  @keyframes sv-ping {
-    0% { transform: scale(2.5); filter: brightness(2.5); }
-    100% { transform: none; filter: none; }
-  }
   @media (prefers-reduced-motion: reduce) {
     .slab {
       transition: none;
     }
-    .splash.land,
-    .scorch.land,
-    .smoke,
+    .ripple.land,
+    .glow.land,
+    .peg .bb i.land,
     .bubbles i,
     .reticle,
     .mini .land,
@@ -1369,7 +1600,6 @@
     .banner {
       animation: none;
     }
-    .smoke,
     .bubbles {
       display: none;
     }
