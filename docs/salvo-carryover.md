@@ -6,15 +6,9 @@ Salvo v1 is the design doc's first cut: four hidden 8×8 seas, deployment, one s
 
 The build ran subagent-driven in `.worktrees/salvo`: the module (Opus), then the rules guide, the residents and the board in parallel worktrees, a final review and one fix wave.
 
-## What waits on the engine (the other session's work)
+## The engine (landed 2026-10-06)
 
-Until `simultaneous` mode lands, today's engine runs Salvo like this:
-
-- **One deadline per commit, not per round.** Every commit restarts the 45 s clock, so a slow seat gets a fresh clock each time someone else fires. Harmless with residents (they fire within a second); a human against humans can stall a round.
-- **Exact revisions.** The residents commit first and bump the revision, so a human's first Fire often gets `409 STALE_REVISION`; the page refetches and the human fires again. Agents see the same and retry.
-- **The autopilot plays one entry of `legal` for `toMove()[0]` per timeout.** In deployment, 384 of the 385 entries place a single ship, so an absent seat gets one ship per deadline and forfeits on the third miss before its fleet is down. In the fire phase only one absent seat is autopiloted per deadline; the others get a fresh clock. The engine doc's "loop until the seat owes nothing, every owing seat, then resolve once" fixes both.
-- **`roundSummary()` is not in the move log yet.** The log shows "is ready" lines (safe); the round's story reaches the table only through `lastVolley` (the board animates it; the residents read it). Once the engine calls `roundSummary`, the table and `recent` get the narrated round.
-- **Load-time check:** the engine should refuse a game that declares `simultaneous` without `round`; Salvo declares both.
+The engine's `simultaneous` mode is on main (`docs/ideas/Salvo — engine changes.md`, items 1 to 6), and Salvo now uses `@cs/game-api`'s own `TurnRules` instead of its stopgap type. One deadline per round; any revision since the round opened is accepted; a timeout autopilots every seat still owing until it owes nothing (a whole fleet in deployment), then the round resolves once; commits log "is ready" and `roundSummary()` tells the round in the move log with no seat; the autopilot's table line names no move. `stillSeated()` exists for v3's wreck ghosts; Salvo doesn't declare it yet.
 
 ## Rulings made while planning
 
@@ -43,7 +37,7 @@ Until `simultaneous` mode lands, today's engine runs Salvo like this:
 ## Design signals from the build
 
 - **Games run long.** In the module's fuzz (a reasonable but not optimal player) 161 of 300 games reached the round cap; in the residents' check against random fire, easy and medium mostly won *at the cap* (about 30 rounds) and only hard finished early (about 18). One shell per seat per round is slow, two-seat games especially (one shooter per sea, 12 cells). Watch this in playtests; the cheapest levers are the Fog Lifts starting earlier, a lower cap, or (the design's own suggestion) pulling radar forward from v2.
-- **45 s rounds** with the engine's per-commit clock stretch further; revisit with simultaneous mode.
+- **45 s rounds** now run on one clock per round; tune in playtests.
 
 - **R-10.** Salvo launches unranked: `meta.practiceGames` is `Number.MAX_SAFE_INTEGER`, so no Salvo match is rated until that line comes down (the design's "first week or so", after the residents are tuned). The review caught that Glory would otherwise have rated the fourth game.
 - **R-11.** `TargetView.mine` lists your shots in the order the cells were first shot by anyone (the public record's order), not the order you fired them; `lastVolley` says what you just fired. Documented rather than reordered.

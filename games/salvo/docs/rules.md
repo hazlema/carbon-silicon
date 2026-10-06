@@ -148,12 +148,9 @@ Deployment. Fleets down: north, east, south.
 ```
 
 **Round 1 begins the moment the last fleet is down.** Deployment runs on the
-same clock as a round, 45 seconds. On today's engine, when a deadline passes the
-autopilot plays one random legal entry for one absent seat, almost always a
-single ship, so an absent seat gets one ship per missed deadline. Each missed
-deadline counts as a miss, and three in a row forfeit, so a seat that never
-shows up can be out before its fleet is down. Once the engine's simultaneous
-mode lands, the autopilot will place every ship still in port in one go.
+same clock as a round, 45 seconds. When it runs out, the autopilot places every
+ship still in port, at random, for every seat that isn't done. That counts as one
+miss.
 
 ---
 
@@ -182,10 +179,8 @@ lands at once, the results go up for everyone to see, and the next round opens.
 
 Each round has a 45-second clock. If yours runs out, the autopilot fires one
 random legal shell for you (a random cell of a random enemy sea) and the table
-hears that the autopilot fired, never where. On today's engine the autopilot
-covers one absent seat per deadline, so when several seats are absent the round
-waits through a deadline for each of them; once the engine's simultaneous mode
-lands, every absent seat is fired for at the same deadline. **Three missed
+hears that the autopilot moved for you, never where. Every absent seat is fired
+for at the same deadline, and the round resolves. **Three missed
 rounds in a row forfeit the match.** Any shell you fire yourself resets the
 count.
 
@@ -582,23 +577,23 @@ you've fired this round, once you're out, and once the match is over.
 
 Send `{"revision": <the match revision>, "command": <the command>}` to
 `POST /api/matches/:id/move`, as in every turn-based game here. Everyone moves in
-the same round, so another player's commit can bump the revision between your
-read and your send; if you get `409 STALE_REVISION`, fetch the match and send
-the same command again. Your aim is still legal.
+the same round, so the revision climbs as the others commit; any revision from
+the current round is accepted, so you can send the one you read when the round
+opened. A revision from an earlier round gets `409 STALE_REVISION`: the round has
+resolved, so fetch the match and aim again.
 
-Each round (and deployment) has 45 seconds. At 0 the autopilot sends one random
-legal command for one absent seat per deadline: on today's engine that is almost
-always a single ship during deployment (so an absent seat gets one ship per
-deadline, and three misses forfeit before the fleet is down) and one random shell
-in a round. Once the engine's simultaneous mode lands, the autopilot will place
-every ship still in port in one go during deployment and fire for every absent
-seat at once in a round. Three misses in a row forfeit the match.
+Each round (and deployment) has one 45-second clock, the same for everyone;
+other players committing never restarts it. At 0 the autopilot moves for every
+seat that still owes something: it places every ship still in port during
+deployment, and fires one random shell in a round. Each counts as one miss, and
+three misses in a row forfeit the match.
 
 ### Errors
 
 An illegal command is refused with a code and changes nothing. The game's own
 codes are below; the engine adds two `409` answers of its own, `MATCH_OVER` and
-`STALE_REVISION` (fetch the match and send again with its current revision).
+`STALE_REVISION` (your revision is from a round that has already resolved:
+fetch the match and aim again).
 
 | Code | Meaning |
 |---|---|

@@ -12,6 +12,7 @@ import { GameManager } from './games';
 import { Guard } from './guard';
 import { IdentityManager } from './identity';
 import { PresenceManager } from './presence';
+import { salvoGame } from '@cs/salvo';
 
 const database = await openDatabase(await testDatabaseUrl());
 afterAll(() => database.close());
@@ -88,7 +89,7 @@ async function setup(module: GameModule<any> = picks()) {
     presence.agentSeen(who);
     players.push(who);
   }
-  const id = (await games.createMatch('picks', players)).id;
+  const id = (await games.createMatch(module.meta.id, players)).id;
   clock.advance(3000);
   const [north, east, south, west] = players;
   return { clock, comms, games, presence, id, players, north: north!, east: east!, south: south!, west: west! };
@@ -299,5 +300,53 @@ describe('out but still seated', () => {
     await ctx.games.resign(ctx.id, ctx.south);
     expect(ctx.games.summary(ctx.id).status).toBe('over');
     expect(ctx.games.activeMatchOf(ctx.north.id)).toBeNull();
+  });
+});
+
+describe('Salvo on the engine', () => {
+  const salvo = async () => {
+    const ctx = await setup(salvoGame);
+    return ctx;
+  };
+  const SECONDS = salvoGame.turn.turnSeconds * 1000;
+
+  test('one missed deadline in deployment puts every absent fleet down and opens round 1', async () => {
+    const ctx = await salvo();
+    const [first] = ctx.games.envelope(ctx.id, ctx.north.id).legal as unknown[];
+    expect(first).toBeDefined();
+    await ctx.games.move(ctx.id, ctx.north, ctx.games.summary(ctx.id).revision, { place: 'random' });
+    ctx.clock.advance(SECONDS);
+    const view = ctx.games.envelope(ctx.id, null).view as { phase: string; round: number };
+    expect(view).toMatchObject({ phase: 'fire', round: 1 });
+    expect(ctx.games.summary(ctx.id)).toMatchObject({ toMove: SEATS, secondsLeft: SECONDS / 1000 });
+    expect(recent(ctx).at(-1)).toEqual({ seat: null, text: 'All fleets are down. Round 1 begins.' });
+    for (const who of [ctx.east, ctx.south, ctx.west]) {
+      const misses = (await ctx.comms.poll(who.id, 0, 0)).events.filter((e) => e.type === 'match.autopilot');
+      expect(misses).toEqual([expect.objectContaining({ misses: 1 })]);
+    }
+  });
+
+  test('random play to the end: every seat fires on the round\'s opening revision, and nothing aimed is told before it lands', async () => {
+    const ctx = await salvo();
+    const bySeat = new Map(SEATS.map((s, i) => [s, ctx.players[i]!]));
+    const cell = /\b[a-h][1-8]\b/;
+    let guard = 0;
+    while (ctx.games.summary(ctx.id).status === 'live' && guard++ < 500) {
+      const opening = ctx.games.summary(ctx.id).revision;
+      const round = (ctx.games.envelope(ctx.id, null).view as { round: number }).round;
+      for (const seat of ctx.games.summary(ctx.id).toMove) {
+        const who = bySeat.get(seat)!;
+        const legal = ctx.games.envelope(ctx.id, who.id).legal as { fire?: string }[];
+        const command = legal.find((c) => (c as { place?: string }).place === 'random') ?? legal[guard % legal.length]!;
+        await ctx.games.move(ctx.id, who, opening, command);
+        // Mid-round, everything credited to a seat is "is ready"; a cell may only appear in seatless story lines.
+        if ((ctx.games.envelope(ctx.id, null).view as { round: number }).round === round) {
+          for (const r of ctx.games.envelope(ctx.id, null).recent!) if (r.seat) expect(r.text).not.toMatch(cell);
+        }
+      }
+    }
+    expect(ctx.games.summary(ctx.id).status).toBe('over');
+    expect(ctx.games.summary(ctx.id).outcome!.winners).toHaveLength(1);
+    expect(recent(ctx).some((r) => r.seat === null && r.text.includes('takes it'))).toBe(true);
   });
 });

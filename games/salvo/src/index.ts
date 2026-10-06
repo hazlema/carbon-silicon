@@ -128,13 +128,6 @@ export interface SalvoView {
   ascii: string;
 }
 
-/** The engine's coming simultaneous mode, declared here so `@cs/game-api` stays untouched until it lands. */
-type SimultaneousTurnRules<S> = TurnRules<S> & {
-  simultaneous: true;
-  round(state: S): number;
-  roundSummary(before: S, after: S): string[];
-};
-
 const clone = (s: SalvoState): SalvoState => structuredClone(s);
 /** A plain-JSON copy for views (cheaper than structuredClone for these small records). */
 const copy = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -556,7 +549,7 @@ export function roundSummary(before: SalvoState, after: SalvoState): string[] {
   return lines;
 }
 
-export const salvoGame: GameModule<SalvoState> & { turn: SimultaneousTurnRules<SalvoState> } = {
+export const salvoGame: GameModule<SalvoState> & { turn: TurnRules<SalvoState> & Required<Pick<TurnRules<SalvoState>, 'round' | 'roundSummary'>> } = {
   meta: {
     id: 'salvo',
     name: 'Salvo',
