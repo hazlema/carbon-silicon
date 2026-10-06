@@ -3,7 +3,7 @@ import { createRng, type Rng } from '@cs/game-api';
 import {
   SEATS,
   cellIndex,
-  liftedRows,
+  buoyCells,
   neighbours,
   renderAscii,
   roundSummary,
@@ -31,22 +31,26 @@ const codeOf = (fn: () => unknown): string | null => {
 };
 
 /**
- * A player that reads only its own view: mostly chases unsunk hits and lifted ships, and otherwise
- * hunts the weakest fleet on a checkerboard, with a dash of pure randomness so every path gets walked.
+ * A player that reads only its own view: mostly chases unsunk hits and its sonar readings, drops a
+ * buoy now and then, and otherwise hunts the weakest fleet on a checkerboard, with a dash of pure
+ * randomness so every path gets walked.
  */
 function choose(v: SalvoView, legal: SalvoCommand[], rng: Rng): SalvoCommand {
   if (v.phase === 'deploy') {
     const random = legal.find((c) => 'place' in c && c.place === 'random')!;
     return rng.next() < 0.5 ? random : rng.pick(legal);
   }
-  const shots = legal as { fire: 'shell'; at: string; cell: string }[];
-  if (rng.next() < 0.15) return rng.pick(shots);
+  const fired = legal as { fire: 'shell' | 'buoy'; at: string; cell: string }[];
+  if (rng.next() < 0.15) return rng.pick(fired);
+  const buoys = fired.filter((c) => c.fire === 'buoy');
+  if (buoys.length > 0 && rng.next() < 0.1) return rng.pick(buoys);
+  const shots = fired.filter((c) => c.fire === 'shell');
   const hot: SalvoCommand[] = [];
   for (const t of v.targets) {
     const sunk = new Set(t.sunk.flatMap((x) => x.cells));
     const cells = new Set([
       ...t.hits.filter((c) => !sunk.has(c)).flatMap(neighbours),
-      ...t.lifted.flatMap((x) => x.cells).filter((c) => !t.hits.includes(c)),
+      ...t.sonar.filter((x) => x.afloat > 0).flatMap((x) => x.cells),
     ]);
     const known = new Set([...t.hits, ...t.misses]);
     for (const c of shots) if (c.at === t.sea && cells.has(c.cell) && !known.has(c.cell)) hot.push(c);
@@ -68,16 +72,19 @@ function strings(x: unknown, out: string[] = []): string[] {
   return out;
 }
 
-/** Ship cells nobody may see yet: unhit, in a ship still afloat, in a row the fog still covers. */
+/** Ship cells nobody may see yet: unhit, in a ship still afloat (the fog and the sonar only count them). */
 function hiddenCells(s: SalvoState, sea: string): Set<string> {
-  const lifted = liftedRows(s.round);
   const out = new Set<string>();
   for (const ship of s.fleets[sea]) {
     if (ship.hits.length === ship.cells.length) continue;
-    for (const c of ship.cells) if (!ship.hits.includes(c) && !lifted.includes(Number(c.slice(1)))) out.add(c);
+    for (const c of ship.cells) if (!ship.hits.includes(c)) out.add(c);
   }
   return out;
 }
+
+/** Unhit ship cells of a sea among `cells`: what a fog row or a buoy may report. */
+const afloatAmong = (s: SalvoState, sea: string, cells: (c: string) => boolean) =>
+  s.fleets[sea].reduce((n, x) => n + x.cells.filter((c) => cells(c) && !x.hits.includes(c)).length, 0);
 
 /** Plain checks inside the hot loops (a bun `expect` per string costs too much over 300 games). */
 function check(ok: boolean, what: string): void {
@@ -110,7 +117,17 @@ function assertNoLeaks(s: SalvoState, step: number): void {
       check(t.revealed === undefined, `${where}: ${t.sea} revealed while live`);
       check(!isOut(s, t.sea), `${where}: ${t.sea} is out but still a target`);
       const hidden = hiddenCells(s, t.sea);
-      for (const str of strings(t)) check(!hidden.has(str), `${where}: hidden ship cell ${t.sea} ${str}`);
+      // A buoy's cells are its 3×3, not ship positions; they are checked on their own below.
+      for (const str of strings({ ...t, sonar: [] })) check(!hidden.has(str), `${where}: hidden ship cell ${t.sea} ${str}`);
+      // The fog's counts are true counts.
+      for (const x of t.lifted) check(x.afloat === afloatAmong(s, t.sea, (c) => Number(c.slice(1)) === x.row), `${where}: row ${x.row} miscounted`);
+      // A sonar reading reaches its dropper alone, and says what is really there.
+      const own = seat === null ? [] : s.sonar[seat].filter((x) => x.sea === t.sea);
+      check(t.sonar.length === own.length, `${where}: ${t.sea} shows sonar that is not the viewer's`);
+      t.sonar.forEach((x, k) => {
+        check(x.cell === own[k].cell && JSON.stringify(x.cells) === JSON.stringify(buoyCells(x.cell)), `${where}: a reading's 3×3`);
+        check(x.afloat === afloatAmong(s, t.sea, (c) => x.cells.includes(c)), `${where}: a reading miscounts`);
+      });
     }
     if (v.lastVolley) {
       for (const x of v.lastVolley.shells) {
@@ -119,6 +136,8 @@ function assertNoLeaks(s: SalvoState, step: number): void {
         check(x.result === 'sunk' ? x.ship !== null : x.ship === null, `${where}: a shell names a ship it did not sink`);
       }
       for (const b of v.lastVolley.blasts) for (const c of b.cells) check(s.shots[b.sea][c] !== undefined, `${where}: unresolved blast cell`);
+      for (const b of v.lastVolley.buoys) check(s.sonar[b.from].some((x) => x.sea === b.sea && x.cell === b.cell), `${where}: unresolved buoy`);
+      check(!JSON.stringify(v.lastVolley.buoys).includes('afloat'), `${where}: a buoy's reading in the public volley`);
     }
     // Nothing outside mySea, targets and lastVolley names a cell.
     const { mySea: _m, targets: _t, lastVolley: _l, ...top } = rest;
@@ -135,7 +154,7 @@ function assertSummarySafe(before: SalvoState, after: SalvoState): void {
     return;
   }
   const v = after.lastVolley;
-  const landed = new Set(v ? [...v.shells.map((x) => x.cell), ...v.blasts.flatMap((b) => b.cells)] : []);
+  const landed = new Set(v ? [...v.shells.map((x) => x.cell), ...v.buoys.map((x) => x.cell), ...v.blasts.flatMap((b) => b.cells)] : []);
   const sunk = new Set<string>(v ? v.sunk.map((x) => x.ship) : []);
   for (const line of lines) {
     for (const cell of line.match(CELL) ?? []) check(landed.has(cell), `summary names ${cell}: ${line}`);
@@ -167,7 +186,7 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
       const seat = rng.pick(owing);
       const legal = turn.legal(s, seat) as SalvoCommand[];
       check(legal.length > 0, `game ${g}: ${seat} owes a move but has no legal one`);
-      if (s.phase === 'fire') check(legal.length <= 200, `game ${g}: legal is ${legal.length} long`);
+      if (s.phase === 'fire') check(legal.length <= 192 + 108, `game ${g}: legal is ${legal.length} long`);
       // legal × apply: a few other entries apply cleanly too, and a spent cell is refused.
       turn.apply(s, seat, rng.pick(legal));
       const mine = viewOf(s, seat);

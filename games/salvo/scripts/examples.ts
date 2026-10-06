@@ -15,9 +15,12 @@ type Fleet = [ShipId, string, 'east' | 'north'][];
 const place = (s: SalvoState, seat: string, fleet: Fleet) =>
   fleet.reduce((x, [ship, at, facing]) => G.turn.apply(x, seat, { place: ship, at, facing }), s);
 
-/** One round: every living seat fires once, in seat order (the order never changes the result). */
-function round(s: SalvoState, shots: Record<string, [string, string]>): SalvoState {
-  for (const seat of s.seats) if (shots[seat]) s = G.turn.apply(s, seat, { fire: 'shell', at: shots[seat][0], cell: shots[seat][1] });
+/** One round: every living seat fires once (a shell, or a buoy when the third entry says so), in seat order (the order never changes the result). */
+function round(s: SalvoState, shots: Record<string, [string, string] | [string, string, 'buoy']>): SalvoState {
+  for (const seat of s.seats) {
+    const shot = shots[seat];
+    if (shot) s = G.turn.apply(s, seat, { fire: shot[2] ?? 'shell', at: shot[0], cell: shot[1] });
+  }
   return s;
 }
 
@@ -81,13 +84,16 @@ function fourSeatGame() {
   // Round 5: north and south both aim at east f2: Time on Target.
   s = round(s, { north: ['east', 'f2'], east: ['north', 'h1'], south: ['east', 'f2'], west: ['south', 'f5'] });
   const afterRound5 = s;
-  s = round(s, { north: ['east', 'a1'], east: ['north', 'h2'], south: ['east', 'h8'], west: ['south', 'f6'] });
+  // Round 6: north drops a sonar buoy on east g5 instead of firing.
+  const beforeRound6 = s;
+  s = round(s, { north: ['east', 'g5', 'buoy'], east: ['north', 'h2'], south: ['east', 'h8'], west: ['south', 'f6'] });
+  const afterRound6 = s;
   s = round(s, { north: ['east', 'a2'], east: ['north', 'h7'], south: ['east', 'g8'], west: ['south', 'f7'] });
   s = round(s, { north: ['east', 'a3'], east: ['north', 'h8'], south: ['east', 'h7'], west: ['south', 'f8'] });
   const beforeRound9 = s;
   s = round(s, { north: ['east', 'a4'], east: ['north', 'a8'], south: ['east', 'h6'], west: ['south', 'g7'] });
   const round10 = s;
-  return { start, halfway, beforeLast, deployed, beforeRound4, afterRound4, afterRound5, beforeRound9, round10 };
+  return { start, halfway, beforeLast, deployed, beforeRound4, afterRound4, afterRound5, beforeRound6, afterRound6, beforeRound9, round10 };
 }
 
 // ── A three-seat game that ends with two fleets sinking in the same volley ──
@@ -127,6 +133,10 @@ export function examples(): Example[] {
   add('time-on-target-summary', roundSummary(g.afterRound4, g.afterRound5).join('\n'));
   add('fog-summary', roundSummary(g.beforeRound9, g.round10).join('\n'));
   add('lifted-row', beside(sea(viewOf(g.round10, null), 'east'), sea(viewOf(g.round10, null), 'south')));
+  add('lifted-json', json(viewOf(g.round10, null).targets.find((x) => x.sea === 'east')!.lifted));
+  add('buoy-summary', roundSummary(g.beforeRound6, g.afterRound6).join('\n'));
+  add('buoy-reading', json(viewOf(g.afterRound6, 'north').targets.find((x) => x.sea === 'east')!.sonar));
+  add('buoy-ascii', sea(viewOf(g.afterRound6, 'north'), 'east'));
   add('full-view', viewOf(g.afterRound5, 'north').ascii);
   add('my-sea', json(viewOf(g.afterRound5, 'north').mySea));
   add('tiebreak-summary', roundSummary(t.before, t.after).join('\n'));

@@ -4,7 +4,11 @@ import { enter, newPlayer, pickGame, randomTag } from './testing';
 type Envelope = {
   you: string | null;
   match: { status: string; seats: { seat: string; identity: { handle: string } }[] };
-  view: { round: number; phase: string; lastVolley: { round: number; shells: { from: string; sea: string; cell: string; result: string }[] } | null };
+  view: {
+    round: number;
+    phase: string;
+    lastVolley: { round: number; shells: { from: string; sea: string; cell: string; result: string }[]; buoys: { from: string; sea: string; cell: string }[] } | null;
+  };
 };
 
 test('Salvo: a human deploys at random, fires at a real cell, and the volley carries that shell', async ({ browser }) => {
@@ -56,8 +60,11 @@ test('Salvo: a human deploys at random, fires at a real cell, and the volley car
   await expect(cell).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('fire')).toHaveText('Fire at e5');
   await page.getByTestId('fire').click();
-  // Before anything flies, you're warned what's coming at your sea, and from whom; then round 2 is called.
-  await expect(page.getByTestId('banner')).toHaveText('⚠ 1 shell incoming on your sea — from Sprocket', { timeout: 10_000 });
+  // Before anything flies, you're warned what's coming at your sea, and from whom (Sprocket may send a sonar buoy instead); then round 2 is called.
+  await expect(page.getByTestId('banner')).toHaveText(
+    /^(⚠ 1 shell incoming on your sea — from Sprocket|No shells at you — but a sonar buoy splashed down nearby\.)$/,
+    { timeout: 10_000 },
+  );
   await expect(page.getByTestId('banner')).toHaveText('Round 2 — fire!', { timeout: 10_000 });
 
   // The resolved volley, read back from the server, holds that shell from that seat.
@@ -66,10 +73,27 @@ test('Salvo: a human deploys at random, fires at a real cell, and the volley car
     .toBe(1);
   const volley = (await envelope()).view.lastVolley!;
   expect(volley.shells).toContainEqual(expect.objectContaining({ from: me, sea: sprocket, cell: 'e5' }));
-  expect(volley.shells).toContainEqual(expect.objectContaining({ from: sprocket, sea: me }));
+  expect([...volley.shells, ...volley.buoys]).toContainEqual(expect.objectContaining({ from: sprocket, sea: me }));
   await expect(page.getByTestId('sv-round')).toHaveText('round 2');
   await expect(cell).toHaveAttribute('aria-label', /^e5, (miss|hit|sunk \w+)$/);
   await expect(cell).toHaveAttribute('aria-disabled', 'true');
+
+  // Round 2: a sonar buoy instead of a shell. Its centres are b2..g7; the control says what you're sending.
+  await expect(page.locator(`.chip[data-seat="${sprocket}"]`)).toHaveAttribute('data-ready', 'true', { timeout: 10_000 });
+  await page.getByTestId('kind-buoy').click();
+  await expect(page.getByTestId('kind-buoy')).toHaveAttribute('aria-pressed', 'true');
+  await expect(sea.locator('[data-cell="a1"]')).toHaveAttribute('aria-disabled', 'true');
+  const centreCell = sea.locator('[data-cell="d4"]');
+  await expect(centreCell).toHaveAttribute('aria-disabled', 'false');
+  await centreCell.click();
+  await expect(page.getByTestId('fire')).toHaveText('Drop buoy at d4');
+  await page.getByTestId('fire').click();
+  await expect(page.getByTestId('banner')).toHaveText('Round 3 — fire!', { timeout: 10_000 });
+  await expect.poll(async () => (await envelope()).view.lastVolley?.round ?? 0, { timeout: 10_000 }).toBe(2);
+  expect((await envelope()).view.lastVolley!.buoys).toContainEqual({ from: me, sea: sprocket, cell: 'd4' });
+  // The reading: a count over the buoy's centre, on that sea alone.
+  await expect(sea.locator('[data-testid="sonar"][data-at="d4"]')).toHaveText(/^[0-9]$/);
+  await expect(centreCell).toHaveAttribute('aria-label', /sonar buoy: \d afloat around it$/);
 
   // A phone: the board fits, nothing scrolls sideways, and the target sea's cells are big enough to tap.
   await page.setViewportSize({ width: 400, height: 860 });

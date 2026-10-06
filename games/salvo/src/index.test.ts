@@ -5,9 +5,11 @@ import {
   SEATS,
   SHIPS,
   TURN_SECONDS,
+  buoyCells,
   cellIndex,
   cellName,
   hullCells,
+  isBuoyCentre,
   liftedRows,
   neighbours,
   roundSummary,
@@ -32,6 +34,9 @@ const codeOf = (fn: () => unknown): string | null => {
 const place = (s: SalvoState, seat: string, ship: ShipId, at: string, facing: 'east' | 'north' = 'east') =>
   turn.apply(s, seat, { place: ship, at, facing });
 const fire = (s: SalvoState, seat: string, at: string, cell: string) => turn.apply(s, seat, { fire: 'shell', at, cell });
+const buoy = (s: SalvoState, seat: string, at: string, cell: string) => turn.apply(s, seat, { fire: 'buoy', at, cell });
+/** The shells in a seat's legal (buoys are listed after them). */
+const shellsOf = (s: SalvoState, seat: string) => (turn.legal(s, seat) as SalvoCommand[]).filter((c) => 'fire' in c && c.fire === 'shell');
 const viewOf = (s: SalvoState, seat: string | null) => G.view(s, seat) as SalvoView;
 
 /** The standard fleet: every ship along the west edge, one row apart. Cells: a1–d1, a3–c3, a5–c5, a7–b7. */
@@ -91,15 +96,20 @@ describe('board helpers', () => {
     expect(hullCells('a6', 4, 'north')).toBeNull();
     expect(hullCells('z1', 2, 'east')).toBeNull();
   });
-  test('the fog lifts one row a round from round 10, edges inward', () => {
-    expect(FOG_FROM).toBe(10);
+  test('the fog lifts one row a round from round 6, edges inward', () => {
+    expect(FOG_FROM).toBe(6);
     expect(liftedRows(0)).toEqual([]);
-    expect(liftedRows(9)).toEqual([]);
-    expect(liftedRows(10)).toEqual([8]);
-    expect(liftedRows(11)).toEqual([8, 1]);
-    expect(liftedRows(12)).toEqual([8, 1, 7]);
-    expect(liftedRows(17)).toEqual([8, 1, 7, 2, 6, 3, 5, 4]);
+    expect(liftedRows(5)).toEqual([]);
+    expect(liftedRows(6)).toEqual([8]);
+    expect(liftedRows(7)).toEqual([8, 1]);
+    expect(liftedRows(8)).toEqual([8, 1, 7]);
+    expect(liftedRows(13)).toEqual([8, 1, 7, 2, 6, 3, 5, 4]);
     expect(liftedRows(30)).toEqual([8, 1, 7, 2, 6, 3, 5, 4]);
+  });
+  test('a buoy centre keeps its 3×3 on the sea: b2..g7', () => {
+    expect(['b2', 'g7', 'e5', 'B2'].map(isBuoyCentre)).toEqual([true, true, true, true]);
+    expect(['a1', 'a5', 'h4', 'e1', 'e8', 'z9'].map(isBuoyCentre)).toEqual([false, false, false, false, false, false]);
+    expect(buoyCells('b2')).toEqual(['a1', 'b1', 'c1', 'a2', 'b2', 'c2', 'a3', 'b3', 'c3']);
   });
 });
 
@@ -223,17 +233,19 @@ describe('deployment', () => {
 });
 
 describe('fire', () => {
-  test('legal is one shell at each living opponent sea, per unshot cell', () => {
+  test('legal is one shell at each living opponent sea, per unshot cell, then a buoy per centre', () => {
     const s = deployed();
     const legal = turn.legal(s, 'north') as SalvoCommand[];
-    expect(legal).toHaveLength(192);
+    expect(legal).toHaveLength(192 + 108);
     expect(legal[0]).toEqual({ fire: 'shell', at: 'east', cell: 'a1' });
     expect(legal[63]).toEqual({ fire: 'shell', at: 'east', cell: 'h8' });
     expect(legal[64]).toEqual({ fire: 'shell', at: 'south', cell: 'a1' });
-    expect(turn.legal(deployed(3), 'north')).toHaveLength(128);
-    expect(turn.legal(deployed(2), 'north')).toHaveLength(64);
+    expect(legal[192]).toEqual({ fire: 'buoy', at: 'east', cell: 'b2' });
+    expect(legal.at(-1)).toEqual({ fire: 'buoy', at: 'west', cell: 'g7' });
+    expect(turn.legal(deployed(3), 'north')).toHaveLength(128 + 72);
+    expect(turn.legal(deployed(2), 'north')).toHaveLength(64 + 36);
     const next = volley(s, { north: ['east', 'h8'], east: ['north', 'h8'], south: ['north', 'h7'], west: ['north', 'h6'] });
-    expect(turn.legal(next, 'north')).toHaveLength(191);
+    expect(shellsOf(next, 'north')).toHaveLength(191);
     expect(turn.legal(next, 'south')).toContainEqual({ fire: 'shell', at: 'east', cell: 'h8' }); // someone else's shot is still yours to take
     expect(turn.legal(next, 'north')).not.toContainEqual({ fire: 'shell', at: 'east', cell: 'h8' });
   });
@@ -251,7 +263,7 @@ describe('fire', () => {
     expect(turn.legal(ready, 'north')).toEqual([]);
     const next = volley(s, { north: ['east', 'e5'], east: ['north', 'e5'], south: ['north', 'e6'] });
     expect(codeOf(() => fire(next, 'north', 'east', 'E5'))).toBe('ALREADY_FIRED');
-    expect(fire(next, 'south', 'east', 'e5').pending.south).toEqual({ from: 'south', sea: 'east', cell: 'e5' });
+    expect(fire(next, 'south', 'east', 'e5').pending.south).toEqual({ kind: 'shell', from: 'south', sea: 'east', cell: 'e5' });
   });
   test('a round resolves only when the last seat commits', () => {
     let s = deployed();
@@ -317,8 +329,8 @@ describe('fire', () => {
     expect(s.shots.east.e5).toEqual({ result: 'miss', by: ['west'] });
     expect(Object.keys(s.shots.east)).toHaveLength(10);
     // blast cells leave the shooters' legal
-    expect(turn.legal(s, 'north')).toHaveLength(192 - 9);
-    expect(turn.legal(s, 'west')).toHaveLength(192 - 1);
+    expect(shellsOf(s, 'north')).toHaveLength(192 - 9);
+    expect(shellsOf(s, 'west')).toHaveLength(192 - 1);
   });
   test('a sinking shared by two lone shells credits both', () => {
     let s = deployed(3);
@@ -352,7 +364,7 @@ describe('elimination and the end', () => {
     expect(s.winner).toBeNull();
     expect(turn.toMove(s)).toEqual(['north', 'south']);
     expect(codeOf(() => fire(s, 'north', 'east', 'e5'))).toBe('BAD_TARGET');
-    expect(turn.legal(s, 'north')).toHaveLength(64);
+    expect(shellsOf(s, 'north')).toHaveLength(64);
     expect(G.outcome(s)).toBeNull();
   });
   test('the last fleet afloat wins', () => {
@@ -590,6 +602,64 @@ describe('roundSummary', () => {
   });
 });
 
+describe('sonar buoys', () => {
+  test('a buoy stands in for the shell: the seat is ready, the drop is secret until the volley', () => {
+    const s = buoy(deployed(), 'north', 'east', 'b2');
+    expect(s.pending.north).toEqual({ kind: 'buoy', from: 'north', sea: 'east', cell: 'b2' });
+    expect(s.ready).toEqual(['north']);
+    expect(turn.describe!({ fire: 'buoy', at: 'east', cell: 'b2' })).toBe('fires');
+    expect(turn.narrate!(deployed(), s, 'north', { fire: 'buoy', at: 'east', cell: 'b2' })).toBe('is ready');
+    expect(JSON.stringify(viewOf(s, 'east'))).not.toContain('buoy');
+  });
+  test('illegal buoys carry precise codes', () => {
+    const s = deployed();
+    expect(codeOf(() => buoy(s, 'north', 'east', 'a1'))).toBe('BAD_BUOY');
+    expect(codeOf(() => buoy(s, 'north', 'east', 'h5'))).toBe('BAD_BUOY');
+    expect(codeOf(() => buoy(s, 'north', 'north', 'b2'))).toBe('BAD_TARGET');
+    expect(codeOf(() => turn.apply(s, 'north', { fire: 'flare', at: 'east', cell: 'b2' }))).toBe('BAD_COMMAND');
+    let next = buoy(s, 'north', 'east', 'b2');
+    next = volley(next, { east: ['north', 'h8'], south: ['north', 'h7'], west: ['north', 'h6'] });
+    expect(codeOf(() => buoy(next, 'north', 'east', 'b2'))).toBe('ALREADY_BUOYED');
+    expect(turn.legal(next, 'north')).not.toContainEqual({ fire: 'buoy', at: 'east', cell: 'b2' });
+    expect(turn.legal(next, 'north')).toContainEqual({ fire: 'buoy', at: 'south', cell: 'b2' });
+    // A buoy is not a shot: the cell is still yours to shoot.
+    expect(turn.legal(next, 'north')).toContainEqual({ fire: 'shell', at: 'east', cell: 'b2' });
+  });
+  test('a buoy does no damage, scores nothing and is never part of a Time on Target', () => {
+    let s = buoy(deployed(), 'north', 'east', 'b2');
+    s = volley(s, { east: ['north', 'h8'], south: ['east', 'b2'], west: ['north', 'h6'] });
+    // south's lone shell on b2 hits only b2; north's buoy on the same cell takes nothing with it.
+    expect(s.lastVolley!.blasts).toEqual([]);
+    expect(s.lastVolley!.shells.map((x) => x.from)).toEqual(['east', 'south', 'west']);
+    expect(s.lastVolley!.buoys).toEqual([{ from: 'north', sea: 'east', cell: 'b2' }]);
+    expect(s.shots.east.b2).toEqual({ result: 'miss', by: ['south'] });
+    expect(s.shots.east.a1).toBeUndefined();
+    expect(s.scrap.north).toBe(0);
+  });
+  test("only the dropper hears it: the 3×3's ship cells afloat, after the shells, live after that", () => {
+    let s = buoy(deployed(), 'north', 'east', 'b2');
+    // b2's 3×3 is a1–c3: the cruiser's a1 b1 c1 and the destroyer's a3 b3 c3. west hits a1 in the same volley.
+    s = volley(s, { east: ['north', 'h8'], south: ['north', 'h7'], west: ['east', 'a1'] });
+    const reading = viewOf(s, 'north').targets.find((t) => t.sea === 'east')!.sonar;
+    expect(reading).toEqual([{ cell: 'b2', round: 1, cells: buoyCells('b2'), afloat: 5 }]);
+    for (const other of ['east', 'south', 'west', null]) {
+      for (const t of viewOf(s, other).targets) expect(t.sonar).toEqual([]);
+    }
+    expect(JSON.stringify(viewOf(s, 'south'))).not.toMatch(/"afloat":5/);
+    preHit(s, 'east', ['c3']);
+    expect(viewOf(s, 'north').targets.find((t) => t.sea === 'east')!.sonar[0].afloat).toBe(4);
+    expect(viewOf(s, 'north').ascii).toContain('Your sonar buoy at b2 (round 1) hears 4 ship cells afloat in a1–c3.');
+  });
+  test('the round summary says where a buoy fell, never what it heard', () => {
+    const before = buoy(deployed(), 'north', 'east', 'b2');
+    const s0 = fire(fire(before, 'east', 'north', 'h8'), 'south', 'north', 'h7');
+    const after = fire(s0, 'west', 'north', 'h6');
+    const lines = roundSummary(s0, after);
+    expect(lines).toContain("{north} drops a sonar buoy on {east}'s sea at b2.");
+    expect(lines.join(' ')).not.toMatch(/hears|afloat/);
+  });
+});
+
 describe('views', () => {
   test('a seat sees its own fleet, its port, and the shots on its sea', () => {
     let s = fresh(2);
@@ -641,16 +711,19 @@ describe('views', () => {
     expect(v.targets[0].mine).toEqual([]);
     for (const line of v.ascii.split('\n').filter((l) => /^[1-8] /.test(l))) expect(line).not.toMatch(/[CDFS]/);
   });
-  test('the fog lifts rows for everyone', () => {
+  test('the fog lifts rows for everyone, as a count of ship cells afloat, never where', () => {
     const s = deployed(2);
     s.round = FOG_FROM + 1;
     const v = viewOf(s, null);
     expect(v.liftedRows).toEqual([8, 1]);
     expect(v.targets[0].lifted).toEqual([
-      { row: 8, cells: [] },
-      { row: 1, cells: ['a1', 'b1', 'c1', 'd1'] },
+      { row: 8, afloat: 0 },
+      { row: 1, afloat: 4 },
     ]);
-    expect(viewOf(s, 'north').targets[0].lifted[1].cells).toEqual(['a1', 'b1', 'c1', 'd1']);
+    // A hit in a lifted row counts down for everyone.
+    preHit(s, 'east', ['b1']);
+    expect(viewOf(s, 'north').targets[0].lifted[1]).toEqual({ row: 1, afloat: 3 });
+    expect(JSON.stringify(v.targets[0].lifted)).not.toMatch(/[a-h][1-8]/);
   });
   test('everything is revealed once over, eliminated seas included', () => {
     let s = deployed(3);

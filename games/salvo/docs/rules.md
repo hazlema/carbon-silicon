@@ -157,7 +157,8 @@ miss.
 ## A round
 
 Every round, every player still afloat does the same thing: **fire one shell**
-at one cell of one opponent's sea.
+at one cell of one opponent's sea (or, instead, drop a
+[sonar buoy](#the-sonar-buoy) to listen for ships).
 
 ```json
 {"fire": "shell", "at": "east", "cell": "e5"}
@@ -177,8 +178,9 @@ else: not the sea, not the cell. You can't take a shell back or change it.
 When the last player still afloat is ready, the round **resolves**: every shell
 lands at once, the results go up for everyone to see, and the next round opens.
 
-Each round has a 45-second clock. If yours runs out, the autopilot fires one
-random legal shell for you (a random cell of a random enemy sea) and the table
+Each round has a 45-second clock. If yours runs out, the autopilot sends one
+random legal command for you (a shell, or now and then a buoy, at a random cell
+of a random enemy sea) and the table
 hears that the autopilot moved for you, never where. Every absent seat is fired
 for at the same deadline, and the round resolves. **Three missed
 rounds in a row forfeit the match.** Any shell you fire yourself resets the
@@ -280,7 +282,7 @@ and after, as north sees east's sea:
 ```
 east, scrap 3, 7 ship cells afloat     east, scrap 3, 4 ship cells afloat
   a b c d e f g h                        a b c d e f g h
-8 . . . . . . . .                      8 . . . . . . . .
+8 . . . . . . . .                      8 . . . . . . . .   fog lifted: 1 afloat
 7 . o . . . . . .                      7 . o . . . . . .
 6 . . X . . . . .                      6 . . X . . . . .
 5 . o X . . . . .                      5 . o X . . . . .
@@ -300,6 +302,7 @@ as misses. The table hears:
 Round 5: {east} misses {north}, {west} misses {south}.
 Time on Target at {east} f2 by {north} and {south}: 9 cells, 3 hits.
 {north} and {south} sink {east}'s destroyer.
+The fog lifts from row 8.
 ```
 
 And the volley as the machine view carries it:
@@ -313,6 +316,7 @@ And the volley as the machine view carries it:
     {"from": "south", "sea": "east", "cell": "f2", "result": "sunk", "ship": "destroyer", "blast": true},
     {"from": "west", "sea": "south", "cell": "f5", "result": "miss", "ship": null, "blast": false}
   ],
+  "buoys": [],
   "blasts": [
     {
       "sea": "east",
@@ -355,43 +359,125 @@ blast can read the chat too, which is half the fun.
 
 ## The Fog Lifts
 
-From **round 10**, one row of every sea becomes public each round, from the edges
-inward: row 8 in round 10, then row 1, row 7, row 2, row 6, row 3, row 5, and
-finally row 4 in round 17, when every sea is open. A lifted row shows **every
-ship cell in it, hit or not**, to every player and every spectator. Lifted rows
-stay lifted.
+From **round 6**, one row of every sea lifts each round, from the edges inward:
+row 8 in round 6, then row 1, row 7, row 2, row 6, row 3, row 5, and finally
+row 4 in round 13. A lifted row doesn't show where the ships are. It shows **how
+many ship cells in that row are still afloat** (not yet hit), on every sea, to
+every player and every spectator. Lifted rows stay lifted, and their counts go
+down as hits land.
 
 Here are east's and south's seas as a spectator sees them at the start of round
-10, with row 8 lifted:
+10, with rows 8, 1, 7, 2 and 6 lifted:
 
 ```
-east, scrap 3, 4 ship cells afloat     south, scrap 12, 11 ship cells afloat
-  a b c d e f g h                        a b c d e f g h
-8 ~ ~ ~ ~ ~ # o o                      8 # # # # ~ o ~ ~
-7 . o . . . . . o                      7 . . . . . o o .
-6 . . X . . . . o                      6 . . . . . o . .
-5 . o X . . . . .                      5 . . . . . o . .
-4 o . X o . . * *                      4 . . . . . . . .
-3 o . o . o o o .                      3 . . . X . . . .
-2 o . . . * * * .                      2 . . . . . . . .
-1 o . . . o o o .                      1 o . . . . . . .
-  a b c d e f g h                        a b c d e f g h
+east, scrap 3, 4 ship cells afloat           south, scrap 12, 11 ship cells afloat
+  a b c d e f g h                              a b c d e f g h
+8 . . . . . . o o   fog lifted: 1 afloat     8 . . . . . o . .   fog lifted: 4 afloat
+7 . o . . . . . o   fog lifted: 2 afloat     7 . . . . . o o .   fog lifted: 1 afloat
+6 . . X . . . . o   fog lifted: 1 afloat     6 . . . . . o . .   fog lifted: 1 afloat
+5 . o X . . . . .                            5 . . . . . o . .
+4 o . X o . . * *                            4 . . . . . . . .
+3 o . o . o o o .                            3 . . . X . . . .
+2 o . . . * * * .   fog lifted: 0 afloat     2 . . . . . . . .   fog lifted: 1 afloat
+1 . . . . o o o .   fog lifted: 0 afloat     1 o . . . . . . .   fog lifted: 1 afloat
+  a b c d e f g h                              a b c d e f g h
 ```
 
-`#` is a ship cell the fog gave away, `~` is open water in a lifted row. East has
-a ship on `f8` that nobody has touched; south has four ship cells in a row on
-`a8` to `d8`. The fog doesn't say which ships they are: south's four could be the
-cruiser lying across the row, or a submarine and the tops of two ships running
-north. The table hears it at the end
-of round 9:
+East's row 1 and row 2 read `0`: every cell left in them is open water, so
+nobody needs to fire there again. Row 7 has two ship cells afloat somewhere in
+its six unshot cells. South's row 8 has **four**: with only seven cells unshot,
+that's a ship lying along the row, or the tops of several ships running north,
+and either way row 8 is worth a shell. The fog never says which ships they are.
+
+The machine view carries the same counts, in the order the rows lifted:
+
+```json
+[
+  {"row": 8, "afloat": 1},
+  {"row": 1, "afloat": 0},
+  {"row": 7, "afloat": 2},
+  {"row": 2, "afloat": 0},
+  {"row": 6, "afloat": 1}
+]
+```
+
+The table hears each row lift at the end of the round before:
 
 ```
 Round 9: {north} misses {east}, {east} misses {north}, {south} misses {east}, {west} misses {south}.
-The fog lifts from row 8.
+The fog lifts from row 6.
 ```
 
-The fog is the closing storm: by round 17 nothing is hidden, so long matches
-end. Most matches should last 12 to 18 rounds.
+The fog is the closing storm: once every row is lifted in round 13, every sea is
+a puzzle with all its row totals given, and long matches end.
+
+---
+
+## The sonar buoy
+
+Instead of firing a shell, you may drop a **sonar buoy** on an opponent's sea:
+
+```json
+{"fire": "buoy", "at": "east", "cell": "g5"}
+```
+
+- The buoy listens to the **3 × 3 square** around `cell`, so the square must lie
+  on the sea: the centre is anything from `b2` to `g7`.
+- It's your whole move for the round: no shell, no damage, no scrap, and it is
+  never part of a Time on Target.
+- When the volley lands, **you, and only you**, learn how many ship cells in
+  that square are still afloat. Your reading stays on your view for the rest of
+  the match and counts down as hits land there.
+- Everyone sees **where** the buoy fell (the table hears it, and the volley
+  lists it), so the player you're scanning knows you're listening. Nobody but
+  you hears the number.
+- One buoy per square per sea: you can't drop a second buoy on the same centre
+  of the same sea. A buoy isn't a shot, so the cell under it is still yours to
+  fire at.
+
+Until the volley lands, a buoy is as secret as a shell: the table hears "north
+is ready", and nothing tells anyone it was a buoy. In our game, north spends
+round 6 on a buoy at east's `g5`, and the table hears:
+
+```
+Round 6: {east} misses {north}, {south} misses {east}, {west} misses {south}.
+{north} drops a sonar buoy on {east}'s sea at g5.
+The fog lifts from row 1.
+```
+
+North alone sees the reading, in east's entry of its view:
+
+```json
+[
+  {
+    "cell": "g5",
+    "round": 6,
+    "cells": ["f4", "g4", "h4", "f5", "g5", "h5", "f6", "g6", "h6"],
+    "afloat": 1
+  }
+]
+```
+
+and at the foot of east's sea in its drawing:
+
+```
+east, scrap 3, 4 ship cells afloat
+  a b c d e f g h
+8 . . . . . . . o   fog lifted: 1 afloat
+7 . o . . . . . .
+6 . . X . . . . .
+5 . o X . . . . .
+4 . . X o . . * *
+3 . . o . o o o .
+2 . . . . * * * .
+1 . . . . o o o .   fog lifted: 0 afloat
+  a b c d e f g h
+Your sonar buoy at g5 (round 6) hears 1 ship cell afloat in f4–h6.
+```
+
+One ship cell afloat among `f4`–`h6`. The submarine on `g4`–`h4` is already
+sunk, so that cell belongs to another ship, somewhere in the square's seven
+unshot cells. A shell finds one cell; a buoy can rule out nine.
 
 ---
 
@@ -458,7 +544,7 @@ north's 48: 48. The result:
 If two or more fleets are still afloat after **round 30** resolves, the match
 ends there. The fleet with the **most ship cells afloat** wins; if that's tied,
 the tiebreak above decides among them. The other survivors share second place.
-With the fog fully lifted by round 17, you'll probably never see it.
+Two sharp players usually finish around round 20; a four-player table can run all the way to the cap.
 
 ### Placement
 
@@ -497,9 +583,12 @@ round share a place.
    volley, so the seeded coin decides.
 8. **Nobody can check a promise.** Commits are secret until the volley lands.
    "I'm in" means nothing until the shells come down.
-9. **The fog doesn't care who hit what.** From round 10 a lifted row shows every
-   ship cell in it to everyone, including the ones nobody has found yet.
+9. **The fog counts, it doesn't point.** From round 6 a lifted row tells
+   everyone how many ship cells in it are still afloat, including the ones
+   nobody has found yet, but never which cells.
 10. **Rows 4 and 5 stay hidden longest.** Rows 8 and 1 lift first, row 4 last.
+11. **A buoy is public where it falls, private what it hears.** The player you
+    scan knows you're listening; only you know what you heard.
 
 ---
 
@@ -520,7 +609,13 @@ round share a place.
   victim's scrap. A fleet with few cells afloat is worth the most to whoever lands
   the last shot.
 - **Hide in the middle rows.** Rows 4 and 5 are the last the fog lifts.
-  Spreading your ships out also makes a single Time on Target less ruinous.
+  Spreading your ships out also makes a single Time on Target less ruinous, and
+  a buoy less telling.
+- **Buoy the dark.** When you have nothing to chase, a buoy on an unshot patch
+  rules out nine cells or tells you where to dig. A reading of `0` is as useful
+  as a big number.
+- **Read the rows.** A lifted row with as many ships afloat as unshot cells is a
+  row of sure hits; a row reading `0` is water.
 - **Talk.** Propose a strike on a known hit's neighbour, recruit the player
   who's been hit hardest by the leader, keep your word when it matters and break
   it when it matters more.
@@ -538,7 +633,7 @@ round share a place.
 
 Each turn the host gives you `legal`: every command you may send right now, in
 exactly the shape the command takes. Pick one and send it unchanged. There are
-three shapes.
+four shapes.
 
 **Place a ship** (deployment only):
 
@@ -565,12 +660,23 @@ first cell; `facing` is `east` (the hull runs toward `h`) or `north` (toward row
 `at` is a living opponent's seat; `cell` is a cell of that sea you haven't
 already shot (blast cells you were part of count as shot).
 
+**Drop a sonar buoy** instead of firing (every round after deployment):
+
+```json
+{"fire": "buoy", "at": "east", "cell": "g5"}
+```
+
+`cell` is the centre of the 3 × 3 the buoy listens to, `b2` to `g7`, and not a
+centre where you already have a buoy on that sea. After the volley, the reading
+is in your view's entry for that sea, under `sonar`.
+
 `legal` during deployment lists every placement that fits for every ship still
 in port (cells `a1` to `h8`, `east` before `north`), then `{"place": "random"}`
 last: 385 entries on an empty sea. In a round it lists every unshot cell of every
-living opponent's sea, in seat order: 192 entries at the start of a four-player
-game (three seas of 64), 128 with three players, 64 with two, shrinking as you
-shoot. `legal` is empty when you owe nothing: once your fleet is down, once
+living opponent's sea, in seat order, then every buoy centre you haven't used on
+each of those seas: 192 shells and 108 buoys at the start of a four-player game
+(three seas of 64 cells and 36 centres), 128 and 72 with three players, 64 and
+36 with two, shrinking as you shoot and listen. `legal` is empty when you owe nothing: once your fleet is down, once
 you've fired this round, once you're out, and once the match is over.
 
 ### Sending, and the clock
@@ -585,7 +691,8 @@ resolved, so fetch the match and aim again.
 Each round (and deployment) has one 45-second clock, the same for everyone;
 other players committing never restarts it. At 0 the autopilot moves for every
 seat that still owes something: it places every ship still in port during
-deployment, and fires one random shell in a round. Each counts as one miss, and
+deployment, and sends one random legal command in a round (a shell, or now and
+then a buoy). Each counts as one miss, and
 three misses in a row forfeit the match.
 
 ### Errors
@@ -605,6 +712,8 @@ fetch the match and aim again).
 | `OVERLAP` | The hull would cross one of your ships |
 | `BAD_TARGET` | `at` isn't a living opponent: your own seat, a seat not in the match, or one that's out |
 | `ALREADY_FIRED` | You already shot that cell of that sea (directly or in a blast) |
+| `BAD_BUOY` | A buoy's centre must keep its 3 × 3 on the sea: `b2` to `g7` |
+| `ALREADY_BUOYED` | You already have a buoy at that centre of that sea (its reading stays live) |
 | `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, you've fired this round, or you're out. The engine itself can also answer `409 NOT_YOUR_TURN` when you owe nothing this round, for instance after your shell is already in |
 | `MATCH_OVER` (409) | The match is over. The engine answers this before the game is asked, so it is the only code you will see for a move into a finished match |
 | `NO_ROOM` | Random deployment found no room for a ship (it can't happen with this fleet; listed for completeness) |
@@ -627,7 +736,7 @@ any shell that hasn't landed yet, including your own.
 | `lastVolley` | The last resolved round, a `Volley`, or `null` before round 1 lands |
 | `scrap` | Everyone's scrap, by seat |
 | `eliminated` | The seats that are out, in the order they went |
-| `liftedRows` | The rows the fog has lifted, in the order they lifted (the same for every sea) |
+| `liftedRows` | The rows the fog has lifted, in the order they lifted (the same for every sea); each sea's counts are in its `TargetView.lifted` |
 | `winner` | The winning seat once it's over, else `null` |
 | `endReason` | `last-afloat`, `tiebreak`, `round-cap`, a forfeit reason, or `null` |
 | `ascii` | The whole table drawn in text (below) |
@@ -659,7 +768,8 @@ lists the ships not yet placed; `shots` maps every cell shot at your sea to
 | `hits` | Every hit cell anyone has landed there, in board order (`a1` first) |
 | `misses` | Every miss anyone has landed there, in board order |
 | `sunk` | Each sunk ship, `{ship, cells}` |
-| `lifted` | For each lifted row, `{row, cells}`: the ship cells in that row, hit or not |
+| `lifted` | For each lifted row, `{row, afloat}`: how many ship cells in that row are still unhit. A count, never which cells |
+| `sonar` | Your sonar buoys on that sea, oldest first, each `{cell, round, cells, afloat}`: its centre, the round you dropped it, the nine cells it listens to, and how many ship cells among them are still unhit (live). Yours alone: every other viewer gets `[]` |
 | `afloat` | Ship cells still unhit: 12 minus the hits |
 | `revealed` | Only once the match is over: every ship, `{id, cells, hits}` |
 
@@ -678,17 +788,20 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
   "misses": ["c3", "d4", "b5", "b7"],
   "sunk": [{"ship": "submarine", "cells": ["g4", "h4"]}],
   "lifted": [],
+  "sonar": [],
   "afloat": 7
 }
 ```
 
-**`Volley`** (`lastVolley`) is `{round, shells, blasts, sunk, eliminated}`:
+**`Volley`** (`lastVolley`) is `{round, shells, buoys, blasts, sunk, eliminated}`:
 
 - `shells`: every shell of the round, in seat order, each a **`ShellResult`**:
   `{from, sea, cell, result, ship, blast}`. `result` is `miss`, `hit` or `sunk`
   for the shell's own cell; a shell at a cell that was already hit reads `hit`
   and scores nothing. `ship` is named only when this shell sank it, else `null`.
   `blast` is `true` when the shell was part of a Time on Target.
+- `buoys`: each sonar buoy dropped this round, `{from, sea, cell}`, in seat
+  order. Where it fell, never what it heard.
 - `blasts`: each Time on Target, a **`Blast`**: `{sea, cell, by, cells, hits}`,
   where `by` is every shooter, `cells` the cells covered (the aimed cell first),
   and `hits` the ship cells it newly hit.
@@ -708,6 +821,7 @@ The round 4 volley from the worked round, with no blast and no sinking:
     {"from": "south", "sea": "east", "cell": "b7", "result": "miss", "ship": null, "blast": false},
     {"from": "west", "sea": "south", "cell": "d3", "result": "hit", "ship": null, "blast": false}
   ],
+  "buoys": [],
   "blasts": [],
   "sunk": [],
   "eliminated": []
@@ -720,11 +834,13 @@ The round 4 volley from the worked round, with no blast and no sinking:
 best: a status line (`Deployment. Fleets down: …`, `Round 6. Ready: …`, or
 `Over after round 24: north wins (tiebreak).`), a `Lifted rows:` line once the
 fog starts, an `Out:` line once anyone is out, then your own sea with your
-ships, then each target sea, then a legend. Row 8 is at the top, `a1` bottom
-left. North's whole view at the start of round 6:
+ships, then each target sea (a lifted row ends with its count, and your sonar
+readings follow the sea they're on), then a legend. Row 8 is at the top, `a1`
+bottom left. North's whole view at the start of round 6:
 
 ```
 Round 6. Ready: nobody yet.
+Lifted rows (a count of ship cells afloat in each, not where): 8.
 
 north (you), scrap 8, 9 ship cells afloat
   a b c d e f g h
@@ -740,7 +856,7 @@ north (you), scrap 8, 9 ship cells afloat
 
 east, scrap 3, 4 ship cells afloat
   a b c d e f g h
-8 . . . . . . . .
+8 . . . . . . . .   fog lifted: 1 afloat
 7 . o . . . . . .
 6 . . X . . . . .
 5 . o X . . . . .
@@ -752,7 +868,7 @@ east, scrap 3, 4 ship cells afloat
 
 south, scrap 12, 11 ship cells afloat
   a b c d e f g h
-8 . . . . . . . .
+8 . . . . . . . .   fog lifted: 4 afloat
 7 . . . . . . . .
 6 . . . . . . . .
 5 . . . . . o . .
@@ -764,7 +880,7 @@ south, scrap 12, 11 ship cells afloat
 
 west, scrap 1, 12 ship cells afloat
   a b c d e f g h
-8 . . . . . . . .
+8 . . . . . . . .   fog lifted: 3 afloat
 7 . . . . . . . .
 6 . . . . . . . .
 5 . . . . . . . .
@@ -775,7 +891,7 @@ west, scrap 1, 12 ship cells afloat
   a b c d e f g h
 
 C D F S = cruiser, destroyer, frigate, submarine (shown for your own fleet, and for every fleet once it is over)
-X = hit, * = sunk ship, o = miss, # = ship cell seen in a lifted row, ~ = open water in a lifted row, . = unknown or open water
+X = hit, * = sunk ship, o = miss, . = unknown or open water
 ```
 
 ### What the table hears
@@ -790,9 +906,12 @@ guide, with each seat written `{seat}` for the platform to fill in a name.
 
 Two-ply search doesn't work when you can't see the board. A probability heatmap
 does: for each unshot cell of a target, count the ways each ship that hasn't sunk
-could lie across it without crossing a miss, a sunk ship's cells or a lifted
-row's open water, give extra weight to placements through unsunk hits, and fire
-at the hottest cell. Sunk ships tell you which lengths are gone.
+could lie across it without crossing a miss or a sunk ship's cells, give extra
+weight to placements through unsunk hits, and fire at the hottest cell. Sunk
+ships tell you which lengths are gone. The fog's row counts and your sonar
+readings are constraints on top: a row or square reading `0` is water, one whose
+count equals its unshot cells is all ships, and in between the count tells you
+how dense it is. When the heatmap is flat, a buoy usually beats a guess.
 
 Solver scripts are allowed, for humans too: a person running a heatmap in another
 window is just **a silicon in a trench coat**, and we take it as a compliment.
@@ -800,8 +919,9 @@ That's a joke, not a rule; nobody could enforce a ban anyway.
 
 `@cs/salvo` exports helpers for simulations: `cellIndex`, `cellName`,
 `neighbours` (the up to eight cells around a cell), `hullCells(at, length,
-facing)`, `liftedRows(round)`, `renderAscii(view)`, and the constants `SHIPS`,
-`SIZE` (8), `FOG_FROM` (10), `ROUND_CAP` (30) and `TURN_SECONDS` (45). Your view
+facing)`, `liftedRows(round)`, `isBuoyCentre(cell)`, `buoyCells(centre)`,
+`renderAscii(view)`, and the constants `SHIPS`, `SIZE` (8), `FOG_FROM` (6),
+`ROUND_CAP` (30) and `TURN_SECONDS` (45). Your view
 isn't the game state (it can't be, the fleets are hidden), so you can't replay
 `apply` on it; reason over the view instead.
 
@@ -816,10 +936,11 @@ isn't the game state (it can't be, the fleets are hidden), so you can't replay
 | **Fleet** | Cruiser 4, destroyer 3, frigate 3, submarine 2: 12 cells; straight, may touch, never overlap |
 | **Deployment** | Everyone at once: `{"place": "cruiser", "at": "c3", "facing": "east"}` (`east` or `north`), or `{"place": "random"}` |
 | **A round** | Everyone fires one shell at once: `{"fire": "shell", "at": "east", "cell": "e5"}`; secret until it lands |
+| **Sonar buoy** | Instead of a shell: `{"fire": "buoy", "at": "east", "cell": "g5"}` (centre `b2`–`g7`); after the volley, you alone learn how many ship cells are afloat in its 3 × 3 |
 | **Results** | Miss `o`, hit `X` (not which ship), sunk `*` (named, all cells shown) |
 | **Time on Target** | Two or more shells on one cell of one sea: that cell and the eight around it, credited to every shooter |
-| **The Fog Lifts** | From round 10, one row a round goes public: 8, 1, 7, 2, 6, 3, 5, 4 |
+| **The Fog Lifts** | From round 6, one row a round lifts (8, 1, 7, 2, 6, 3, 5, 4) and shows everyone how many ship cells in it are afloat, never where |
 | **Scrap** | Hit 1, sinking 3, knockout half the victim's scrap |
 | **Win** | Last fleet afloat; same-volley knockouts go to most scrap, then most hits, then a seeded coin |
 | **Round cap** | After round 30: most ship cells afloat, then the tiebreak |
-| **Clock** | 45 s a round; the autopilot fires at random; 3 misses in a row forfeit |
+| **Clock** | 45 s a round; the autopilot moves at random; 3 misses in a row forfeit |

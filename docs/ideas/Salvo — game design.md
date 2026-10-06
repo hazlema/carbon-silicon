@@ -21,6 +21,7 @@ Salvo ships in three cuts after the engine changes land, so the first playable v
 | --- | --- | --- |
 | Engine | `simultaneous` mode and the narration changes, per the engine doc | Critical Mass, Lightline and Crown & Steel still pass untouched |
 | v1 | Seas, deployment, shells, simultaneous rounds, Time on Target, Fog Lifts, the one-winner tiebreak, the three heatmap residents, all five invariants with the leak fuzz, a click-to-fire board, and the incoming-fire animation | Playtests say v1 is fun with shells alone, or that it needs more |
+| v1.5 | Intel: the Fog Lifts gives counts, not cells, from round 6; the sonar buoy (radar pulled forward) | Playtests say rounds have a real choice in them |
 | v2 | The arsenal, Supply Drops, drag-and-drop from the tray | The residents handle every item fairly |
 | v3 | Wreck Ghosts | The engine has an "eliminated but present" seat state |
 
@@ -157,6 +158,15 @@ Residents read only their own seat's view, the same one an outside agent gets. N
 
 **Table talk.** Residents read `recent` before they speak, so the post-volley summary is their whole picture of the table. "Who just shot me" is public, which is all a grudge needs. Each resident needs Salvo lines of its own, none of which mention orbs. GAME\_OVER has waited its whole life for a game about sinking: "four fleets. one ocean floor."
 
+## Intel (v1.5, 2026-10-06)
+
+The first playtest found v1 worked but gave the game away at the end: from round 10 the fog showed every ship cell in a lifted row, so the endgame was "shoot the cells you can see". Two changes put the skill back in deduction:
+
+- **The Fog Lifts counts.** From round 6, one row a round lifts, edges inward, and shows on every sea how many ship cells in it are still afloat, never where. The counts go down as hits land (no new information: hits are public). A row reading 0 is water; a row whose count equals its unshot cells is all ships. By round 13 every row has a total, so long matches still close.
+- **The sonar buoy** is v2's radar, pulled forward and given the Foreman's buoy flavour: `{"fire":"buoy","at":"east","cell":"g5"}` instead of a shell. Its 3×3 must lie on the sea (centre b2–g7, 36 per sea, so `legal` grows to at most 300), once per centre per sea. It listens after the shells land; the dropper alone sees how many ship cells are afloat in the square, live from then on. Where it fell is public (the volley lists it and the table hears it: being scanned is part of the drama); the count is private. Before the volley it reads "fires" and "is ready" like a shell. No damage, no scrap, never part of a Time on Target.
+- **Why a count, not a reveal.** A buoy that lit up ships would bring back the fog's problem. A count keeps the skill in deduction and makes "shoot or scout?" a real choice every round.
+- **Residents:** all three read the row counts; medium and hard drop buoys when there's nothing to chase, and hard folds the readings into its heatmap.
+
 ## Arsenal and Supply Drops (v2)
 
 v2 adds the Act step and seven items. Each asks a different question instead of doing more damage. The shell stays unlimited; everything else comes from Supply Drops, and a seat holds at most two specials.
@@ -166,7 +176,7 @@ v2 adds the Act step and seven items. Each asks a different question instead of 
 | Cluster | Fire | A plus shape, five cells. Wasteful blind, deadly after a hit. | up to 192 |
 | Torpedo | Fire | Enters from the edge of their sea that faces you on the compass and runs until it hits a ship. You choose the lane, not the cell. | 24 |
 | Depth charge | Fire | One cell, plus whether any ship touches it, without saying where. | up to 192 |
-| Radar | Act | Scans a 3×3 and returns how many ship cells are inside. Minesweeper, not a reveal. | up to 108 |
+| Radar | Act | Scans a 3×3 and returns how many ship cells are inside. Minesweeper, not a reveal. (Shipped early in v1.5 as the sonar buoy, in place of a shell.) | up to 108 |
 | Jammer | Act | For the next round, shots at your sea return no result; results are delivered when the jam ends. Radar on a jammed sea returns a wrong number. | 1 |
 | Repair | Act | Restores one hit cell of a ship still afloat. Anyone who hit that cell sees a welding spark, so repairing tells them you're alive there. | up to 12 |
 | Decoy | Act | A fake two-cell ship on an empty spot. It reports hits as hits; sinking it reports "decoy". | up to 112 |

@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { createRng } from '@cs/game-api';
-import { cellIndex, cellName, neighbours, salvoGame, type SalvoCommand, type SalvoView, type TargetView, type Volley } from '@cs/salvo';
+import { buoyCells, cellIndex, cellName, isBuoyCentre, neighbours, salvoGame, type SalvoCommand, type SalvoView, type TargetView, type Volley } from '@cs/salvo';
 import { chooseSalvoMove, heatmap, volleyMoment, type SalvoStrength } from './salvo';
 
 const turn = salvoGame.turn;
 const CELLS = Array.from({ length: 64 }, (_, i) => cellName(i));
 
-const target = (sea: string, over: Partial<TargetView> = {}): TargetView => ({ sea, mine: [], hits: [], misses: [], sunk: [], lifted: [], afloat: 12, ...over });
+const target = (sea: string, over: Partial<TargetView> = {}): TargetView => ({ sea, mine: [], hits: [], misses: [], sunk: [], lifted: [], sonar: [], afloat: 12, ...over });
 const view = (targets: TargetView[], over: Partial<SalvoView> = {}): SalvoView => ({
   you: 'south',
   seats: ['north', 'east', 'south', 'west'],
@@ -27,9 +27,16 @@ const view = (targets: TargetView[], over: Partial<SalvoView> = {}): SalvoView =
 /** Every shell a seat may fire: each cell of each target it hasn't shot itself (R-P3). */
 const legalFor = (v: SalvoView): SalvoCommand[] =>
   v.targets.flatMap((t) => CELLS.filter((c) => !t.mine.some((m) => m.cell === c)).map((cell) => ({ fire: 'shell' as const, at: t.sea, cell })));
+/** The same, plus every buoy centre on each sea it hasn't buoyed itself. */
+const legalWithBuoys = (v: SalvoView): SalvoCommand[] => [
+  ...legalFor(v),
+  ...v.targets.flatMap((t) => CELLS.filter((c) => isBuoyCentre(c) && !t.sonar.some((x) => x.cell === c)).map((cell) => ({ fire: 'buoy' as const, at: t.sea, cell }))),
+];
+const isBuoy = (c: SalvoCommand) => 'fire' in c && c.fire === 'buoy';
+const reading = (cell: string, afloat: number, round = 2) => ({ cell, round, cells: buoyCells(cell), afloat });
 const fire = (c: SalvoCommand) => c as Extract<SalvoCommand, { fire: 'shell' }>;
 const argmax = (heat: Map<string, number>) => [...heat].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
-const volley = (over: Partial<Volley>): Volley => ({ round: 2, shells: [], blasts: [], sunk: [], eliminated: [], ...over });
+const volley = (over: Partial<Volley>): Volley => ({ round: 2, shells: [], buoys: [], blasts: [], sunk: [], eliminated: [], ...over });
 
 describe('heatmap', () => {
   test('an open sea: corners are cold, the middle is hot, and every placement is counted once per cell', () => {
@@ -60,11 +67,44 @@ describe('heatmap', () => {
     expect(heat.get('e5')).toBe(0);
     expect(argmax(heat)).toBe('f5');
   });
-  test('a lifted row: its open water is cold, the ship the fog showed is hot', () => {
-    const heat = heatmap(target('east', { lifted: [{ row: 8, cells: ['c8', 'd8'] }] }));
-    for (const c of ['a8', 'b8', 'e8', 'f8', 'g8', 'h8']) expect(heat.get(c)).toBe(0);
-    expect(['c8', 'd8']).toContain(argmax(heat));
-    expect(heat.get('c8')!).toBeGreaterThan(heat.get('c4')!);
+  test('a lifted row counting 0 is open water: its cells are cold and no hull crosses it', () => {
+    const open = heatmap(target('east'));
+    const heat = heatmap(target('east', { lifted: [{ row: 8, afloat: 0 }] }));
+    for (const c of CELLS.filter((x) => x.endsWith('8'))) expect(heat.get(c)).toBe(0);
+    // a7: only hulls that stop short of row 8 are left.
+    expect(heat.get('a7')!).toBeLessThan(open.get('a7')!);
+  });
+  test('a zero row still lets a hull through a cell already hit there', () => {
+    const heat = heatmap(target('east', { hits: ['d8'], lifted: [{ row: 8, afloat: 0 }], afloat: 11 }));
+    // The hull through d8 can only run down the column, so d7 outranks its neighbours along row 7.
+    expect(heat.get('d7')!).toBeGreaterThan(heat.get('c7')!);
+    expect(heat.get('d7')!).toBeGreaterThan(heat.get('e7')!);
+  });
+  test('a lifted row whose count fills its unshot cells makes them sure hits, above everything', () => {
+    const misses = ['a8', 'b8', 'c8', 'd8', 'e8', 'f8'];
+    const heat = heatmap(target('east', { misses, lifted: [{ row: 8, afloat: 2 }] }));
+    const top = Math.max(...[...heat].filter(([c]) => !['g8', 'h8'].includes(c)).map(([, h]) => h));
+    expect(heat.get('g8')!).toBeGreaterThan(top);
+    expect(heat.get('h8')!).toBeGreaterThan(top);
+  });
+  test('a dense lifted row runs hotter than the same row in fog, a sparse one colder', () => {
+    const fog = heatmap(target('east')).get('d8')!;
+    expect(heatmap(target('east', { lifted: [{ row: 8, afloat: 4 }] })).get('d8')!).toBeGreaterThan(fog);
+    expect(heatmap(target('east', { lifted: [{ row: 8, afloat: 1 }] })).get('d8')!).toBeLessThan(fog);
+  });
+  test('when the lifted rows account for every ship cell, the rest of the sea is open water', () => {
+    const heat = heatmap(target('east', { lifted: [{ row: 8, afloat: 6 }, { row: 1, afloat: 6 }] }));
+    for (const c of CELLS.filter((x) => !x.endsWith('8') && !x.endsWith('1'))) expect(heat.get(c)).toBe(0);
+    expect(heat.get('d8')!).toBeGreaterThan(0);
+  });
+  test('a sonar reading of 0 clears its 3×3; a full one makes it sure; a busy one runs hot', () => {
+    const quiet = heatmap(target('east', { sonar: [reading('d4', 0)] }));
+    for (const c of buoyCells('d4')) expect(quiet.get(c)).toBe(0);
+    const misses = buoyCells('d4').filter((c) => c !== 'd4' && c !== 'd5');
+    const full = heatmap(target('east', { misses, sonar: [reading('d4', 2)] }));
+    expect(['d4', 'd5']).toContain(argmax(full));
+    const fog = heatmap(target('east')).get('d4')!;
+    expect(heatmap(target('east', { sonar: [reading('d4', 4)] })).get('d4')!).toBeGreaterThan(fog);
   });
 });
 
@@ -158,6 +198,106 @@ describe('chooseSalvoMove', () => {
   test('easy hunts at random among cells nobody has shot', () => {
     const v = view([target('east', { misses: CELLS.slice(0, 60) })]);
     for (let k = 0; k < 10; k++) expect(CELLS.slice(60)).toContain(fire(chooseSalvoMove(v, legalFor(v), { strength: 'easy', rng: createRng(k).next })).cell);
+  });
+});
+
+describe('sonar buoys', () => {
+  const choose = (v: SalvoView, strength: SalvoStrength, k: number) => chooseSalvoMove(v, legalWithBuoys(v), { strength, rng: createRng(k).next });
+
+  test('hard drops a buoy where the heat is when it has nothing to chase, and shoots otherwise', () => {
+    const idle = view([target('north'), target('east')]);
+    for (let k = 0; k < 10; k++) {
+      const c = choose(idle, 'hard', k);
+      expect(isBuoy(c)).toBe(true);
+      // The middle of an open sea is hottest, so the buoy goes to one of the four centre cells.
+      expect(['d4', 'e4', 'd5', 'e5']).toContain(fire(c).cell);
+    }
+    const chasing = view([target('north'), target('east', { hits: ['e5'], afloat: 11 })]);
+    const sure = view([target('east', { misses: ['a8', 'b8', 'c8', 'd8', 'e8', 'f8'], lifted: [{ row: 8, afloat: 2 }] })]);
+    const recent = view([target('east', { sonar: [reading('b2', 3, 1)] })], { round: 4 });
+    const due = view([target('east', { sonar: [reading('b2', 3, 1)] })], { round: 5 });
+    for (let k = 0; k < 10; k++) {
+      expect(isBuoy(choose(chasing, 'hard', k))).toBe(false);
+      expect(isBuoy(choose(sure, 'hard', k))).toBe(false);
+      expect(isBuoy(choose(recent, 'hard', k))).toBe(false);
+      expect(isBuoy(choose(due, 'hard', k))).toBe(true);
+    }
+  });
+  test('a zero reading steers fire away from its 3×3', () => {
+    const v = view([target('east', { sonar: [reading('d4', 0)] })], { round: 3 });
+    const quiet = new Set(buoyCells('d4'));
+    for (let k = 0; k < 30; k++) {
+      for (const strength of ['medium', 'hard'] as const) {
+        const c = chooseSalvoMove(v, legalFor(v), { strength, rng: createRng(k).next });
+        expect(quiet.has(fire(c).cell)).toBe(false);
+      }
+    }
+  });
+  test('medium keeps clear of a zero row while it hunts', () => {
+    const v = view([target('east', { lifted: [{ row: 8, afloat: 0 }] })], { round: 6 });
+    for (let k = 0; k < 30; k++) expect(fire(chooseSalvoMove(v, legalFor(v), { strength: 'medium', rng: createRng(k).next })).cell.endsWith('8')).toBe(false);
+  });
+  test('medium buoys now and then after round 2, never two rounds running, never while chasing', () => {
+    const rng = createRng(11);
+    let sonar: TargetView['sonar'] = [];
+    let last = 0;
+    let drops = 0;
+    for (let round = 1; round <= 120; round++) {
+      const v = view([target('east', { sonar })], { round });
+      const c = chooseSalvoMove(v, legalWithBuoys(v), { strength: 'medium', rng: rng.next });
+      expect(legalWithBuoys(v).some((x) => JSON.stringify(x) === JSON.stringify(c))).toBe(true);
+      if (!isBuoy(c)) continue;
+      expect(round).toBeGreaterThan(2);
+      expect(round - last).toBeGreaterThan(1);
+      last = round;
+      drops++;
+      sonar = [...sonar, reading(fire(c).cell, 3, round)];
+    }
+    // About one round in five, give or take.
+    expect(drops).toBeGreaterThan(8);
+    expect(drops).toBeLessThan(40);
+    const chasing = view([target('east', { hits: ['e5'], afloat: 11 })], { round: 7 });
+    for (let k = 0; k < 30; k++) expect(isBuoy(choose(chasing, 'medium', k))).toBe(false);
+  });
+  test('easy never drops a buoy', () => {
+    const rng = createRng(5);
+    for (let k = 0; k < 60; k++) {
+      const v = view([target('north'), target('east', k % 2 ? { hits: ['e5'], afloat: 11 } : {})], { round: 1 + (k % 12) });
+      expect(isBuoy(chooseSalvoMove(v, legalWithBuoys(v), { strength: 'easy', rng: rng.next }))).toBe(false);
+    }
+  });
+  test('the same rng gives the same choice', () => {
+    const v = view([target('north'), target('east', { misses: ['a1', 'b2'], sonar: [reading('f6', 2)] })], { round: 8, liftedRows: [8, 1, 7] });
+    for (const strength of ['easy', 'medium', 'hard'] as const) {
+      for (let k = 0; k < 5; k++) expect(choose(v, strength, k)).toEqual(choose(v, strength, k));
+    }
+  });
+});
+
+describe('residents at sea', () => {
+  /** Plays two-seat matches, `a` in north and `b` in south (null = random fire), and counts north's wins. */
+  const duel = (a: SalvoStrength | null, b: SalvoStrength | null, games: number) => {
+    let wins = 0;
+    for (let g = 0; g < games; g++) {
+      const rng = createRng(500 + g);
+      let s = salvoGame.setup({ seats: ['north', 'south'], seed: 900 + g });
+      let guard = 0;
+      while (s.phase !== 'over' && guard++ < 400) {
+        const seat = turn.toMove(s)[0];
+        const legal = turn.legal(s, seat) as SalvoCommand[];
+        const strength = seat === 'north' ? a : b;
+        const cmd = strength ? chooseSalvoMove(salvoGame.view(s, seat) as SalvoView, legal, { strength, rng: rng.next }) : rng.pick(legal.filter((x) => !isBuoy(x)));
+        expect(legal.includes(cmd)).toBe(true);
+        s = turn.apply(s, seat, cmd);
+      }
+      if (s.winner === 'north') wins++;
+    }
+    return wins;
+  };
+  test('hard beats random fire and easy most of the time; medium beats random fire', () => {
+    expect(duel('hard', null, 20)).toBeGreaterThanOrEqual(17);
+    expect(duel('hard', 'easy', 20)).toBeGreaterThanOrEqual(13);
+    expect(duel('medium', null, 20)).toBeGreaterThanOrEqual(15);
   });
 });
 

@@ -11,7 +11,7 @@ const shell = (from: string, sea: string, cell: string, more: Partial<ShellResul
   blast: false,
   ...more,
 });
-const volley = (shells: ShellResult[], blasts: Volley['blasts'] = []): Volley => ({ round: 3, shells, blasts, sunk: [], eliminated: [] });
+const volley = (shells: ShellResult[], blasts: Volley['blasts'] = [], buoys: Volley['buoys'] = []): Volley => ({ round: 3, shells, buoys, blasts, sunk: [], eliminated: [] });
 
 describe('sideOf', () => {
   test('you are always south, and the others keep their places around the table', () => {
@@ -79,6 +79,7 @@ describe('planVolley', () => {
           shell('south', 'east', 'e5', { blast: true }),
           shell('west', 'north', 'h8', { result: 'sunk', ship: 'submarine' }),
         ],
+        buoys: [],
         blasts: [{ sea: 'east', cell: 'e5', by: ['north', 'south'], cells: ['e5', 'e4'], hits: ['e4'] }],
         sunk: [
           { sea: 'east', ship: 'frigate', by: ['north', 'south'] },
@@ -154,8 +155,34 @@ describe('planVolley', () => {
 describe('incoming', () => {
   test('counts the shells at your sea (each Time on Target shell too) and names their senders once', () => {
     const v = volley([shell('east', 'north', 'a1'), shell('west', 'north', 'e5', { blast: true }), shell('east', 'south', 'b2'), shell('south', 'north', 'e5', { blast: true })]);
-    expect(incoming(v, 'north')).toEqual({ count: 3, from: ['east', 'west', 'south'] });
-    expect(incoming(v, 'west')).toEqual({ count: 0, from: [] });
-    expect(incoming(v, null)).toEqual({ count: 0, from: [] });
+    expect(incoming(v, 'north')).toEqual({ count: 3, from: ['east', 'west', 'south'], buoys: 0 });
+    expect(incoming(v, 'west')).toEqual({ count: 0, from: [], buoys: 0 });
+    expect(incoming(v, null)).toEqual({ count: 0, from: [], buoys: 0 });
+  });
+  test('counts the sonar buoys that fell on your sea, apart from the shells', () => {
+    const v = volley([shell('east', 'north', 'a1')], [], [
+      { from: 'west', sea: 'north', cell: 'c3' },
+      { from: 'south', sea: 'north', cell: 'f6' },
+      { from: 'north', sea: 'east', cell: 'd4' },
+    ]);
+    expect(incoming(v, 'north')).toEqual({ count: 1, from: ['east'], buoys: 2 });
+    expect(incoming(v, 'east')).toEqual({ count: 0, from: [], buoys: 1 });
+    expect(incoming(v, 'west')).toEqual({ count: 0, from: [], buoys: 0 });
+    expect(incoming(v, null)).toEqual({ count: 0, from: [], buoys: 0 });
+  });
+});
+
+describe('planVolley: buoys', () => {
+  test('each buoy splashes down on its sea once the warning is over, before any shell lands', () => {
+    const v = volley([shell('east', 'north', 'a1')], [], [{ from: 'west', sea: 'east', cell: 'c3' }]);
+    const plan = planVolley(v, (s) => sideOf(s, 'north'), { you: 'north' });
+    expect(plan.buoys).toEqual([{ from: 'west', sea: 'east', cell: 'c3', at: LEAD_MS }]);
+    expect(plan.buoys[0].at).toBeLessThan(plan.shells[0].landAt);
+  });
+  test('a volley of buoys alone fires no shells and still plans its splashes (at once, with reduced motion)', () => {
+    const v = volley([], [], [{ from: 'west', sea: 'east', cell: 'c3' }]);
+    const plan = planVolley(v, (s) => sideOf(s, 'north'), { reducedMotion: true });
+    expect(plan.shells).toEqual([]);
+    expect(plan.buoys).toEqual([{ from: 'west', sea: 'east', cell: 'c3', at: 0 }]);
   });
 });

@@ -3,7 +3,7 @@
 export const SIZE = 8;
 export const LETTERS = 'abcdefgh';
 /** The first round with a lifted row. */
-export const FOG_FROM = 10;
+export const FOG_FROM = 6;
 /** The order rows lift in, edges inward. */
 export const FOG_ORDER = [8, 1, 7, 2, 6, 3, 5, 4] as const;
 
@@ -54,8 +54,20 @@ export function hullCells(at: string, length: number, facing: Facing): string[] 
   return Array.from({ length }, (_, k) => cellName(facing === 'east' ? i + k : i + k * SIZE));
 }
 
-/** The rows public in this round, in the order they lifted: [] before FOG_FROM, then 8, 1, 7, 2, 6, 3, 5, 4. */
+/** The rows lifted by this round, in the order they lifted: [] before FOG_FROM, then 8, 1, 7, 2, 6, 3, 5, 4. */
 export function liftedRows(round: number): number[] {
   if (round < FOG_FROM) return [];
   return FOG_ORDER.slice(0, Math.min(FOG_ORDER.length, round - FOG_FROM + 1));
 }
+
+/** A sonar buoy's 3×3 lies wholly on the sea, so its centre is b2..g7. */
+export function isBuoyCentre(cell: string): boolean {
+  const i = cellIndex(cell);
+  if (i === null) return false;
+  const c = i % SIZE;
+  const r = Math.floor(i / SIZE);
+  return c >= 1 && c <= SIZE - 2 && r >= 1 && r <= SIZE - 2;
+}
+
+/** The nine cells a buoy at this centre listens to, in board order. */
+export const buoyCells = (centre: string): string[] => [centre, ...neighbours(centre)].sort((a, b) => cellIndex(a)! - cellIndex(b)!);

@@ -35,6 +35,13 @@ export interface SinkPlan {
   ship: string;
   at: number;
 }
+/** A sonar buoy splashing down: a ping at its centre `at` ms in (after the warning). */
+export interface BuoyPlan {
+  from: string;
+  sea: string;
+  cell: string;
+  at: number;
+}
 export interface VolleyPlan {
   round: number;
   /** The warning before anything flies ("3 shells incoming"); every time below already includes it. */
@@ -42,6 +49,7 @@ export interface VolleyPlan {
   shells: ShellPlan[];
   flashes: FlashPlan[];
   sinkings: SinkPlan[];
+  buoys: BuoyPlan[];
   /** When the last impact has played out. */
   total: number;
 }
@@ -59,10 +67,11 @@ export const LEAD_MS = 1200;
 /** The held breath before the shells aimed at your own sea, which always come last. */
 export const BEAT_MS = 600;
 
-/** The shells coming at your sea this volley, and who sent them (seat order, once each). */
-export function incoming(volley: Volley, you: string | null): { count: number; from: string[] } {
+/** The shells coming at your sea this volley, who sent them (seat order, once each), and how many sonar buoys fell on it. */
+export function incoming(volley: Volley, you: string | null): { count: number; from: string[]; buoys: number } {
   const mine = you ? volley.shells.filter((x) => x.sea === you) : [];
-  return { count: mine.length, from: [...new Set(mine.map((x) => x.from))] };
+  const buoys = you ? (volley.buoys ?? []).filter((x) => x.sea === you).length : 0;
+  return { count: mine.length, from: [...new Set(mine.map((x) => x.from))], buoys };
 }
 
 /**
@@ -106,5 +115,7 @@ export function planVolley(volley: Volley, side: (seat: string) => Side, opts: {
     ship: x.ship,
     at: shells.find((sh) => sh.sea === x.sea && sh.result === 'sunk' && sh.ship === x.ship)?.landAt ?? flashes.find((f) => f.sea === x.sea)?.at ?? last,
   }));
-  return { round: volley.round, lead, shells, flashes, sinkings, total: still || shells.length === 0 ? lead : last + IMPACT_MS };
+  // Buoys splash down as the volley opens, before the first shell lands.
+  const buoys: BuoyPlan[] = (volley.buoys ?? []).map((b) => ({ from: b.from, sea: b.sea, cell: b.cell, at: lead }));
+  return { round: volley.round, lead, shells, flashes, sinkings, buoys, total: still || shells.length === 0 ? lead : last + IMPACT_MS };
 }

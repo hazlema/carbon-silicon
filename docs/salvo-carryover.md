@@ -44,6 +44,14 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-15.** The mock's 10×10 grid stays 8×8. The small "your shot" dot on the target sea is gone (the mini-map and the disabled cells already say it). The status line reads "Round 5 — your shot. Everyone else is locked in."
 - **R-16.** Pegs live in their own layer over the cells, as sized billboards (Critical Mass's orb pattern). Inside a cell's button, or as a zero-size billboard, Chrome clipped them at any tilt.
 
+## v1.5 Intel (2026-10-06)
+
+- **R-17.** The Fog Lifts from round 6 (was 10) and shows a count per row (`TargetView.lifted: {row, afloat}`), never cells. The count is live: it falls as hits land, which says nothing the public hits don't.
+- **R-18.** The sonar buoy is `{"fire":"buoy",…}`, not a new verb, so v2's fire-step items (cluster, torpedo, depth charge) slot in the same way. Centre b2–g7 so the square is always nine cells; once per centre per sea per seat.
+- **R-19.** A buoy listens after the volley's shells land, and its reading is computed live in the view (`TargetView.sonar`, the dropper's alone). Stored is only where and when (`SalvoState.sonar`).
+- **R-20.** Where a buoy fell is public (`Volley.buoys`, a round-summary line); the count is private. Being scanned is part of the drama, and the cell gives nothing away about the target's ships.
+- **R-21.** The autopilot picks any legal command, so an absent seat sometimes drops a buoy; the rules say so.
+
 ## Design signals from the build
 
 - **Games run long.** In the module's fuzz (a reasonable but not optimal player) 161 of 300 games reached the round cap; in the residents' check against random fire, easy and medium mostly won *at the cap* (about 30 rounds) and only hard finished early (about 18). One shell per seat per round is slow, two-seat games especially (one shooter per sea, 12 cells). Watch this in playtests; the cheapest levers are the Fog Lifts starting earlier, a lower cap, or (the design's own suggestion) pulling radar forward from v2.

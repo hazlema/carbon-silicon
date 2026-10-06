@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { cellIndex, cellName, hullCells, SHIPS, SIZE, type Facing, type SalvoCommand, type SalvoView, type ShipId, type TargetView } from '@cs/salvo';
+  import { buoyCells, cellIndex, cellName, hullCells, SHIPS, SIZE, type Facing, type SalvoCommand, type SalvoView, type ShipId, type TargetView } from '@cs/salvo';
   import type { TableColors } from '$lib/seats';
   import { clampTilt, DRAG_THRESHOLD, fitScale, nearestTurn } from '../critical-mass/iso';
   import { createSound } from '../critical-mass/sound';
@@ -54,8 +54,10 @@
 
   // ── What `legal` offers ──
   type FireCmd = Extract<SalvoCommand, { fire: 'shell' }>;
+  type BuoyCmd = Extract<SalvoCommand, { fire: 'buoy' }>;
   type PlaceCmd = Extract<SalvoCommand, { place: ShipId }>;
   const isFire = (l: unknown): l is FireCmd => typeof l === 'object' && l !== null && (l as FireCmd).fire === 'shell';
+  const isBuoy = (l: unknown): l is BuoyCmd => typeof l === 'object' && l !== null && (l as BuoyCmd).fire === 'buoy';
   const isPlace = (l: unknown): l is PlaceCmd => typeof l === 'object' && l !== null && typeof (l as PlaceCmd).at === 'string' && 'place' in l;
   const randomCmd = $derived(legal.find((l) => typeof l === 'object' && l !== null && (l as { place?: unknown }).place === 'random'));
 
@@ -65,28 +67,61 @@
   const target = $derived(view.targets.find((t) => t.sea === picked) ?? view.targets[0] ?? null);
   const targetSea = $derived(target?.sea ?? null);
   const fireCells = $derived(new Set(legal.filter(isFire).filter((l) => l.at === targetSea).map((l) => l.cell)));
+  /** The centres a sonar buoy may still go on the shown sea (b2..g7, once each). */
+  const buoyCentres = $derived(new Set(legal.filter(isBuoy).filter((l) => l.at === targetSea).map((l) => l.cell)));
   /** Everyone at the table but you, in seat order: the seas you can aim at (or, watching, every fleet). */
   const others = $derived(view.seats.filter((s) => s !== me));
 
-  // ── Fire: click selects, Fire (or Enter on the selected cell) sends ──
+  // ── Fire: Shell or Sonar buoy; click selects, Fire (or Enter on the selected cell) sends ──
+  type Kind = 'shell' | 'buoy';
+  let kind = $state<Kind>('shell');
+  const buoysLegal = $derived(legal.some(isBuoy));
+  /** What the fire control sends: a shell, unless a buoy is chosen and still on offer. */
+  const aimKind = $derived<Kind>(buoysLegal ? kind : 'shell');
   let selected = $state<string | null>(null);
+  /** The cell under the pointer while aiming a buoy, for its footprint. */
+  let aimHover = $state<string | null>(null);
+  /** What you sent this round, for the control's "Locked in at e5" / "Buoy away at e5". */
+  let sentKind = $state<Kind>('shell');
   const round = $derived(view.round);
   const iAmReady = $derived(!!me && view.ready.includes(me));
-  // A new round clears the aim; so does looking at another sea, unless the shell is already away (then it stays on show).
+  // A new round clears the aim and goes back to shells; so does looking at another sea, unless the order is already away (then it stays on show).
   $effect(() => {
     void round;
     selected = null;
+    kind = 'shell';
+    sentKind = 'shell';
   });
   $effect(() => {
     void targetSea;
     if (!untrack(() => iAmReady)) selected = null;
   });
-  const fireCmd = $derived(selected && targetSea ? (legal.filter(isFire).find((l) => l.at === targetSea && l.cell === selected) ?? null) : null);
+  const aimable = (k: Kind, cell: string) => (k === 'buoy' ? buoyCentres.has(cell) : fireCells.has(cell));
+  /** Switching Shell / Sonar buoy keeps the aim only if it is still a legal cell for the new kind. */
+  function setKind(k: Kind) {
+    kind = k;
+    if (selected && !aimable(k, selected)) selected = null;
+  }
+  const fireCmd = $derived.by(() => {
+    if (!selected || !targetSea) return null;
+    const pool = aimKind === 'buoy' ? legal.filter(isBuoy) : legal.filter(isFire);
+    return pool.find((l) => l.at === targetSea && l.cell === selected) ?? null;
+  });
   function fire() {
     if (!interactive || !fireCmd) return;
     sound?.clink();
+    sentKind = aimKind;
     onMove($state.snapshot(fireCmd));
   }
+  /** The buoy footprints to preview on the shown sea: where you'd drop it (or did), and where the pointer is. */
+  const buoyPreview = $derived.by(() => {
+    const out: { cell: string; cells: string[]; picked: boolean }[] = [];
+    const showSent = iAmReady && sentKind === 'buoy';
+    if (selected && (showSent || (!iAmReady && aimKind === 'buoy'))) out.push({ cell: selected, cells: buoyCells(selected), picked: true });
+    if (!iAmReady && aimKind === 'buoy' && aimHover && aimHover !== selected && buoyCentres.has(aimHover))
+      out.push({ cell: aimHover, cells: buoyCells(aimHover), picked: false });
+    return out;
+  });
 
   // ── Deploy: pick a ship, R rotates, click a cell; Random for the lot ──
   let shipPick = $state<ShipId | null>(null);
@@ -120,7 +155,7 @@
   });
 
   // ── What each cell shows ──
-  type Mark = 'sea' | 'miss' | 'hit' | 'sunk' | 'ship' | 'sighted';
+  type Mark = 'sea' | 'miss' | 'hit' | 'sunk' | 'ship';
   interface Hull {
     /** Sides (l r t b) where the hull runs on into the next cell. */
     joins: string;
@@ -170,7 +205,6 @@
       const joins = joinsOf(s.cells);
       for (const c of s.cells) cells.set(c, { mark: 'ship', ship: s.id, hull: { joins: joins.get(c) ?? '', wreck: false, faint: true } });
     }
-    for (const row of t.lifted) for (const c of row.cells) if (!cells.has(c)) cells.set(c, { ...SEA, mark: 'sighted' });
     for (const c of t.misses) cells.set(c, { ...SEA, mark: 'miss' });
     for (const c of t.hits) cells.set(c, { ...(cells.get(c) ?? SEA), mark: 'hit' });
     for (const s of t.sunk) {
@@ -190,8 +224,6 @@
         return `${cell}, sunk ${m.ship}`;
       case 'ship':
         return `${cell}, ${m.ship}`;
-      case 'sighted':
-        return `${cell}, ship sighted`;
       default:
         return cell;
     }
@@ -199,6 +231,11 @@
 
   const ownCells = $derived(view.mySea ? ownModel(view.mySea) : null);
   const targetCells = $derived(target ? targetModel(target) : null);
+  /** The shown sea's lifted rows: row → ship cells still afloat in it (a count, never where). */
+  const liftedHere = $derived(new Map((deploying ? [] : (target?.lifted ?? [])).map((x) => [x.row, x.afloat])));
+  /** Your sonar readings on the shown sea, by centre cell. */
+  const sonarHere = $derived(deploying ? [] : (target?.sonar ?? []));
+  const sonarAt = $derived(new Map(sonarHere.map((x) => [x.cell, x])));
   const afloatOf = (seat: string): number => {
     if (seat === me && view.mySea) return view.mySea.ships.reduce((n, s) => n + s.cells.length - s.hits.length, 0);
     return view.targets.find((t) => t.sea === seat)?.afloat ?? 0;
@@ -234,11 +271,14 @@
       const firstAtYou = Math.min(...p.shells.filter((x) => x.sea === me).map((x) => x.landAt));
       const warnFor = !atSea ? 0 : reduced ? 2500 : Number.isFinite(firstAtYou) ? firstAtYou : p.lead + 900;
       if (atSea && me) {
-        const { count, from } = incoming(v, me);
+        const { count, from, buoys } = incoming(v, me);
+        const sonar = buoys === 1 ? '1 sonar buoy' : `${buoys} sonar buoys`;
         announce(
           count > 0
-            ? { tone: 'hot', text: `⚠ ${count} ${count === 1 ? 'shell' : 'shells'} incoming on your sea — from ${names(from.map(handleOf))}` }
-            : { tone: 'calm', text: 'Quiet waters: nothing aimed at you this round.' },
+            ? { tone: 'hot', text: `⚠ ${count} ${count === 1 ? 'shell' : 'shells'} incoming on your sea — from ${names(from.map(handleOf))}${buoys ? ` · ${sonar}` : ''}` }
+            : buoys > 0
+              ? { tone: 'calm', text: `No shells at you — but ${buoys === 1 ? 'a sonar buoy' : sonar} splashed down nearby.` }
+              : { tone: 'calm', text: 'Quiet waters: nothing aimed at you this round.' },
           0,
           warnFor,
         );
@@ -320,6 +360,7 @@
       sound.pop(12, f.at / 1000);
     }
     for (const k of p.sinkings) sound.thud(k.at / 1000 + 0.25);
+    for (const b of p.buoys) sound.pop(9, b.at / 1000);
   }
 
   /** Where a shell starts, in cells from its target, by the side it comes from. */
@@ -410,7 +451,10 @@
   $effect(() => observe(ownEl, (r) => (ownBox = { w: r.width, h: r.height })));
   /** The big sea's own padding round its cells (see `.main .face`). */
   const FACE_PAD = 20;
-  const span = SIZE + GUTTER;
+  /** Room left of the row labels for the fog's counts, as a share of a cell (only once rows have lifted). */
+  const FOG_GUTTER = 0.5;
+  const fogOn = $derived(liftedHere.size > 0);
+  const span = $derived(SIZE + GUTTER + (fogOn ? FOG_GUTTER : 0));
   const mainCell = $derived.by(() => {
     // The stage's content box: its padding already keeps the caption and the pill clear.
     const { w, h } = stageBox;
@@ -435,7 +479,7 @@
 
   type Mode = 'fire' | 'deploy' | 'view';
   const enabled = (mode: Mode, cell: string) =>
-    interactive && (mode === 'fire' ? fireCells.has(cell) : mode === 'deploy' ? placeable.has(cell) : false);
+    interactive && (mode === 'fire' ? aimable(aimKind, cell) : mode === 'deploy' ? placeable.has(cell) : false);
   function press(mode: Mode, cell: string) {
     if (suppress || !enabled(mode, cell)) return;
     if (mode === 'fire') selected = cell;
@@ -466,12 +510,15 @@
 
 {#snippet sea(seat: string, model: Map<string, CellModel>, size: number, main: boolean, mode: Mode, own: boolean)}
   {@const g = main ? Math.round(size * GUTTER) : 0}
+  {@const intel = main && !own}
+  {@const fp = intel && fogOn ? Math.round(size * FOG_GUTTER) : 0}
   <div
     class="sea3d"
     class:main
     class:own
     style:--cell="{size}px"
     style:--g="{g}px"
+    style:--fp="{fp}px"
     style:--spin="{main ? spin : 0}deg"
     style:--tilt="{main ? tilt : 0}deg"
   >
@@ -492,21 +539,23 @@
           {@const land = landing.get(`${seat} ${cell}`)}
           {@const sinking = m.mark === 'sunk' ? sinkingAt(seat, m.ship) : undefined}
           {@const ghost = mode === 'deploy' && preview?.cells.has(cell)}
+          {@const reading = intel ? sonarAt.get(cell) : undefined}
           {#if main && k % SIZE === 0}<span class="tag row" aria-hidden="true">{SIZE - Math.floor(k / SIZE)}</span>{/if}
           <button
             type="button"
             data-cell={cell}
             data-mark={m.mark}
-            aria-label={label(cell, m, own)}
+            aria-label={label(cell, m, own) + (reading ? `, sonar buoy: ${reading.afloat} afloat around it` : '')}
             aria-disabled={!ok}
             aria-pressed={mode === 'fire' ? selected === cell : undefined}
             onclick={() => press(mode, cell)}
             onkeydown={(e) => keydown(e, mode, cell, k)}
-            onpointerenter={() => mode === 'deploy' && (hover = cell)}
-            onpointerleave={() => mode === 'deploy' && hover === cell && (hover = null)}
-            onfocus={() => mode === 'deploy' && (hover = cell)}
+            onpointerenter={() => (mode === 'deploy' ? (hover = cell) : mode === 'fire' && (aimHover = cell))}
+            onpointerleave={() => (mode === 'deploy' ? hover === cell && (hover = null) : aimHover === cell && (aimHover = null))}
+            onfocus={() => (mode === 'deploy' ? (hover = cell) : mode === 'fire' && (aimHover = cell))}
+            onblur={() => mode === 'fire' && aimHover === cell && (aimHover = null)}
           >
-            <span class="water"></span>
+            <span class="water" class:up={intel && liftedHere.has(Number(cell.slice(1)))}></span>
             {#if m.hull}
               {@const j = m.hull.joins}
               <span
@@ -519,7 +568,6 @@
                 class:jb={j.includes('b')}
               ></span>
             {/if}
-            {#if m.mark === 'sighted'}<span class="sighting"></span>{/if}
             {#if m.mark === 'miss'}<span class="ripple" class:land={land !== undefined} style:--d="{land ?? 0}ms"><i></i></span>{/if}
             {#if m.mark === 'hit' || m.mark === 'sunk'}
               <span class="glow" class:land={land !== undefined} style:--d="{land ?? 0}ms"></span>
@@ -528,12 +576,28 @@
               <span class="bubbles" style:--d="{sinking}ms"><i></i><i></i><i></i></span>
             {/if}
             {#if ghost}<span class="ghost" class:bad={!preview?.ok}></span>{/if}
-            {#if mode === 'fire' && selected === cell}<span class="reticle" class:sent={iAmReady}></span>{/if}
+            {#if mode === 'fire' && selected === cell}<span class="reticle" class:sent={iAmReady} class:buoy={buoyPreview.some((b) => b.picked)}></span>{/if}
           </button>
         {/each}
         {#if main}
           <span class="tag corner" aria-hidden="true"></span>
           {#each LETTERS as letter (letter)}<span class="tag col" aria-hidden="true">{letter}</span>{/each}
+        {/if}
+        {#if intel}
+          <!-- What you know without seeing: the fog's counts by the row labels, sonar footprints, a buoy's aim. Flat on the water. -->
+          <div class="marks" aria-hidden="true">
+            {#each [...liftedHere] as [row, n] (row)}
+              <span class="fogn" class:none={n === 0} data-testid="fog-count" data-row={row} style:left="{-fp / 2}px" style:top="{(SIZE - row) * size + size / 2}px">{n}</span>
+            {/each}
+            {#each sonarHere as r, n (r.cell)}
+              {@const c = centre(r.cell, size, g)}
+              <span class="foot" class:newest={n === sonarHere.length - 1} class:none={r.afloat === 0} style:left="{c.x}px" style:top="{c.y}px"></span>
+            {/each}
+            {#each buoyPreview as b (b.cell)}
+              {@const c = centre(b.cell, size, g)}
+              <span class="foot aim" class:picked={b.picked} class:sent={iAmReady} style:left="{c.x}px" style:top="{c.y}px"></span>
+            {/each}
+          </div>
         {/if}
         <!-- Pegs stand up out of the water in their own layer: inside a cell's button they'd be clipped to it. -->
         <div class="pegs" aria-hidden="true">
@@ -547,10 +611,22 @@
               >
             {/if}
           {/each}
+          <!-- A sonar reading's count floats over its centre, facing you at any tilt. -->
+          {#each intel ? sonarHere : [] as r, n (r.cell)}
+            {@const c = centre(r.cell, size, g)}
+            {@const drop = plan?.round === r.round ? plan.buoys.find((b) => b.sea === seat && b.cell === r.cell) : undefined}
+            <span class="sonar" class:newest={n === sonarHere.length - 1} class:none={r.afloat === 0} style:left="{c.x}px" style:top="{c.y}px"
+              ><span class="bb"><b data-testid="sonar" data-at={r.cell} class:land={!!drop} style:--d="{(drop?.at ?? 0) + 500}ms">{r.afloat}</b></span></span
+            >
+          {/each}
         </div>
         {#if plan && !reduced}
           {#key planKey}
             <div class="fx" aria-hidden="true">
+              {#each plan.buoys.filter((b) => b.sea === seat) as b, n (n)}
+                {@const c = centre(b.cell, size, g)}
+                <i class="ping" style:left="{c.x}px" style:top="{c.y}px" style:--d="{b.at}ms" style:--c={kindColor(b.from)}></i>
+              {/each}
               {#each plan.flashes.filter((f) => f.sea === seat) as f, n (n)}
                 {@const c = centre(f.cell, size, g)}
                 <i class="flash" style:left="{c.x}px" style:top="{c.y}px" style:--d="{f.at}ms"></i>
@@ -611,6 +687,9 @@
           {#if mainSea !== me}<span class="who-big" style:color={kindColor(mainSea)}>{handleOf(mainSea)}</span><span class="sub">'s sea · {afloatOf(mainSea)} afloat</span>{/if}
         {/if}
       </p>
+      {#if fogOn && liftedHere.size <= 2}
+        <p class="caption-hint">Fog lifted: numbers count ship cells afloat in a row</p>
+      {/if}
     {/if}
     {#if deploying && ownCells && me}
       {@render sea(me, ownCells, mainCell, true, 'deploy', true)}
@@ -701,11 +780,23 @@
         <p class="slot" data-testid="waiting">Fleet deployed. {waitingFor.length ? `Waiting on ${names(waitingFor)}…` : ''}</p>
       {:else if live && me && !amOut}
         {#if iAmReady}
-          <p class="slot locked" data-testid="waiting">Locked in{selected ? ` at ${selected}` : ''}. Waiting on {names(waitingFor)}…</p>
-        {:else if fireCmd}
-          <button type="button" class="firebtn" data-testid="fire" disabled={!interactive} onclick={fire}>Fire at {selected}</button>
+          <p class="slot locked" data-testid="waiting">
+            {sentKind === 'buoy' && selected ? `Buoy away at ${selected}` : `Locked in${selected ? ` at ${selected}` : ''}`}. Waiting on {names(waitingFor)}…
+          </p>
         {:else}
-          <button type="button" class="slot" data-testid="fire" disabled>Pick a cell to fire</button>
+          {#if buoysLegal}
+            <div class="kind" role="group" aria-label="What to send this round">
+              <button type="button" aria-pressed={aimKind === 'shell'} data-testid="kind-shell" onclick={() => setKind('shell')}>Shell</button>
+              <button type="button" class="k-buoy" aria-pressed={aimKind === 'buoy'} data-testid="kind-buoy" onclick={() => setKind('buoy')}>Sonar buoy</button>
+            </div>
+          {/if}
+          {#if fireCmd}
+            <button type="button" class="firebtn" class:buoy={aimKind === 'buoy'} data-testid="fire" disabled={!interactive} onclick={fire}
+              >{aimKind === 'buoy' ? `Drop buoy at ${selected}` : `Fire at ${selected}`}</button
+            >
+          {:else}
+            <button type="button" class="slot" data-testid="fire" disabled>{aimKind === 'buoy' ? 'Pick a centre for the buoy' : 'Pick a cell to fire'}</button>
+          {/if}
         {/if}
       {:else if live && amOut}
         <p class="slot">Your fleet is down. The others play on.</p>
@@ -784,6 +875,16 @@
   .sub {
     color: var(--dust);
     font-size: 12px;
+  }
+  .caption-hint {
+    position: absolute;
+    top: 34px;
+    left: 18px;
+    margin: 0;
+    font-size: 11px;
+    color: var(--fog);
+    pointer-events: none;
+    z-index: 2;
   }
   .pill {
     position: absolute;
@@ -1060,7 +1161,6 @@
   .mini .m-miss { background: rgba(220, 240, 250, 0.45); }
   .mini .m-hit { background: var(--carbon); }
   .mini .m-sunk { background: #6b2a1f; box-shadow: inset 0 0 0 1px var(--carbon); }
-  .mini .m-sighted { background: rgba(255, 255, 255, 0.28); }
   .mini .m-ship { background: rgba(226, 231, 245, 0.55); }
   .mini .land {
     animation: sv-ping 0.5s ease-out var(--d) both;
@@ -1147,6 +1247,43 @@
   .firebtn:hover {
     background: #ff9d6c;
   }
+  .firebtn.buoy {
+    background: var(--silicon);
+    color: #04161c;
+    box-shadow: 0 8px 24px rgba(79, 216, 238, 0.22);
+  }
+  .firebtn.buoy:hover {
+    background: #8ae6f4;
+  }
+  /* Shell | Sonar buoy: what this round's order is. */
+  .kind {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--lattice);
+    border-radius: var(--r-control);
+    background: rgba(13, 16, 32, 0.6);
+  }
+  .kind button {
+    padding: 6px 8px;
+    border: 0;
+    border-radius: calc(var(--r-control) - 2px);
+    background: none;
+    color: var(--fog);
+    font: 500 13px var(--font-ui);
+    white-space: nowrap;
+  }
+  .kind button:hover {
+    color: var(--chalk);
+  }
+  .kind button[aria-pressed='true'] {
+    background: color-mix(in oklab, var(--carbon) 22%, var(--panel-2));
+    color: var(--chalk);
+  }
+  .kind .k-buoy[aria-pressed='true'] {
+    background: color-mix(in oklab, var(--silicon) 22%, var(--panel-2));
+  }
   .slot {
     display: grid;
     place-items: center;
@@ -1232,7 +1369,7 @@
   .main .face {
     grid-template-columns: var(--g) repeat(8, var(--cell));
     grid-template-rows: repeat(8, var(--cell)) var(--g);
-    padding: 8px 14px 4px 6px;
+    padding: 8px 14px 4px calc(6px + var(--fp, 0px));
     border-radius: 3px;
     background:
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.012 .06' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .55 0 0 0 0 .8 0 0 0 0 .95 0 0 0 .14 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 220px,
@@ -1241,8 +1378,9 @@
     box-shadow: inset 0 0 0 1px rgba(140, 210, 240, 0.14), inset 0 0 70px rgba(0, 0, 0, 0.5);
   }
   .main .fx,
-  .main .pegs {
-    left: 6px;
+  .main .pegs,
+  .main .marks {
+    left: calc(6px + var(--fp, 0px));
     top: 8px;
   }
   .edge {
@@ -1289,6 +1427,10 @@
     border-right: 1px solid rgba(150, 210, 240, 0.13);
     border-bottom: 1px solid rgba(150, 210, 240, 0.13);
   }
+  /* A lifted row: the fog is off it, so the water reads a shade lighter. */
+  .water.up {
+    background: rgba(200, 230, 250, 0.07);
+  }
   .own .water {
     inset: 1px;
     border: 0;
@@ -1321,12 +1463,6 @@
   .hull.wreck {
     background: linear-gradient(180deg, #3a2a26, #140c0a);
     box-shadow: inset 0 0 0 1px rgba(255, 122, 61, 0.35);
-  }
-  .sighting {
-    position: absolute;
-    inset: 18%;
-    border: 1.5px dashed rgba(233, 236, 255, 0.55);
-    border-radius: 999px;
   }
   /* A miss: a ripple with a drop at its heart. */
   .ripple {
@@ -1463,6 +1599,114 @@
     animation: none;
     opacity: 0.6;
   }
+  .reticle.buoy {
+    border-color: var(--silicon);
+    box-shadow: 0 0 14px rgba(79, 216, 238, 0.5);
+  }
+  .reticle.buoy::before,
+  .reticle.buoy::after {
+    display: none;
+  }
+
+  /* ── Intel on the water: fog counts, sonar footprints, a buoy's aim (flat, under the pegs) ── */
+  .marks {
+    position: absolute;
+    inset: 0;
+    transform: translateZ(2px);
+    transform-style: preserve-3d;
+    pointer-events: none;
+  }
+  .fogn {
+    position: absolute;
+    translate: -50% -50%;
+    min-width: calc(var(--cell) * 0.36);
+    padding: 0 3px;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--carbon) 22%, #0d1020);
+    border: 1px solid color-mix(in oklab, var(--carbon) 70%, transparent);
+    color: #ffd2b8;
+    font: 600 clamp(9px, calc(var(--cell) * 0.24), 13px) / 1.45 var(--font-silicon);
+    text-align: center;
+  }
+  .fogn.none {
+    background: none;
+    border-color: rgba(170, 215, 235, 0.25);
+    color: rgba(170, 215, 235, 0.45);
+  }
+  /* A sonar reading's 3×3; the newest a little stronger, an empty one calmer. */
+  .foot {
+    position: absolute;
+    width: calc(var(--cell) * 3);
+    height: calc(var(--cell) * 3);
+    translate: -50% -50%;
+    border: 1.5px dashed rgba(79, 216, 238, 0.45);
+    border-radius: 6px;
+    background: rgba(79, 216, 238, 0.06);
+  }
+  .foot.newest {
+    border-color: rgba(79, 216, 238, 0.8);
+    background: rgba(79, 216, 238, 0.11);
+  }
+  .foot.none {
+    border-color: rgba(170, 215, 235, 0.22);
+    background: rgba(170, 215, 235, 0.03);
+  }
+  /* Where your buoy would go (or went): the pointer's lighter, the pick brighter. */
+  .foot.aim {
+    border: 2px dashed rgba(79, 216, 238, 0.55);
+    background: rgba(79, 216, 238, 0.08);
+  }
+  .foot.aim.picked {
+    border-color: var(--silicon);
+    background: rgba(79, 216, 238, 0.16);
+    box-shadow: 0 0 18px rgba(79, 216, 238, 0.35);
+  }
+  .foot.aim.sent {
+    opacity: 0.6;
+  }
+  .sonar {
+    position: absolute;
+    width: 0;
+    height: 0;
+    transform-style: preserve-3d;
+  }
+  .sonar .bb {
+    position: absolute;
+    left: calc(var(--cell) * -0.26);
+    top: calc(var(--cell) * -0.26);
+    width: calc(var(--cell) * 0.52);
+    height: calc(var(--cell) * 0.52);
+    display: grid;
+    place-items: center;
+    transform: translateZ(var(--lift, 1px)) rotateZ(calc(-1 * var(--spin))) rotateX(calc(-1 * var(--tilt)));
+  }
+  .main .sonar {
+    --lift: calc(var(--cell) * 0.5);
+  }
+  .sonar b {
+    min-width: 100%;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--silicon) 70%, #0d1020);
+    color: #04161c;
+    font: 700 clamp(10px, calc(var(--cell) * 0.3), 16px) / calc(var(--cell) * 0.52) var(--font-silicon);
+    text-align: center;
+    box-shadow: 0 0 calc(var(--cell) * 0.22) rgba(79, 216, 238, 0.45), 0 2px 6px rgba(0, 0, 0, 0.5);
+    opacity: 0.8;
+  }
+  .sonar.newest b {
+    background: var(--silicon);
+    opacity: 1;
+  }
+  .sonar.none b {
+    background: #10202c;
+    color: rgba(170, 215, 235, 0.7);
+    border: 1px solid rgba(170, 215, 235, 0.35);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  }
+  .sonar b.land {
+    animation: sv-pop 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) var(--d) both;
+  }
 
   /* ── Shells in the air ── */
   .fx {
@@ -1509,6 +1753,18 @@
     border-radius: 50%;
     background: radial-gradient(circle at 35% 30%, #fff 0%, var(--c) 45%, color-mix(in oklab, var(--c) 50%, black) 100%);
     box-shadow: 0 0 10px var(--c);
+  }
+  /* A buoy splashing down: a ring that spreads over the 3×3 it will listen to. */
+  .ping {
+    position: absolute;
+    width: calc(var(--cell) * 3);
+    height: calc(var(--cell) * 3);
+    translate: -50% -50%;
+    border-radius: 50%;
+    border: 2px solid var(--silicon);
+    box-shadow: 0 0 16px rgba(79, 216, 238, 0.6), inset 0 0 16px rgba(79, 216, 238, 0.4);
+    transform: translateZ(3px);
+    animation: sv-sonar 1.2s ease-out var(--d) 2 both;
   }
   .flash {
     position: absolute;
@@ -1564,6 +1820,15 @@
     20% { opacity: 1; }
     100% { transform: translateZ(4px) scale(1.1); opacity: 0; }
   }
+  @keyframes sv-sonar {
+    0% { transform: translateZ(3px) scale(0.1); opacity: 0; }
+    15% { opacity: 1; }
+    100% { transform: translateZ(3px) scale(1); opacity: 0; }
+  }
+  @keyframes sv-pop {
+    0% { transform: scale(0); opacity: 0; }
+    100% { transform: none; opacity: 1; }
+  }
   @keyframes sv-aim {
     0%, 100% { transform: scale(1); opacity: 1; }
     50% { transform: scale(0.88); opacity: 0.7; }
@@ -1594,6 +1859,7 @@
     .bubbles i,
     .reticle,
     .mini .land,
+    .sonar b.land,
     .state.locked,
     .state.deployed,
     .chip.holdout,
