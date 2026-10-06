@@ -51,6 +51,11 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
     lines.push(`Deployment. Fleets down: ${view.ready.length > 0 ? view.ready.join(', ') : 'none yet'}.`);
   } else if (view.phase === 'fire') {
     lines.push(`Round ${view.round}. Ready: ${view.ready.length > 0 ? view.ready.join(', ') : 'nobody yet'}.`);
+    lines.push(`Shots this round (one per ship afloat): ${Object.entries(view.guns).map(([seat, n]) => `${seat} ${n}`).join(', ')}.`);
+    if (view.you && view.guns[view.you]) {
+      const sent = view.myOrders.map((x) => `${x.fire === 'buoy' ? 'buoy' : 'shell'} at ${x.at} ${x.cell}`);
+      lines.push(`Your salvo: ${view.myOrders.length} of ${view.guns[view.you]} sent${sent.length > 0 ? ` (${sent.join(', ')})` : ''}.`);
+    }
   } else {
     lines.push(`Over after round ${view.round}: ${view.winner} wins (${view.endReason}).`);
   }

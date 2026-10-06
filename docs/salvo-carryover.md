@@ -52,6 +52,14 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-20.** Where a buoy fell is public (`Volley.buoys`, a round-summary line); the count is private. Being scanned is part of the drama, and the cell gives nothing away about the target's ships.
 - **R-21.** The autopilot picks any legal command, so an absent seat sometimes drops a buoy; the rules say so.
 
+## v1.6 Salvos (2026-10-06)
+
+- **R-22.** One shot per ship afloat, each a separate `{"fire":…}` command; `pending` is a list per seat; ready when the list is as long as the seat's guns. Guns are counted from ships not sunk, so a sinking takes effect from the next round.
+- **R-23.** One buoy a round (`ONE_BUOY`); a seat can't aim two of its own shells at one cell in a round (`ALREADY_AIMED`), so a Time on Target is always two or more players.
+- **R-24.** A seat sees its own queued shots this round (`view.myOrders`) so a reload mid-salvo shows what's in; nobody else does. `view.guns` is public (it follows from public sinkings).
+- **R-25.** The round summary names hits and sinkings and counts misses ("… and 13 misses."), since a four-seat round fires up to sixteen shells.
+- **R-26.** The guide's worked game keeps its story shots; the script tops each salvo up with shots into open water away from every story cell, so the narrated hits, the Time on Target, the buoy and the fog land as told.
+
 ## Design signals from the build
 
 - **Games run long.** In the module's fuzz (a reasonable but not optimal player) 161 of 300 games reached the round cap; in the residents' check against random fire, easy and medium mostly won *at the cap* (about 30 rounds) and only hard finished early (about 18). One shell per seat per round is slow, two-seat games especially (one shooter per sea, 12 cells). Watch this in playtests; the cheapest levers are the Fog Lifts starting earlier, a lower cap, or (the design's own suggestion) pulling radar forward from v2.
@@ -61,6 +69,9 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-11.** `TargetView.mine` lists your shots in the order the cells were first shot by anyone (the public record's order), not the order you fired them; `lastVolley` says what you just fired. Documented rather than reordered.
 
 ## Deferred findings
+
+- e2e: under the full suite (not alone), the Salvo test now and then times out at the shared host → Start → `/t/` step, with the page showing a Critical Mass table from an earlier phone test's player. Same family as the lobby:95 / pocket:62 / update:4 flakes: state leaking between tests in the host flow, not Salvo play.
+- Residents think once per salvo: follow-up shots in a round wait 250–600 ms, not the full think time (bot.ts).
 
 - Switching the target sea mid-volley replays that sea's shells from the start of the animation (cosmetic; every cell shown is still from `lastVolley`).
 - The leak fuzz checks hidden fleets by cell name, pending shells by view equality, and (since the fix wave) that a shell names a ship only when it sank it; a stronger twin of the pending check (relocate an unhit ship consistent with the public record and assert the other views are byte-identical) would catch count-shaped leaks too.

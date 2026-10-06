@@ -379,7 +379,9 @@ async function playMatch(
         if (moment === 'gotHit' && Math.random() < 0.5) chatter('gotHit');
       }
       if (env.match.status === 'live' && env.you && env.match.toMove.includes(env.you) && env.legal.length > 0) {
-        const [lo, hi] = opts.thinkMs;
+        // A Salvo salvo thinks once: the rest of its shots follow in quick succession.
+        const midSalvo = env.match.gameId === 'salvo' && ((env.view as SalvoView).myOrders?.length ?? 0) > 0;
+        const [lo, hi] = midSalvo ? [Math.min(250, opts.thinkMs[0]), Math.min(600, opts.thinkMs[1])] : opts.thinkMs;
         await sleep(lo + Math.random() * Math.max(0, hi - lo), opts.signal);
         try {
           env = await client.move(matchId, env.match.revision, chooseMove(env, opts.personality, { rng: Math.random }));

@@ -13,6 +13,8 @@ const view = (targets: TargetView[], over: Partial<SalvoView> = {}): SalvoView =
   round: 3,
   phase: 'fire',
   ready: [],
+  guns: { north: 4, east: 4, south: 4, west: 4 },
+  myOrders: [],
   mySea: null,
   targets,
   lastVolley: null,
@@ -24,14 +26,36 @@ const view = (targets: TargetView[], over: Partial<SalvoView> = {}): SalvoView =
   ascii: '',
   ...over,
 });
-/** Every shell a seat may fire: each cell of each target it hasn't shot itself (R-P3). */
+/** One gun: the old single-shot round (a seat down to its last ship). */
+const ONE_GUN = { guns: { north: 1, east: 1, south: 1, west: 1 } };
+/** Every shell a seat may fire: each cell of each target it hasn't shot itself (R-P3) nor aimed at this round. */
 const legalFor = (v: SalvoView): SalvoCommand[] =>
-  v.targets.flatMap((t) => CELLS.filter((c) => !t.mine.some((m) => m.cell === c)).map((cell) => ({ fire: 'shell' as const, at: t.sea, cell })));
-/** The same, plus every buoy centre on each sea it hasn't buoyed itself. */
+  v.targets.flatMap((t) =>
+    CELLS.filter((c) => !t.mine.some((m) => m.cell === c) && !v.myOrders.some((o) => o.fire === 'shell' && o.at === t.sea && o.cell === c)).map((cell) => ({
+      fire: 'shell' as const,
+      at: t.sea,
+      cell,
+    })),
+  );
+/** The same, plus every buoy centre on each sea it hasn't buoyed itself, unless a buoy is in this round. */
 const legalWithBuoys = (v: SalvoView): SalvoCommand[] => [
   ...legalFor(v),
-  ...v.targets.flatMap((t) => CELLS.filter((c) => isBuoyCentre(c) && !t.sonar.some((x) => x.cell === c)).map((cell) => ({ fire: 'buoy' as const, at: t.sea, cell }))),
+  ...(v.myOrders.some((o) => o.fire === 'buoy')
+    ? []
+    : v.targets.flatMap((t) => CELLS.filter((c) => isBuoyCentre(c) && !t.sonar.some((x) => x.cell === c)).map((cell) => ({ fire: 'buoy' as const, at: t.sea, cell })))),
 ];
+/** Plays south's whole salvo for one round, feeding each shot back through `myOrders`. */
+const salvoRound = (v: SalvoView, strength: SalvoStrength, rng: () => number, buoys = true) => {
+  const orders: SalvoView['myOrders'] = [];
+  for (let k = 0; k < v.guns.south; k++) {
+    const now = { ...v, myOrders: [...orders] };
+    const legal = buoys ? legalWithBuoys(now) : legalFor(now);
+    const c = chooseSalvoMove(now, legal, { strength, rng });
+    expect(legal.includes(c)).toBe(true);
+    orders.push(c as SalvoView['myOrders'][number]);
+  }
+  return orders;
+};
 const isBuoy = (c: SalvoCommand) => 'fire' in c && c.fire === 'buoy';
 const reading = (cell: string, afloat: number, round = 2) => ({ cell, round, cells: buoyCells(cell), afloat });
 const fire = (c: SalvoCommand) => c as Extract<SalvoCommand, { fire: 'shell' }>;
@@ -115,7 +139,7 @@ describe('chooseSalvoMove', () => {
       const rng = createRng(40 + g);
       let s = salvoGame.setup({ seats: ['north', 'east', 'south', 'west'], seed: 7 + g });
       let guard = 0;
-      while (s.phase !== 'over' && guard++ < 500) {
+      while (s.phase !== 'over' && guard++ < 3000) {
         const seat = turn.toMove(s)[0];
         const legal = turn.legal(s, seat) as SalvoCommand[];
         const strength = strengths[s.seats.indexOf(seat)];
@@ -201,21 +225,70 @@ describe('chooseSalvoMove', () => {
   });
 });
 
+describe('salvos', () => {
+  test('successive shots in one round go to distinct cells, for every strength', () => {
+    const seas = [
+      view([target('north'), target('east')]),
+      view([target('east', { hits: ['e5'], afloat: 11 })]),
+      view([target('north', { misses: CELLS.slice(0, 50) }), target('east', { hits: ['a1', 'a2'], misses: ['a3'], afloat: 10 })]),
+    ];
+    for (const strength of ['easy', 'medium', 'hard'] as const) {
+      for (const v of seas) {
+        for (let k = 0; k < 10; k++) {
+          const shells = salvoRound(v, strength, createRng(k).next).filter((o) => o.fire === 'shell');
+          expect(new Set(shells.map((o) => `${o.at}:${o.cell}`)).size).toBe(shells.length);
+        }
+      }
+    }
+  });
+  test('a salvo chasing a lone hit spreads over the four cells in line with it', () => {
+    const v = view([target('north'), target('east', { hits: ['e5'], afloat: 11 })]);
+    for (const strength of ['medium', 'hard'] as const) {
+      for (let k = 0; k < 10; k++) {
+        const orders = salvoRound(v, strength, createRng(k).next);
+        expect(orders.every((o) => o.fire === 'shell' && o.at === 'east')).toBe(true);
+        expect(orders.map((o) => o.cell).sort()).toEqual(['d5', 'e4', 'e6', 'f5']);
+      }
+    }
+  });
+  test('with two hits in a row, hard runs the salvo along the line', () => {
+    const v = view([target('east', { hits: ['d5', 'e5'], afloat: 10 })], { guns: { south: 2 } });
+    for (let k = 0; k < 10; k++) expect(salvoRound(v, 'hard', createRng(k).next).map((o) => o.cell).sort()).toEqual(['c5', 'f5']);
+  });
+  test('a hunting salvo from hard takes the hottest cells of the fleet closest to the bottom', () => {
+    // East is lower (a sunk submarine); its open middle is hottest. No buoys on offer here.
+    const sunk = target('east', { hits: ['a1', 'a2'], sunk: [{ ship: 'submarine', cells: ['a1', 'a2'] }], afloat: 10 });
+    const v = view([target('north'), sunk], { round: 1 });
+    for (let k = 0; k < 5; k++) {
+      const shells = salvoRound(v, 'hard', createRng(k).next, false);
+      expect(shells.every((o) => o.at === 'east')).toBe(true);
+      expect(shells.map((o) => o.cell).sort()).toEqual(['d4', 'd5', 'e4', 'e5']);
+    }
+  });
+  test('a medium salvo keeps to the sea its first shell went to', () => {
+    const targets = [target('north'), target('east'), target('west')];
+    for (let k = 0; k < 20; k++) {
+      const shells = salvoRound(view(targets, { round: 1 }), 'medium', createRng(k).next).filter((o) => o.fire === 'shell');
+      expect(new Set(shells.map((o) => o.at)).size).toBe(1);
+    }
+  });
+});
+
 describe('sonar buoys', () => {
   const choose = (v: SalvoView, strength: SalvoStrength, k: number) => chooseSalvoMove(v, legalWithBuoys(v), { strength, rng: createRng(k).next });
 
-  test('hard drops a buoy where the heat is when it has nothing to chase, and shoots otherwise', () => {
-    const idle = view([target('north'), target('east')]);
+  test('with one gun, hard drops a buoy where the heat is when it has nothing to chase, and shoots otherwise', () => {
+    const idle = view([target('north'), target('east')], ONE_GUN);
     for (let k = 0; k < 10; k++) {
       const c = choose(idle, 'hard', k);
       expect(isBuoy(c)).toBe(true);
       // The middle of an open sea is hottest, so the buoy goes to one of the four centre cells.
       expect(['d4', 'e4', 'd5', 'e5']).toContain(fire(c).cell);
     }
-    const chasing = view([target('north'), target('east', { hits: ['e5'], afloat: 11 })]);
-    const sure = view([target('east', { misses: ['a8', 'b8', 'c8', 'd8', 'e8', 'f8'], lifted: [{ row: 8, afloat: 2 }] })]);
-    const recent = view([target('east', { sonar: [reading('b2', 3, 1)] })], { round: 4 });
-    const due = view([target('east', { sonar: [reading('b2', 3, 1)] })], { round: 5 });
+    const chasing = view([target('north'), target('east', { hits: ['e5'], afloat: 11 })], ONE_GUN);
+    const sure = view([target('east', { misses: ['a8', 'b8', 'c8', 'd8', 'e8', 'f8'], lifted: [{ row: 8, afloat: 2 }] })], ONE_GUN);
+    const recent = view([target('east', { sonar: [reading('b2', 3, 1)] })], { round: 4, ...ONE_GUN });
+    const due = view([target('east', { sonar: [reading('b2', 3, 1)] })], { round: 5, ...ONE_GUN });
     for (let k = 0; k < 10; k++) {
       expect(isBuoy(choose(chasing, 'hard', k))).toBe(false);
       expect(isBuoy(choose(sure, 'hard', k))).toBe(false);
@@ -237,13 +310,13 @@ describe('sonar buoys', () => {
     const v = view([target('east', { lifted: [{ row: 8, afloat: 0 }] })], { round: 6 });
     for (let k = 0; k < 30; k++) expect(fire(chooseSalvoMove(v, legalFor(v), { strength: 'medium', rng: createRng(k).next })).cell.endsWith('8')).toBe(false);
   });
-  test('medium buoys now and then after round 2, never two rounds running, never while chasing', () => {
+  test('with one gun, medium buoys now and then after round 2, never two rounds running, never while chasing', () => {
     const rng = createRng(11);
     let sonar: TargetView['sonar'] = [];
     let last = 0;
     let drops = 0;
     for (let round = 1; round <= 120; round++) {
-      const v = view([target('east', { sonar })], { round });
+      const v = view([target('east', { sonar })], { round, ...ONE_GUN });
       const c = chooseSalvoMove(v, legalWithBuoys(v), { strength: 'medium', rng: rng.next });
       expect(legalWithBuoys(v).some((x) => JSON.stringify(x) === JSON.stringify(c))).toBe(true);
       if (!isBuoy(c)) continue;
@@ -256,8 +329,50 @@ describe('sonar buoys', () => {
     // About one round in five, give or take.
     expect(drops).toBeGreaterThan(8);
     expect(drops).toBeLessThan(40);
-    const chasing = view([target('east', { hits: ['e5'], afloat: 11 })], { round: 7 });
+    const chasing = view([target('east', { hits: ['e5'], afloat: 11 })], { round: 7, ...ONE_GUN });
     for (let k = 0; k < 30; k++) expect(isBuoy(choose(chasing, 'medium', k))).toBe(false);
+  });
+  test('with a salvo, hard spares its first shot for a buoy while it hunts, and shells the rest', () => {
+    const idle = view([target('north'), target('east')]);
+    for (let k = 0; k < 10; k++) {
+      const orders = salvoRound(idle, 'hard', createRng(k).next);
+      expect(orders.map((o) => o.fire)).toEqual(['buoy', 'shell', 'shell', 'shell']);
+      expect(['d4', 'e4', 'd5', 'e5']).toContain(orders[0].cell);
+    }
+    // Not while chasing, and not with a buoy of its own from the last two rounds.
+    const chasing = view([target('north'), target('east', { hits: ['e5'], afloat: 11 })]);
+    const recent = view([target('east', { sonar: [reading('b2', 3, 2)] })], { round: 4 });
+    const due = view([target('east', { sonar: [reading('b2', 3, 1)] })], { round: 4 });
+    for (let k = 0; k < 10; k++) {
+      expect(salvoRound(chasing, 'hard', createRng(k).next).some((o) => o.fire === 'buoy')).toBe(false);
+      expect(salvoRound(recent, 'hard', createRng(k).next).some((o) => o.fire === 'buoy')).toBe(false);
+      expect(salvoRound(due, 'hard', createRng(k).next)[0].fire).toBe('buoy');
+    }
+  });
+  test('a buoy already in this round is never followed by another, whatever legal offers', () => {
+    const v = view([target('north'), target('east')], { myOrders: [{ fire: 'buoy', at: 'east', cell: 'd4' }] });
+    for (const strength of ['easy', 'medium', 'hard'] as const) {
+      // legalFor alone would hide it; offer buoys anyway to check the strategy's own guard.
+      const legal = [...legalFor(v), { fire: 'buoy' as const, at: 'north', cell: 'e5' }];
+      for (let k = 0; k < 20; k++) expect(isBuoy(chooseSalvoMove(v, legal, { strength, rng: createRng(k).next }))).toBe(false);
+    }
+  });
+  test('across many salvos, at most one buoy a round; medium buoys some rounds, easy never', () => {
+    for (const strength of ['easy', 'medium', 'hard'] as const) {
+      const rng = createRng(21);
+      let sonar: TargetView['sonar'] = [];
+      let drops = 0;
+      for (let round = 1; round <= 60; round++) {
+        const v = view([target('north'), target('east', { sonar })], { round });
+        const orders = salvoRound(v, strength, rng.next);
+        const buoys = orders.filter((o) => o.fire === 'buoy');
+        expect(buoys.length).toBeLessThanOrEqual(1);
+        drops += buoys.length;
+        sonar = [...sonar, ...buoys.filter((b) => b.at === 'east').map((b) => reading(b.cell, 3, round))];
+      }
+      if (strength === 'easy') expect(drops).toBe(0);
+      else expect(drops).toBeGreaterThan(5);
+    }
   });
   test('easy never drops a buoy', () => {
     const rng = createRng(5);
@@ -275,14 +390,14 @@ describe('sonar buoys', () => {
 });
 
 describe('residents at sea', () => {
-  /** Plays two-seat matches, `a` in north and `b` in south (null = random fire), and counts north's wins. */
+  /** Plays two-seat matches, `a` in north and `b` in south (null = random fire), and counts north's wins. Each seat fires its whole salvo (it stays in toMove until every gun is in). */
   const duel = (a: SalvoStrength | null, b: SalvoStrength | null, games: number) => {
     let wins = 0;
     for (let g = 0; g < games; g++) {
       const rng = createRng(500 + g);
       let s = salvoGame.setup({ seats: ['north', 'south'], seed: 900 + g });
       let guard = 0;
-      while (s.phase !== 'over' && guard++ < 400) {
+      while (s.phase !== 'over' && guard++ < 2000) {
         const seat = turn.toMove(s)[0];
         const legal = turn.legal(s, seat) as SalvoCommand[];
         const strength = seat === 'north' ? a : b;

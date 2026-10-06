@@ -3,7 +3,7 @@
  * `bun games/salvo/scripts/examples.ts` prints each one under its name; `src/examples.test.ts` asserts
  * that docs/rules.md carries every one verbatim inside a fenced code block.
  */
-import { roundSummary, salvoGame as G, type SalvoState, type SalvoView, type ShipId } from '../src/index';
+import { cellIndex, roundSummary, salvoGame as G, type SalvoState, type SalvoView, type ShipId } from '../src/index';
 
 export interface Example {
   name: string;
@@ -15,11 +15,32 @@ type Fleet = [ShipId, string, 'east' | 'north'][];
 const place = (s: SalvoState, seat: string, fleet: Fleet) =>
   fleet.reduce((x, [ship, at, facing]) => G.turn.apply(x, seat, { place: ship, at, facing }), s);
 
-/** One round: every living seat fires once (a shell, or a buoy when the third entry says so), in seat order (the order never changes the result). */
-function round(s: SalvoState, shots: Record<string, [string, string] | [string, string, 'buoy']>): SalvoState {
+type Shot = [string, string] | [string, string, 'buoy'];
+type Round = Record<string, Shot | Shot[]>;
+const shotsOf = (x: Shot | Shot[]): Shot[] => (Array.isArray(x[0]) ? (x as Shot[]) : [x as Shot]);
+
+/**
+ * One round, in seat order (the order never changes the result): each seat's shots the story is about
+ * (shells, or a buoy when the third entry says so), then the rest of its salvo, one shot per ship
+ * afloat, into open water on the same sea, from h8 down, at cells no story shot of this game uses.
+ */
+function round(s: SalvoState, shots: Round, story: Set<string>): SalvoState {
+  const start = s.round;
   for (const seat of s.seats) {
-    const shot = shots[seat];
-    if (shot) s = G.turn.apply(s, seat, { fire: shot[2] ?? 'shell', at: shot[0], cell: shot[1] });
+    if (!shots[seat] || s.round !== start) continue;
+    const mine = shotsOf(shots[seat]);
+    for (const shot of mine) s = G.turn.apply(s, seat, { fire: shot[2] ?? 'shell', at: shot[0], cell: shot[1] });
+    const sea = mine[0][0];
+    const named = story;
+    // Until the salvo is in (the last one in resolves the round, and then the seat owes the next).
+    while (s.round === start && s.phase === 'fire' && G.turn.toMove(s).includes(seat)) {
+      const legal = G.turn.legal(s, seat) as { fire: string; at: string; cell: string }[];
+      const water = legal
+        .filter((c) => c.fire === 'shell' && c.at === sea && !named.has(`${sea} ${c.cell}`) && !s.fleets[sea].some((x) => x.cells.includes(c.cell)))
+        .filter((c) => !s.seats.some((x) => s.pending[x].some((o) => o.sea === sea && o.cell === c.cell)))
+        .sort((a, b) => cellIndex(b.cell)! - cellIndex(a.cell)!);
+      s = G.turn.apply(s, seat, water[0]);
+    }
   }
   return s;
 }
@@ -65,6 +86,24 @@ const EAST: Fleet = [['cruiser', 'c4', 'north'], ['destroyer', 'e2', 'east'], ['
 const SOUTH: Fleet = [['cruiser', 'a8', 'east'], ['destroyer', 'h1', 'north'], ['frigate', 'c3', 'east'], ['submarine', 'e6', 'north']];
 const WEST: Fleet = [['cruiser', 'e1', 'north'], ['destroyer', 'a2', 'north'], ['frigate', 'b8', 'east'], ['submarine', 'g6', 'east']];
 
+/** Every "sea cell" a list of rounds names, so the open-water shots keep off them. */
+const storyOf = (rounds: Round[]) => new Set(rounds.flatMap((r) => Object.values(r).flatMap((x) => shotsOf(x).map(([sea, cell]) => `${sea} ${cell}`))));
+
+/** Each seat's shot the story follows, round by round; the rest of every salvo splashes. */
+const FOUR_SEAT_ROUNDS: Round[] = [
+  { north: ['east', 'd4'], east: ['north', 'c2'], south: ['east', 'c5'], west: ['north', 'f7'] },
+  { north: ['east', 'c4'], east: ['north', 'd2'], south: ['east', 'g4'], west: ['south', 'a1'] },
+  { north: ['east', 'c6'], east: ['north', 'a1'], south: ['east', 'h4'], west: ['east', 'b5'] },
+  { north: ['east', 'c3'], east: ['north', 'e2'], south: ['east', 'b7'], west: ['south', 'd3'] },
+  // Round 5: north and south both aim at east f2: Time on Target.
+  { north: ['east', 'f2'], east: ['north', 'h1'], south: ['east', 'f2'], west: ['south', 'f5'] },
+  // Round 6: north spends one shot on a sonar buoy at east g5.
+  { north: ['east', 'g5', 'buoy'], east: ['north', 'h2'], south: ['east', 'h8'], west: ['south', 'f6'] },
+  { north: ['east', 'a2'], east: ['north', 'h7'], south: ['east', 'g8'], west: ['south', 'f7'] },
+  { north: ['east', 'a3'], east: ['north', 'h8'], south: ['east', 'h7'], west: ['south', 'f8'] },
+  { north: ['east', 'a4'], east: ['north', 'a8'], south: ['east', 'h6'], west: ['south', 'g7'] },
+];
+
 /** The game, kept at each point the guide stops to look. */
 function fourSeatGame() {
   const start = G.setup({ seats: ['north', 'east', 'south', 'west'], seed: 2026 });
@@ -75,24 +114,11 @@ function fourSeatGame() {
   const beforeLast = s;
   const deployed = place(s, 'west', WEST);
   s = deployed;
-  s = round(s, { north: ['east', 'd4'], east: ['north', 'c2'], south: ['east', 'c5'], west: ['north', 'f7'] });
-  s = round(s, { north: ['east', 'c4'], east: ['north', 'd2'], south: ['east', 'g4'], west: ['south', 'a1'] });
-  s = round(s, { north: ['east', 'c6'], east: ['north', 'a1'], south: ['east', 'h4'], west: ['east', 'b5'] });
-  const beforeRound4 = s;
-  s = round(s, { north: ['east', 'c3'], east: ['north', 'e2'], south: ['east', 'b7'], west: ['south', 'd3'] });
-  const afterRound4 = s;
-  // Round 5: north and south both aim at east f2: Time on Target.
-  s = round(s, { north: ['east', 'f2'], east: ['north', 'h1'], south: ['east', 'f2'], west: ['south', 'f5'] });
-  const afterRound5 = s;
-  // Round 6: north drops a sonar buoy on east g5 instead of firing.
-  const beforeRound6 = s;
-  s = round(s, { north: ['east', 'g5', 'buoy'], east: ['north', 'h2'], south: ['east', 'h8'], west: ['south', 'f6'] });
-  const afterRound6 = s;
-  s = round(s, { north: ['east', 'a2'], east: ['north', 'h7'], south: ['east', 'g8'], west: ['south', 'f7'] });
-  s = round(s, { north: ['east', 'a3'], east: ['north', 'h8'], south: ['east', 'h7'], west: ['south', 'f8'] });
-  const beforeRound9 = s;
-  s = round(s, { north: ['east', 'a4'], east: ['north', 'a8'], south: ['east', 'h6'], west: ['south', 'g7'] });
-  const round10 = s;
+  const story = storyOf(FOUR_SEAT_ROUNDS);
+  const after: SalvoState[] = [s];
+  for (const r of FOUR_SEAT_ROUNDS) after.push((s = round(s, r, story)));
+  const [beforeRound4, afterRound4, afterRound5, afterRound6, beforeRound9, round10] = [after[3], after[4], after[5], after[6], after[8], after[9]];
+  const beforeRound6 = afterRound5;
   return { start, halfway, beforeLast, deployed, beforeRound4, afterRound4, afterRound5, beforeRound6, afterRound6, beforeRound9, round10 };
 }
 
@@ -102,15 +128,28 @@ const STANDARD: Fleet = [['cruiser', 'a1', 'east'], ['destroyer', 'a3', 'east'],
 const STANDARD_CELLS = ['a1', 'b1', 'c1', 'd1', 'a3', 'b3', 'c3', 'a5', 'b5', 'c5', 'a7', 'b7'];
 const WATER = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7', 'h8', 'g1', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7', 'g8'];
 
-/** North sinks south over twelve rounds while the others splash; then north and east trade until both go down at once. */
+/**
+ * North sinks south with three full salvos while the others splash; then north and east fire the
+ * same cells at each other, ship by ship, until both go down at once.
+ */
 function tiebreakGame() {
   let s = G.setup({ seats: ['north', 'east', 'south'], seed: 7 });
   for (const seat of s.seats) s = place(s, seat, STANDARD);
-  for (let i = 0; i < 12; i++) s = round(s, { north: ['south', STANDARD_CELLS[i]], east: ['north', WATER[i]], south: ['east', WATER[i]] });
+  // Every ship cell, and the water the bystanders splash into, is the story; open-water shots keep off it.
+  const story = new Set([...['north', 'east', 'south'].flatMap((sea) => STANDARD_CELLS.map((c) => `${sea} ${c}`)), ...['north', 'east'].flatMap((sea) => WATER.map((c) => `${sea} ${c}`))]);
+  const guns = (seat: string) => (G.view(s, seat) as SalvoView).guns[seat] ?? 0;
+  for (let i = 0; i < 3; i++) {
+    const salvo = STANDARD_CELLS.slice(4 * i, 4 * i + guns('north')).map((c): Shot => ['south', c]);
+    s = round(s, { north: salvo, east: ['north', WATER[i]], south: ['east', WATER[i]] }, story);
+  }
+  // The duel: each fires as many ship cells as it has guns, the same cells both ways.
+  let fired = 0;
   let before = s;
-  for (let i = 0; i < 12; i++) {
+  while (s.phase === 'fire') {
     before = s;
-    s = round(s, { north: ['east', STANDARD_CELLS[i]], east: ['north', STANDARD_CELLS[i]] });
+    const next = STANDARD_CELLS.slice(fired, fired + guns('north'));
+    fired += next.length;
+    s = round(s, { north: next.map((c): Shot => ['east', c]), east: next.map((c): Shot => ['north', c]) }, story);
   }
   return { before, after: s };
 }

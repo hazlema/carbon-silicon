@@ -7,11 +7,12 @@ type Envelope = {
   view: {
     round: number;
     phase: string;
+    guns: Record<string, number>;
     lastVolley: { round: number; shells: { from: string; sea: string; cell: string; result: string }[]; buoys: { from: string; sea: string; cell: string }[] } | null;
   };
 };
 
-test('Salvo: a human deploys at random, fires at a real cell, and the volley carries that shell', async ({ browser }) => {
+test('Salvo: a human deploys at random, fires a whole salvo, and the volley carries every shell', async ({ browser }) => {
   const page = await newPlayer(browser);
   await page.setViewportSize({ width: 1400, height: 900 });
   await enter(page, `salvo${randomTag()}`);
@@ -41,7 +42,7 @@ test('Salvo: a human deploys at random, fires at a real cell, and the volley car
   const random = page.getByTestId('random');
   await expect(async () => {
     if ((await random.count()) > 0 && (await random.isEnabled())) await random.click();
-    await expect(page.getByText('Round 1 — your shot.')).toBeVisible({ timeout: 2000 });
+    await expect(page.getByText('Round 1 — your salvo: 4 shots.')).toBeVisible({ timeout: 2000 });
   }).toPass({ timeout: 20_000 });
   await expect(page.getByTestId('sv-round')).toHaveText('round 1');
   // Your own fleet is on your sea: twelve ship cells.
@@ -54,43 +55,70 @@ test('Salvo: a human deploys at random, fires at a real cell, and the volley car
   await expect(page.getByText('Everyone else is locked in.')).toBeVisible();
   const sea = page.locator('[data-main]');
   await expect(sea).toHaveAttribute('data-sea', sprocket!);
+  // One shot per ship afloat: four guns each, on every card and in the fire control.
+  await expect(page.locator(`.chip[data-seat="${sprocket}"] [data-testid="guns"]`)).toHaveAttribute('data-guns', '4');
+  await expect(page.getByTestId('shots')).toHaveAttribute('aria-label', '0 sent, 0 aimed, 4 to aim');
+  const salvo = ['e5', 'c3', 'f6', 'b7'];
   const cell = sea.locator('[data-cell="e5"]');
   await expect(cell).toHaveAttribute('aria-disabled', 'false');
   await cell.click();
   await expect(cell).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByTestId('fire')).toHaveText('Fire at e5');
+  await sea.locator('[data-cell="c3"]').click();
+  await expect(page.getByTestId('fire')).toHaveText('Fire 2 of 4');
+  // A second click takes an aim back.
+  await sea.locator('[data-cell="c3"]').click();
+  await expect(sea.locator('[data-cell="c3"]')).toHaveAttribute('aria-pressed', 'false');
+  for (const c of salvo.slice(1)) await sea.locator(`[data-cell="${c}"]`).click();
+  await expect(page.getByTestId('fire')).toHaveText('Fire 4 shells');
+  await expect(page.locator(`.chip[data-seat="${sprocket}"] [data-testid="aimed"]`)).toHaveText('4');
+  // The salvo is full: the rest of the sea takes no more aims.
+  await expect(sea.locator('[data-cell="a1"]')).toHaveAttribute('aria-disabled', 'true');
   await page.getByTestId('fire').click();
-  // Before anything flies, you're warned what's coming at your sea, and from whom (Sprocket may send a sonar buoy instead); then round 2 is called.
-  await expect(page.getByTestId('banner')).toHaveText(
-    /^(⚠ 1 shell incoming on your sea — from Sprocket|No shells at you — but a sonar buoy splashed down nearby\.)$/,
-    { timeout: 10_000 },
-  );
+  // Before anything flies, you're warned what's coming at your sea, and from whom (Sprocket's salvo may hold a sonar buoy); then round 2 is called.
+  await expect(page.getByTestId('banner')).toHaveText(/^⚠ \d shells? incoming on your sea — from Sprocket( · 1 sonar buoy)?$/, { timeout: 10_000 });
   await expect(page.getByTestId('banner')).toHaveText('Round 2 — fire!', { timeout: 10_000 });
 
-  // The resolved volley, read back from the server, holds that shell from that seat.
+  // The resolved volley, read back from the server, holds all four shells from you, and Sprocket's salvo at you.
   await expect
     .poll(async () => (await envelope()).view.lastVolley?.round ?? 0, { timeout: 10_000 })
     .toBe(1);
   const volley = (await envelope()).view.lastVolley!;
-  expect(volley.shells).toContainEqual(expect.objectContaining({ from: me, sea: sprocket, cell: 'e5' }));
-  expect([...volley.shells, ...volley.buoys]).toContainEqual(expect.objectContaining({ from: sprocket, sea: me }));
+  const mine = volley.shells.filter((x) => x.from === me);
+  expect(mine).toHaveLength(4);
+  for (const c of salvo) expect(mine).toContainEqual(expect.objectContaining({ from: me, sea: sprocket, cell: c }));
+  expect([...volley.shells, ...volley.buoys].filter((x) => x.from === sprocket && x.sea === me)).toHaveLength(4);
   await expect(page.getByTestId('sv-round')).toHaveText('round 2');
   await expect(cell).toHaveAttribute('aria-label', /^e5, (miss|hit|sunk \w+)$/);
   await expect(cell).toHaveAttribute('aria-disabled', 'true');
 
-  // Round 2: a sonar buoy instead of a shell. Its centres are b2..g7; the control says what you're sending.
+  // Round 2: part of the salvo first (the rest stays owed), then a sonar buoy and shells for the rest.
   await expect(page.locator(`.chip[data-seat="${sprocket}"]`)).toHaveAttribute('data-ready', 'true', { timeout: 10_000 });
+  const guns = (await envelope()).view.guns[me];
+  expect(guns).toBeGreaterThanOrEqual(2);
+  await expect(page.getByText(`Round 2 — your salvo: ${guns} shots.`)).toBeVisible();
+  await sea.locator('[data-cell="a1"]').click();
+  await expect(page.getByTestId('fire')).toHaveText(`Fire 1 of ${guns}`);
+  await page.getByTestId('fire').click();
+  await expect(page.getByText(`Round 2 — 1 of ${guns} shots sent.`)).toBeVisible({ timeout: 10_000 });
+  await expect(sea.locator('[data-cell="a1"] [data-testid="sent"]')).toHaveCount(1);
+  await expect(sea.locator('[data-cell="a1"]')).toHaveAttribute('aria-disabled', 'true');
+  // A buoy's centres are b2..g7; one a round, so the toggle greys once it's aimed.
   await page.getByTestId('kind-buoy').click();
   await expect(page.getByTestId('kind-buoy')).toHaveAttribute('aria-pressed', 'true');
-  await expect(sea.locator('[data-cell="a1"]')).toHaveAttribute('aria-disabled', 'true');
+  await expect(sea.locator('[data-cell="a8"]')).toHaveAttribute('aria-disabled', 'true');
   const centreCell = sea.locator('[data-cell="d4"]');
   await expect(centreCell).toHaveAttribute('aria-disabled', 'false');
   await centreCell.click();
-  await expect(page.getByTestId('fire')).toHaveText('Drop buoy at d4');
+  await expect(page.getByTestId('kind-buoy')).toBeDisabled();
+  const rest = ['h8', 'a8', 'h1'].slice(0, guns - 2);
+  for (const c of rest) await sea.locator(`[data-cell="${c}"]`).click();
+  await expect(page.getByTestId('fire')).toHaveText(rest.length ? `Fire ${rest.length} shell${rest.length === 1 ? '' : 's'} + buoy` : 'Drop buoy');
   await page.getByTestId('fire').click();
   await expect(page.getByTestId('banner')).toHaveText('Round 3 — fire!', { timeout: 10_000 });
   await expect.poll(async () => (await envelope()).view.lastVolley?.round ?? 0, { timeout: 10_000 }).toBe(2);
-  expect((await envelope()).view.lastVolley!.buoys).toContainEqual({ from: me, sea: sprocket, cell: 'd4' });
+  const second = (await envelope()).view.lastVolley!;
+  expect(second.buoys).toContainEqual({ from: me, sea: sprocket, cell: 'd4' });
+  expect(second.shells.filter((x) => x.from === me).map((x) => x.cell).sort()).toEqual(['a1', ...rest].sort());
   // The reading: a count over the buoy's centre, on that sea alone.
   await expect(sea.locator('[data-testid="sonar"][data-at="d4"]')).toHaveText(/^[0-9]$/);
   await expect(centreCell).toHaveAttribute('aria-label', /sonar buoy: \d afloat around it$/);

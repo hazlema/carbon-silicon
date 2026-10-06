@@ -95,12 +95,14 @@ describe('planVolley', () => {
     ]);
   });
 
-  test('a crowded volley still fits in four seconds', () => {
+  test('a full four-seat salvo (16 shells) still fits the cap, a readable beat apart', () => {
     const shells = Array.from({ length: 16 }, (_, i) => shell(['north', 'east', 'south', 'west'][i % 4], 'east', `a${(i % 8) + 1}`));
     const plan = planVolley(volley(shells), (s) => sideOf(s, 'south'));
     expect(plan.total).toBeLessThanOrEqual(MAX_TOTAL_MS);
     expect(plan.shells.at(-1)!.landAt).toBeLessThanOrEqual(MAX_TOTAL_MS);
     for (let i = 1; i < plan.shells.length; i++) expect(plan.shells[i].delay).toBeGreaterThan(plan.shells[i - 1].delay);
+    // Not a blur: launches stay at least a fifth of a second apart.
+    expect(plan.shells[1].delay - plan.shells[0].delay).toBeGreaterThanOrEqual(200);
   });
 
   test('reduced motion: everything lands at once', () => {

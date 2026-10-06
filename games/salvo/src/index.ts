@@ -77,11 +77,11 @@ export interface SalvoState {
   fleets: Record<SeatId, Ship[]>;
   /** Every cell shot at each sea, oldest first, with its result and who shot it (public once resolved). */
   shots: Record<SeatId, Record<string, { result: 'miss' | 'hit'; by: SeatId[] }>>;
-  /** This round's secret commits. Never in any view. */
-  pending: Record<SeatId, Order | null>;
+  /** This round's secret commits, one per shot, in the order sent. Each seat sees only its own (`myOrders`). */
+  pending: Record<SeatId, Order[]>;
   /** Each seat's sonar buoys, oldest first. Each one is shown only to the seat that dropped it. */
   sonar: Record<SeatId, { sea: SeatId; cell: string; round: number }[]>;
-  /** Seats that owe nothing this round (fleet down, or shell committed), in seat order. Public. */
+  /** Seats that owe nothing this round (fleet down, or every shot committed), in seat order. Public. */
   ready: SeatId[];
   lastVolley: Volley | null;
   scrap: Record<SeatId, number>;
@@ -126,6 +126,10 @@ export interface SalvoView {
   round: number;
   phase: Phase;
   ready: SeatId[];
+  /** How many shots each living seat fires this round: one per ship still afloat (public: sinkings are). */
+  guns: Record<SeatId, number>;
+  /** The shots you have sent this round, in order (yours alone; [] for spectators and outside a round). */
+  myOrders: { fire: 'shell' | 'buoy'; at: SeatId; cell: string }[];
   /** Your fleet: every ship, its cells and hits; ships still in port are listed with `cells: []`. Null for spectators. */
   mySea: { ships: Ship[]; port: ShipId[]; shots: Record<string, 'miss' | 'hit'> } | null;
   /** One per sea that is not yours and not eliminated (spectators: every living sea); every sea once over. */
@@ -155,6 +159,9 @@ const bySeatOrder = (s: SalvoState, seats: Iterable<SeatId>) => {
   return s.seats.filter((x) => set.has(x));
 };
 const isShipId = (x: unknown): x is ShipId => SHIPS.some((ship) => ship.id === x);
+
+/** Shots a seat fires this round: one per ship still afloat. */
+const gunsOf = (s: SalvoState, seat: SeatId) => s.fleets[seat].filter((x) => !isSunk(x)).length;
 
 function toMove(s: SalvoState): SeatId[] {
   if (s.phase === 'deploy') return living(s).filter((x) => inPort(s, x).length > 0);
@@ -251,14 +258,22 @@ function applyFire(s: SalvoState, seat: SeatId, command: Record<string, unknown>
   const name = cellName(i);
   if (fire === 'buoy') {
     if (!isBuoyCentre(name)) throw new GameRuleError('BAD_BUOY', `A buoy's 3×3 must lie on the sea: drop it on b2 to g7, not ${name}.`);
+    if (s.pending[seat].some((x) => x.kind === 'buoy')) throw new GameRuleError('ONE_BUOY', 'One sonar buoy a round; the rest of your salvo is shells.');
     if (buoyedAt(s, seat, at, name)) throw new GameRuleError('ALREADY_BUOYED', `You already have a buoy at ${at}'s ${name}; its reading stays live.`);
   } else if (firedAt(s, seat, at, name)) {
     throw new GameRuleError('ALREADY_FIRED', `You have already shot ${at}'s ${name}.`);
+  } else if (aimedAt(s, seat, at, name)) {
+    throw new GameRuleError('ALREADY_AIMED', `One of this round's shells is already on ${at}'s ${name}.`);
   }
-  s.pending[seat] = { kind: fire, from: seat, sea: at, cell: name };
-  s.ready = bySeatOrder(s, [...s.ready, seat]);
+  s.pending[seat].push({ kind: fire, from: seat, sea: at, cell: name });
+  // Ready once the whole salvo is in: one shot per ship afloat.
+  if (s.pending[seat].length >= gunsOf(s, seat)) s.ready = bySeatOrder(s, [...s.ready, seat]);
   if (living(s).every((x) => s.ready.includes(x))) resolve(s);
 }
+
+/** Is one of this seat's shells already aimed at that cell this round? */
+const aimedAt = (s: SalvoState, seat: SeatId, sea: SeatId, cell: string) =>
+  s.pending[seat].some((x) => x.kind === 'shell' && x.sea === sea && x.cell === cell);
 
 /** Most of `score`, keeping ties; the first criterion that splits the field decides. */
 function best(seats: SeatId[], score: (x: SeatId) => number): SeatId[] {
@@ -285,11 +300,11 @@ function finish(s: SalvoState, winner: SeatId, reason: string): void {
 
 /**
  * All shells land together. Grouped by sea and cell in seat order (never commit order): a cell two or
- * more seats hit is a Time on Target and takes its 3×3 with it. Every ship cell covered this volley and
+ * more seats hit is a Time on Target and takes its 3×3 with it (a seat never aims two shells at one cell). Every ship cell covered this volley and
  * not hit before becomes a hit credited to every seat that covered it. Mutates `s`.
  */
 function resolve(s: SalvoState): void {
-  const orders = s.seats.map((x) => s.pending[x]).filter((x): x is Order => x !== null);
+  const orders = s.seats.flatMap((x) => s.pending[x]);
   const shells: Shell[] = orders.filter((x) => x.kind === 'shell').map(({ from, sea, cell }) => ({ from, sea, cell }));
   // A buoy listens once the shells have landed; what it hears is worked out live, in the view.
   const buoys: Buoy[] = orders.filter((x) => x.kind === 'buoy').map(({ from, sea, cell }) => ({ from, sea, cell }));
@@ -370,7 +385,7 @@ function resolve(s: SalvoState): void {
   }
 
   s.lastVolley = { round: s.round, shells: results, buoys, blasts, sunk, eliminated: out };
-  for (const x of s.seats) s.pending[x] = null;
+  for (const x of s.seats) s.pending[x] = [];
   s.ready = [];
 
   const alive = living(s);
@@ -409,11 +424,12 @@ function legal(s: SalvoState, seat: SeatId): SalvoCommand[] {
     if (sea === seat) continue;
     for (let i = 0; i < SIZE * SIZE; i++) {
       const cell = cellName(i);
-      if (!firedAt(s, seat, sea, cell)) out.push({ fire: 'shell', at: sea, cell });
+      if (!firedAt(s, seat, sea, cell) && !aimedAt(s, seat, sea, cell)) out.push({ fire: 'shell', at: sea, cell });
     }
   }
-  // Or a sonar buoy instead: any centre whose 3×3 lies on the sea, once per centre per sea.
-  for (const sea of living(s)) {
+  // Or a sonar buoy for one of the shots: one a round, any centre whose 3×3 lies on the sea, once per centre per sea.
+  const buoyed = s.pending[seat].some((x) => x.kind === 'buoy');
+  for (const sea of buoyed ? [] : living(s)) {
     if (sea === seat) continue;
     for (let i = 0; i < SIZE * SIZE; i++) {
       const cell = cellName(i);
@@ -440,11 +456,11 @@ function forfeit(state: SalvoState, seat: SeatId, reason: string): SalvoState {
   const s = clone(state);
   if (s.phase === 'over' || !s.seats.includes(seat) || isEliminated(s, seat)) return s;
   s.eliminated.push({ seat, round: s.round, reason });
-  s.pending[seat] = null;
+  s.pending[seat] = [];
   s.ready = s.ready.filter((x) => x !== seat);
   const alive = living(s);
   if (alive.length === 1) {
-    for (const x of s.seats) s.pending[x] = null;
+    for (const x of s.seats) s.pending[x] = [];
     s.ready = [];
     finish(s, alive[0], reason);
   } else if (s.phase === 'fire' && alive.every((x) => s.ready.includes(x))) {
@@ -508,6 +524,8 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
     round: s.round,
     phase: s.phase,
     ready: [...s.ready],
+    guns: s.phase === 'fire' ? Object.fromEntries(living(s).map((x) => [x, gunsOf(s, x)])) : {},
+    myOrders: you && s.phase === 'fire' ? s.pending[you].map((x) => ({ fire: x.kind, at: x.sea, cell: x.cell })) : [],
     mySea,
     targets: seas.map((x) => targetView(s, x, you)),
     lastVolley: s.lastVolley && copy(s.lastVolley),
@@ -550,14 +568,18 @@ export function roundSummary(before: SalvoState, after: SalvoState): string[] {
   const fresh = v !== null && v.round === before.round && v !== before.lastVolley && before.phase === 'fire';
   const tied = after.endReason === 'tiebreak' && v ? v.eliminated : [];
   if (fresh && v) {
+    // Hits and sinkings by name; the misses only counted (a four-seat round can fire sixteen shells).
     const clauses: string[] = [];
+    let misses = 0;
     for (const x of v.shells) {
       if (x.blast) continue;
-      if (x.result === 'sunk') clauses.push(`{${x.from}} sinks {${x.sea}}'s ${x.ship}`);
-      else if (x.result === 'hit') clauses.push(`{${x.from}} hits {${x.sea}} at ${x.cell}`);
-      else clauses.push(`{${x.from}} misses {${x.sea}}`);
+      const clause =
+        x.result === 'sunk' ? `{${x.from}} sinks {${x.sea}}'s ${x.ship}` : x.result === 'hit' ? `{${x.from}} hits {${x.sea}} at ${x.cell}` : null;
+      if (clause === null) misses += 1;
+      else if (!clauses.includes(clause)) clauses.push(clause);
     }
-    if (clauses.length > 0) lines.push(`Round ${v.round}: ${clauses.join(', ')}.`);
+    const parts = misses > 0 ? [...clauses, `${misses} ${misses === 1 ? 'miss' : 'misses'}`] : clauses;
+    if (parts.length > 0) lines.push(`Round ${v.round}: ${parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`}.`);
     for (const b of v.buoys ?? []) lines.push(`{${b.from}} drops a sonar buoy on {${b.sea}}'s sea at ${b.cell}.`);
     for (const b of v.blasts) {
       const hits = `${b.hits.length} ${b.hits.length === 1 ? 'hit' : 'hits'}`;
@@ -619,7 +641,7 @@ export const salvoGame: GameModule<SalvoState> & { turn: TurnRules<SalvoState> &
       round: 0,
       fleets: each<Ship[]>(() => []),
       shots: each(() => ({})),
-      pending: each<Order | null>(() => null),
+      pending: each<Order[]>(() => []),
       sonar: each<SalvoState['sonar'][SeatId]>(() => []),
       ready: [],
       lastVolley: null,

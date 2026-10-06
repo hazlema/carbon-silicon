@@ -60,8 +60,9 @@ export const FLIGHT_MS = 1100;
 export const STAGGER_MS = 550;
 /** An impact's splash, scorch or flash after landing. */
 export const IMPACT_MS = 450;
-/** The shells of the whole volley, every sea, play inside this (after the warning and the beat). */
-export const MAX_TOTAL_MS = 4000;
+/** The shells of the whole volley, every sea, play inside this (after the warning and the beat). A full
+ *  four-seat round is 16 shells: 5.5 s keeps them about a quarter-second apart, so each salvo reads as a ripple. */
+export const MAX_TOTAL_MS = 5500;
 /** The "incoming" warning, before the first launch. */
 export const LEAD_MS = 1200;
 /** The held breath before the shells aimed at your own sea, which always come last. */
@@ -78,7 +79,7 @@ export function incoming(volley: Volley, you: string | null): { count: number; f
  * The volley as decoration, from the data alone. With `you`, a warning plays first (`lead`), and the
  * shells aimed at your sea fly last, after a held beat. Otherwise shells launch in the volley's order
  * (seat order), the shells of one Time on Target share a launch and land together, and the stagger
- * shrinks so the shells fit in four seconds. Reduced motion: everything lands at once, no warning.
+ * shrinks so the shells fit in MAX_TOTAL_MS (5.5 s). Reduced motion: everything lands at once, no warning.
  */
 export function planVolley(volley: Volley, side: (seat: string) => Side, opts: { reducedMotion?: boolean; you?: string | null } = {}): VolleyPlan {
   const still = !!opts.reducedMotion;

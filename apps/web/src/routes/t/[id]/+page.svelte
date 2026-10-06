@@ -410,7 +410,10 @@
       const who = owing.length <= 1 ? owing.join('') : `${owing.slice(0, -1).join(', ')} and ${owing.at(-1)}`;
       if (myTurn) {
         const detail = owing.length === 0 ? 'Everyone else is locked in.' : `${who} ${owing.length === 1 ? 'is' : 'are'} still aiming.`;
-        return { lead: `Round ${sv.round} — your shot.`, detail, secs };
+        const guns = (mySeat && sv.guns?.[mySeat]) || 0;
+        const sent = sv.myOrders?.length ?? 0;
+        const lead = sent > 0 ? `Round ${sv.round} — ${sent} of ${guns} shots sent.` : `Round ${sv.round} — your salvo: ${guns} ${guns === 1 ? 'shot' : 'shots'}.`;
+        return { lead, detail, secs };
       }
       return { lead: `Round ${sv.round} — waiting on ${who}…` };
     }

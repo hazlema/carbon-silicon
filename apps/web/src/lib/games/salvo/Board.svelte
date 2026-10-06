@@ -21,8 +21,8 @@
     colors?: TableColors;
     legal: unknown[];
     interactive: boolean;
-    /** Called with ONE entry of `legal`, verbatim. */
-    onMove: (cmd: unknown) => void;
+    /** Called with ONE entry of `legal`, verbatim; a salvo awaits each before sending the next. */
+    onMove: (cmd: unknown) => void | Promise<void>;
     /** The match's seats, for names. */
     seats: { seat: string; identity: { handle: string; kind: string } }[];
     you: string | null;
@@ -72,55 +72,114 @@
   /** Everyone at the table but you, in seat order: the seas you can aim at (or, watching, every fleet). */
   const others = $derived(view.seats.filter((s) => s !== me));
 
-  // ── Fire: Shell or Sonar buoy; click selects, Fire (or Enter on the selected cell) sends ──
+  // ── Fire: a salvo, one shot per ship afloat. Clicks toggle aims (on any sea); Fire (or Enter on an aim) sends them, one move each ──
   type Kind = 'shell' | 'buoy';
+  interface Aim {
+    fire: Kind;
+    at: string;
+    cell: string;
+  }
   let kind = $state<Kind>('shell');
-  const buoysLegal = $derived(legal.some(isBuoy));
-  /** What the fire control sends: a shell, unless a buoy is chosen and still on offer. */
-  const aimKind = $derived<Kind>(buoysLegal ? kind : 'shell');
-  let selected = $state<string | null>(null);
+  let aims = $state<Aim[]>([]);
+  /** Aims going out right now (each is its own move, awaited in turn). */
+  let sending = $state(false);
   /** The cell under the pointer while aiming a buoy, for its footprint. */
   let aimHover = $state<string | null>(null);
-  /** What you sent this round, for the control's "Locked in at e5" / "Buoy away at e5". */
-  let sentKind = $state<Kind>('shell');
   const round = $derived(view.round);
   const iAmReady = $derived(!!me && view.ready.includes(me));
-  // A new round clears the aim and goes back to shells; so does looking at another sea, unless the order is already away (then it stays on show).
+  /** Shots this round (one per ship afloat), the ones already away, and the room left to aim. */
+  const guns = $derived(me ? (view.guns?.[me] ?? 0) : 0);
+  const sent = $derived(view.myOrders ?? []);
+  const room = $derived(Math.max(0, guns - sent.length - aims.length));
+  /** One sonar buoy a round: aimed or already away, the toggle greys out. */
+  const buoyAimed = $derived(aims.some((a) => a.fire === 'buoy'));
+  const buoyUsed = $derived(buoyAimed || sent.some((o) => o.fire === 'buoy'));
+  const buoysLegal = $derived(legal.some(isBuoy));
+  const aimKind = $derived<Kind>(buoysLegal && !buoyUsed ? kind : 'shell');
+  // A new round clears the aims and goes back to shells.
   $effect(() => {
     void round;
-    selected = null;
+    aims = [];
     kind = 'shell';
-    sentKind = 'shell';
-  });
-  $effect(() => {
-    void targetSea;
-    if (!untrack(() => iAmReady)) selected = null;
   });
   const aimable = (k: Kind, cell: string) => (k === 'buoy' ? buoyCentres.has(cell) : fireCells.has(cell));
-  /** Switching Shell / Sonar buoy keeps the aim only if it is still a legal cell for the new kind. */
-  function setKind(k: Kind) {
-    kind = k;
-    if (selected && !aimable(k, selected)) selected = null;
+  const aimAt = (sea: string | null, cell: string, k?: Kind) => aims.find((a) => a.at === sea && a.cell === cell && (!k || a.fire === k));
+  const sentAt = (sea: string | null, cell: string) => sent.find((o) => o.fire === 'shell' && o.at === sea && o.cell === cell);
+  /** The aims on the shown sea, and how many each other sea has. */
+  const aimsHere = $derived(aims.filter((a) => a.at === targetSea));
+  const aimedOn = (sea: string) => aims.filter((a) => a.at === sea).length;
+  const setKind = (k: Kind) => (kind = k);
+  /** Click a cell: take back an aim there (the buoy's first), or add one if there's a gun free. A buoy moves rather than doubling. */
+  function toggle(cell: string) {
+    if (!targetSea) return;
+    const sea = targetSea;
+    const buoy = aimAt(sea, cell, 'buoy');
+    if (buoy) {
+      aims = aims.filter((a) => a !== buoy);
+      return;
+    }
+    if (aimKind === 'buoy') {
+      if (!buoyCentres.has(cell)) return;
+      const other = aims.find((a) => a.fire === 'buoy');
+      if (!other && room === 0) return;
+      aims = [...aims.filter((a) => a !== other), { fire: 'buoy', at: sea, cell }];
+      // One buoy a round: once it's down, the rest of the salvo is shells.
+      kind = 'shell';
+      return;
+    }
+    const shell = aimAt(sea, cell, 'shell');
+    if (shell) aims = aims.filter((a) => a !== shell);
+    else if (room > 0 && fireCells.has(cell)) aims = [...aims, { fire: 'shell', at: sea, cell }];
   }
-  const fireCmd = $derived.by(() => {
-    if (!selected || !targetSea) return null;
-    const pool = aimKind === 'buoy' ? legal.filter(isBuoy) : legal.filter(isFire);
-    return pool.find((l) => l.at === targetSea && l.cell === selected) ?? null;
-  });
-  function fire() {
-    if (!interactive || !fireCmd) return;
+  /** The entry of `legal` an aim stands for, if it's still on offer. */
+  const commandOf = (a: Aim) => legal.find((l) => (a.fire === 'buoy' ? isBuoy(l) : isFire(l)) && (l as FireCmd).at === a.at && (l as FireCmd).cell === a.cell);
+  /** Send the salvo: one move per aim, in order, each awaited (the page takes one move at a time). Stops if one doesn't land. */
+  async function fire() {
+    if (!interactive || sending || aims.length === 0) return;
+    sending = true;
     sound?.clink();
-    sentKind = aimKind;
-    onMove($state.snapshot(fireCmd));
+    const at = round;
+    try {
+      for (const a of [...aims]) {
+        if (view.round !== at) break;
+        const cmd = commandOf(a);
+        if (!cmd) {
+          aims = aims.filter((x) => x !== a);
+          continue;
+        }
+        const before = view.myOrders?.length ?? 0;
+        await onMove($state.snapshot(cmd));
+        if (view.round !== at) break;
+        if ((view.myOrders?.length ?? 0) <= before) break;
+        aims = aims.filter((x) => x !== a);
+      }
+    } finally {
+      sending = false;
+    }
   }
-  /** The buoy footprints to preview on the shown sea: where you'd drop it (or did), and where the pointer is. */
+  /** The buoy footprints on the shown sea: the one sent, the one aimed, and where the pointer is. */
   const buoyPreview = $derived.by(() => {
-    const out: { cell: string; cells: string[]; picked: boolean }[] = [];
-    const showSent = iAmReady && sentKind === 'buoy';
-    if (selected && (showSent || (!iAmReady && aimKind === 'buoy'))) out.push({ cell: selected, cells: buoyCells(selected), picked: true });
-    if (!iAmReady && aimKind === 'buoy' && aimHover && aimHover !== selected && buoyCentres.has(aimHover))
-      out.push({ cell: aimHover, cells: buoyCells(aimHover), picked: false });
+    const out: { cell: string; picked: boolean; sent: boolean }[] = [];
+    for (const o of sent) if (o.fire === 'buoy' && o.at === targetSea) out.push({ cell: o.cell, picked: true, sent: true });
+    for (const a of aimsHere) if (a.fire === 'buoy') out.push({ cell: a.cell, picked: true, sent: false });
+    if (!iAmReady && aimKind === 'buoy' && aimHover && buoyCentres.has(aimHover) && !out.some((b) => b.cell === aimHover))
+      out.push({ cell: aimHover, picked: false, sent: false });
     return out;
+  });
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  /** What the fire button says: "Fire 3 shells", "Fire 2 shells + buoy", "Drop buoy", or "Fire 2 of 4" for part of a salvo. */
+  const fireLabel = $derived.by(() => {
+    const shells = aims.filter((a) => a.fire === 'shell').length;
+    const owed = guns - sent.length;
+    if (aims.length < owed) return `Fire ${aims.length} of ${owed}`;
+    if (!buoyAimed) return `Fire ${plural(shells, 'shell')}`;
+    return shells ? `Fire ${plural(shells, 'shell')} + buoy` : 'Drop buoy';
+  });
+  /** What went out this round, for the locked-in line. */
+  const sentText = $derived.by(() => {
+    const shells = sent.filter((o) => o.fire === 'shell').length;
+    const buoy = sent.some((o) => o.fire === 'buoy');
+    return shells && buoy ? `${plural(shells, 'shell')} + buoy away` : buoy ? 'Buoy away' : `${plural(shells, 'shell')} away`;
   });
 
   // ── Deploy: pick a ship, R rotates, click a cell; Random for the lot ──
@@ -478,17 +537,20 @@
   }
 
   type Mode = 'fire' | 'deploy' | 'view';
+  /** A fire cell takes a click if it holds an aim (to take it back), or is legal and a gun is free (a buoy can always move). */
+  const fireable = (cell: string) =>
+    !sending && (!!aimAt(targetSea, cell) || (aimable(aimKind, cell) && (room > 0 || (aimKind === 'buoy' && buoyAimed))));
   const enabled = (mode: Mode, cell: string) =>
-    interactive && (mode === 'fire' ? aimable(aimKind, cell) : mode === 'deploy' ? placeable.has(cell) : false);
+    interactive && (mode === 'fire' ? fireable(cell) : mode === 'deploy' ? placeable.has(cell) : false);
   function press(mode: Mode, cell: string) {
     if (suppress || !enabled(mode, cell)) return;
-    if (mode === 'fire') selected = cell;
+    if (mode === 'fire') toggle(cell);
     else if (mode === 'deploy') place(cell);
   }
   function keydown(e: KeyboardEvent, mode: Mode, cell: string, k: number) {
-    if (e.key === 'Enter' && mode === 'fire' && selected === cell && fireCmd) {
+    if (e.key === 'Enter' && mode === 'fire' && aimAt(targetSea, cell)) {
       e.preventDefault();
-      fire();
+      void fire();
       return;
     }
     step(e, k);
@@ -547,7 +609,7 @@
             data-mark={m.mark}
             aria-label={label(cell, m, own) + (reading ? `, sonar buoy: ${reading.afloat} afloat around it` : '')}
             aria-disabled={!ok}
-            aria-pressed={mode === 'fire' ? selected === cell : undefined}
+            aria-pressed={mode === 'fire' ? !!aimAt(seat, cell) : undefined}
             onclick={() => press(mode, cell)}
             onkeydown={(e) => keydown(e, mode, cell, k)}
             onpointerenter={() => (mode === 'deploy' ? (hover = cell) : mode === 'fire' && (aimHover = cell))}
@@ -576,7 +638,9 @@
               <span class="bubbles" style:--d="{sinking}ms"><i></i><i></i><i></i></span>
             {/if}
             {#if ghost}<span class="ghost" class:bad={!preview?.ok}></span>{/if}
-            {#if mode === 'fire' && selected === cell}<span class="reticle" class:sent={iAmReady} class:buoy={buoyPreview.some((b) => b.picked)}></span>{/if}
+            {#if mode === 'fire' && aimAt(seat, cell, 'shell')}<span class="reticle"></span>
+            {:else if mode === 'fire' && aimAt(seat, cell, 'buoy')}<span class="reticle buoy"></span>
+            {:else if mode === 'fire' && sentAt(seat, cell)}<span class="reticle sent" data-testid="sent"></span>{/if}
           </button>
         {/each}
         {#if main}
@@ -593,9 +657,9 @@
               {@const c = centre(r.cell, size, g)}
               <span class="foot" class:newest={n === sonarHere.length - 1} class:none={r.afloat === 0} style:left="{c.x}px" style:top="{c.y}px"></span>
             {/each}
-            {#each buoyPreview as b (b.cell)}
+            {#each mode === 'fire' ? buoyPreview : [] as b (b.cell)}
               {@const c = centre(b.cell, size, g)}
-              <span class="foot aim" class:picked={b.picked} class:sent={iAmReady} style:left="{c.x}px" style:top="{c.y}px"></span>
+              <span class="foot aim" class:picked={b.picked} class:sent={b.sent} style:left="{c.x}px" style:top="{c.y}px"></span>
             {/each}
           </div>
         {/if}
@@ -658,12 +722,20 @@
 
 {#snippet mini(t: TargetView)}
   {@const model = targetModel(t)}
+  {@const n = aimedOn(t.sea)}
   <span class="mini" data-mini={t.sea} aria-hidden="true">
     {#each ORDER as cell (cell)}
       {@const m = model.get(cell) ?? SEA}
       {@const land = landing.get(`${t.sea} ${cell}`)}
-      <i class="m-{m.mark}" class:land={land !== undefined} style:--d="{land ?? 0}ms"></i>
+      <i
+        class="m-{m.mark}"
+        class:m-aim={!!aimAt(t.sea, cell)}
+        class:m-out={!!sent.find((o) => o.at === t.sea && o.cell === cell)}
+        class:land={land !== undefined}
+        style:--d="{land ?? 0}ms"
+      ></i>
     {/each}
+    {#if n > 0}<b class="aimed" data-testid="aimed">{n}</b>{/if}
   </span>
 {/snippet}
 
@@ -716,8 +788,14 @@
           {@const on = !deploying && targetSea === seat}
           {#snippet card()}
             {#if t}{@render mini(t)}{:else}<span class="mini empty" aria-hidden="true"></span>{/if}
+            {@const g = view.guns?.[seat]}
             <span class="who">
-              <span class="name" class:human={humanSeat(seat)}>{handleOf(seat)}</span>
+              <span class="line1"
+                ><span class="name" class:human={humanSeat(seat)}>{handleOf(seat)}</span
+                >{#if g !== undefined}<span class="guns" data-testid="guns" data-guns={g} title="{plural(g, 'gun')}: one shot per ship afloat"
+                    >{#each { length: SHIPS.length } as _, i (i)}<i class:lost={i >= g}></i>{/each}</span
+                  >{/if}</span
+              >
               <span class="stat">{afloatOf(seat)} afloat · {view.scrap[seat] ?? 0} scrap</span>
             </span>
             {#if on}<span class="badge">target</span>{/if}
@@ -732,7 +810,7 @@
               data-seat={seat}
               data-ready={view.ready.includes(seat)}
               aria-pressed={on}
-              aria-label="{handleOf(seat)}'s sea, {afloatOf(seat)} afloat{st ? `, ${STATE_TEXT[st] ?? st}` : ''}"
+              aria-label="{handleOf(seat)}'s sea, {afloatOf(seat)} afloat{view.guns?.[seat] !== undefined ? `, ${plural(view.guns[seat], 'gun')}` : ''}{aimedOn(seat) ? `, ${aimedOn(seat)} aimed` : ''}{st ? `, ${STATE_TEXT[st] ?? st}` : ''}"
               onclick={() => (picked = seat)}>{@render card()}</button
             >
           {:else}
@@ -779,23 +857,40 @@
       {:else if deploying}
         <p class="slot" data-testid="waiting">Fleet deployed. {waitingFor.length ? `Waiting on ${names(waitingFor)}…` : ''}</p>
       {:else if live && me && !amOut}
+        <div class="salvo-head">
+          <span class="head">Salvo: {plural(guns, 'shot')}</span>
+          <span class="shots" data-testid="shots" aria-label="{sent.length} sent, {aims.length} aimed, {room} to aim">
+            {#each sent as o, i (i)}<i class="s-sent" class:b={o.fire === 'buoy'}></i>{/each}
+            {#each aims as a, i (i)}<i class="s-aimed" class:b={a.fire === 'buoy'}></i>{/each}
+            {#each { length: room } as _, i (i)}<i></i>{/each}
+          </span>
+        </div>
         {#if iAmReady}
-          <p class="slot locked" data-testid="waiting">
-            {sentKind === 'buoy' && selected ? `Buoy away at ${selected}` : `Locked in${selected ? ` at ${selected}` : ''}`}. Waiting on {names(waitingFor)}…
-          </p>
+          <p class="slot locked" data-testid="waiting">Locked in — {sentText}. Waiting on {names(waitingFor)}…</p>
         {:else}
-          {#if buoysLegal}
-            <div class="kind" role="group" aria-label="What to send this round">
+          {#if buoysLegal || buoyUsed}
+            <div class="kind" role="group" aria-label="What the next aim is">
               <button type="button" aria-pressed={aimKind === 'shell'} data-testid="kind-shell" onclick={() => setKind('shell')}>Shell</button>
-              <button type="button" class="k-buoy" aria-pressed={aimKind === 'buoy'} data-testid="kind-buoy" onclick={() => setKind('buoy')}>Sonar buoy</button>
+              <button
+                type="button"
+                class="k-buoy"
+                aria-pressed={aimKind === 'buoy'}
+                data-testid="kind-buoy"
+                disabled={buoyUsed || (room === 0 && !buoyAimed)}
+                title={buoyAimed ? 'One buoy a round: click its centre to take it back' : buoyUsed ? 'One buoy a round' : undefined}
+                onclick={() => setKind('buoy')}>Sonar buoy</button
+              >
             </div>
           {/if}
-          {#if fireCmd}
-            <button type="button" class="firebtn" class:buoy={aimKind === 'buoy'} data-testid="fire" disabled={!interactive} onclick={fire}
-              >{aimKind === 'buoy' ? `Drop buoy at ${selected}` : `Fire at ${selected}`}</button
+          {#if aims.length > 0}
+            <button type="button" class="firebtn" class:buoy={aims.every((x) => x.fire === 'buoy')} data-testid="fire" disabled={!interactive || sending} onclick={() => void fire()}
+              >{sending ? 'Firing…' : fireLabel}</button
             >
+            {#if room === 0}<p class="hint">Salvo aimed. Click an aim to take it back.</p>{/if}
           {:else}
-            <button type="button" class="slot" data-testid="fire" disabled>{aimKind === 'buoy' ? 'Pick a centre for the buoy' : 'Pick a cell to fire'}</button>
+            <button type="button" class="slot" data-testid="fire" disabled
+              >{aimKind === 'buoy' ? 'Pick a centre for the buoy' : sent.length ? `Pick ${plural(room, 'more cell')}` : `Pick ${plural(room, 'cell')} to fire`}</button
+            >
           {/if}
         {/if}
       {:else if live && amOut}
@@ -1151,6 +1246,55 @@
     border-radius: 4px;
     background: #0f2134;
   }
+  .mini {
+    position: relative;
+  }
+  /* Your aims on that sea (outlined), and what you've already sent this round (filled, dimmer). */
+  .mini .m-aim {
+    box-shadow: inset 0 0 0 1px var(--carbon);
+    background: rgba(255, 122, 61, 0.25);
+  }
+  .mini .m-out {
+    background: rgba(255, 122, 61, 0.5);
+  }
+  .mini .aimed {
+    position: absolute;
+    right: -5px;
+    top: -5px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: var(--carbon);
+    color: #1a0d06;
+    font: 700 10px/15px var(--font-ui);
+    text-align: center;
+    box-shadow: 0 0 0 2px #141829;
+  }
+  .line1 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  /* Guns: one per ship afloat. Losing a ship costs you a shot a round. */
+  .guns {
+    display: flex;
+    gap: 2px;
+    flex: none;
+  }
+  .guns i {
+    width: 4px;
+    height: 9px;
+    border-radius: 1px;
+    background: var(--chalk);
+    opacity: 0.85;
+  }
+  .guns i.lost {
+    background: none;
+    box-shadow: inset 0 0 0 1px rgba(170, 180, 210, 0.35);
+    opacity: 1;
+  }
   .mini.empty {
     opacity: 0.4;
   }
@@ -1255,7 +1399,39 @@
   .firebtn.buoy:hover {
     background: #8ae6f4;
   }
-  /* Shell | Sonar buoy: what this round's order is. */
+  /* The salvo: a pip per gun — filled sent, outlined aimed, empty still to aim. */
+  .salvo-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .salvo-head .head {
+    margin: 0;
+  }
+  .shots {
+    display: flex;
+    gap: 4px;
+  }
+  .shots i {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1.5px #3a4266;
+  }
+  .shots i.s-aimed {
+    box-shadow: inset 0 0 0 2px var(--carbon);
+  }
+  .shots i.s-sent {
+    background: var(--carbon);
+    box-shadow: none;
+  }
+  .shots i.b.s-aimed {
+    box-shadow: inset 0 0 0 2px var(--silicon);
+  }
+  .shots i.b.s-sent {
+    background: var(--silicon);
+  }
+  /* Shell | Sonar buoy: what the next aim is. */
   .kind {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1274,8 +1450,11 @@
     font: 500 13px var(--font-ui);
     white-space: nowrap;
   }
-  .kind button:hover {
+  .kind button:hover:not(:disabled) {
     color: var(--chalk);
+  }
+  .kind button:disabled {
+    opacity: 0.4;
   }
   .kind button[aria-pressed='true'] {
     background: color-mix(in oklab, var(--carbon) 22%, var(--panel-2));
@@ -1595,9 +1774,12 @@
   }
   .reticle::before { left: 50%; top: -18%; bottom: -18%; width: 1px; }
   .reticle::after { top: 50%; left: -18%; right: -18%; height: 1px; }
+  /* Already sent this round: committed, so it stops pulsing and dims. */
   .reticle.sent {
     animation: none;
-    opacity: 0.6;
+    opacity: 0.45;
+    border-style: dashed;
+    box-shadow: none;
   }
   .reticle.buoy {
     border-color: var(--silicon);

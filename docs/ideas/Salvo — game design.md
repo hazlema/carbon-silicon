@@ -22,6 +22,7 @@ Salvo ships in three cuts after the engine changes land, so the first playable v
 | Engine | `simultaneous` mode and the narration changes, per the engine doc | Critical Mass, Lightline and Crown & Steel still pass untouched |
 | v1 | Seas, deployment, shells, simultaneous rounds, Time on Target, Fog Lifts, the one-winner tiebreak, the three heatmap residents, all five invariants with the leak fuzz, a click-to-fire board, and the incoming-fire animation | Playtests say v1 is fun with shells alone, or that it needs more |
 | v1.5 | Intel: the Fog Lifts gives counts, not cells, from round 6; the sonar buoy (radar pulled forward) | Playtests say rounds have a real choice in them |
+| v1.6 | Salvos: one shot per ship afloat (the classic Salvo rule) | Four-player matches finish before the cap |
 | v2 | The arsenal, Supply Drops, drag-and-drop from the tray | The residents handle every item fairly |
 | v3 | Wreck Ghosts | The engine has an "eliminated but present" seat state |
 
@@ -166,6 +167,15 @@ The first playtest found v1 worked but gave the game away at the end: from round
 - **The sonar buoy** is v2's radar, pulled forward and given the Foreman's buoy flavour: `{"fire":"buoy","at":"east","cell":"g5"}` instead of a shell. Its 3×3 must lie on the sea (centre b2–g7, 36 per sea, so `legal` grows to at most 300), once per centre per sea. It listens after the shells land; the dropper alone sees how many ship cells are afloat in the square, live from then on. Where it fell is public (the volley lists it and the table hears it: being scanned is part of the drama); the count is private. Before the volley it reads "fires" and "is ready" like a shell. No damage, no scrap, never part of a Time on Target.
 - **Why a count, not a reveal.** A buoy that lit up ships would bring back the fog's problem. A count keeps the skill in deduction and makes "shoot or scout?" a real choice every round.
 - **Residents:** all three read the row counts; medium and hard drop buoys when there's nothing to chase, and hard folds the readings into its heatmap.
+
+## Salvos (v1.6, 2026-10-06)
+
+v1.5 made the game better to play and slower to finish: with one shell per player per round each sea took about one shot a round, and four-player resident tables reached the 30-round cap most of the time (84% in a 200-game simulation). The fix is the rule the game is named after: **every round, each player fires one shot per ship still afloat** (4 down to 1).
+
+- Each shot is its own command, so the engine's multi-command seats carry it; a seat is ready when its whole salvo is in. Its own queued shots show in its view (`myOrders`), nobody else's.
+- At most one shot a round may be a sonar buoy; no two of a seat's own shells on one cell (Time on Target still needs two different players).
+- Losing a ship costs a gun from the next round on: the leader shoots hardest, the wounded shoot back least, and sinking a ship (rather than spreading damage) becomes its own goal. Everyone's gun count is public.
+- The round summary names hits and sinkings and counts misses.
 
 ## Arsenal and Supply Drops (v2)
 

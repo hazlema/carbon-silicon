@@ -15,8 +15,9 @@ real games the engine played. If you only read one section, read
 
 Salvo is a naval game for two to four players. Each player hides a fleet of four
 ships on their own 8 × 8 sea, where nobody else can see it. Then, round after
-round, **everyone fires one shell at the same moment**: you pick an enemy sea and
-a cell, and once every player has picked, all the shells land together. A shell
+round, **everyone fires a salvo at the same moment, one shot for every ship
+they still have afloat**: you pick enemy seas and cells, and once every player
+has picked, all the shells land together. A shell
 either splashes into open water (a miss), strikes a ship (a hit), or strikes the
 last unhit part of a ship and sends it to the bottom (sunk). When every ship in a
 fleet is sunk, that player is out. **The last fleet afloat wins.**
@@ -156,35 +157,43 @@ miss.
 
 ## A round
 
-Every round, every player still afloat does the same thing: **fire one shell**
-at one cell of one opponent's sea (or, instead, drop a
-[sonar buoy](#the-sonar-buoy) to listen for ships).
+Every round, every player still afloat fires a **salvo: one shot for every ship
+they still have afloat**. A full fleet fires four shots; lose a ship and your
+next salvo has three; down to your last ship, you fire one. Each shot is one
+command:
 
 ```json
 {"fire": "shell", "at": "east", "cell": "e5"}
 ```
 
 - `at` is the seat whose sea you're aiming at. It must be an opponent who is
-  still in the game. You can't fire at your own sea.
-- `cell` is any cell of that sea **you haven't shot before**. Once you've fired
-  at east's `e5`, it's gone from your choices on east's sea (it's still open on
-  the other seas).
+  still in the game. You can't fire at your own sea. Different shots of one
+  salvo may go to different seas.
+- `cell` is any cell of that sea **you haven't shot before**, and not one
+  another shot of this salvo is already aimed at. Once you've fired at east's
+  `e5`, it's gone from your choices on east's sea (it's still open on the other
+  seas).
 - Cells *other players* have shot are still yours to fire at. Firing at a cell
   someone else already hit is legal but scores nothing on its own; it exists for
   Time on Target (below).
+- One shot of each salvo may be a [sonar buoy](#the-sonar-buoy) instead of a
+  shell. Only one a round.
 
-Once you fire, you're **ready**. The table hears "north is ready", and nothing
-else: not the sea, not the cell. You can't take a shell back or change it.
-When the last player still afloat is ready, the round **resolves**: every shell
-lands at once, the results go up for everyone to see, and the next round opens.
+You send your shots one at a time or all together; a sent shot can't be taken
+back. Once your whole salvo is in, you're **ready**. The table hears "north is
+ready", and nothing else: not the seas, not the cells. Your own view shows the
+shots you've sent this round (`myOrders`), and nobody else's. When the last
+player still afloat is ready, the round **resolves**: every shot lands at once,
+the results go up for everyone to see, and the next round opens. Everyone's
+gun count for the round is public (`guns` in the view): it's just their ships
+afloat.
 
-Each round has a 45-second clock. If yours runs out, the autopilot sends one
-random legal command for you (a shell, or now and then a buoy, at a random cell
-of a random enemy sea) and the table
-hears that the autopilot moved for you, never where. Every absent seat is fired
-for at the same deadline, and the round resolves. **Three missed
-rounds in a row forfeit the match.** Any shell you fire yourself resets the
-count.
+Each round has a 45-second clock. If yours runs out, the autopilot sends the
+rest of your salvo for you, at random (shells, and now and then a buoy) and the
+table hears that the autopilot moved for you, never where. Every absent seat is
+fired for at the same deadline, and the round resolves. **Three missed rounds in
+a row forfeit the match.** Any round where you send your whole salvo yourself
+resets the count.
 
 ### What a shell can do
 
@@ -198,15 +207,15 @@ count.
 
 Here is the same four-player game three rounds later. In round 1 south hit east
 at `c5`; in round 2 north hit `c4` and south hit `g4`; in round 3 north hit `c6`
-and south sank east's submarine on `g4` and `h4`. Round 4 has just landed. This
-is east's sea as north sees it:
+and south sank east's submarine on `g4` and `h4`. The rest of every salvo
+splashed. Round 4 has just landed. This is east's sea as north sees it:
 
 ```
 east, scrap 3, 7 ship cells afloat
   a b c d e f g h
-8 . . . . . . . .
-7 . o . . . . . .
-6 . . X . . . . .
+8 o o o o o . . .
+7 o o . o o . o .
+6 . . X o o . o .
 5 . o X . . . . .
 4 . . X o . . * *
 3 . . o . . . . .
@@ -222,29 +231,31 @@ minus the five hits).
 
 Read it like north would. Three hits stand in a line on `c4`, `c5` and `c6`, and
 nothing has sunk there, so a ship is still alive on that line. `c3` below is a
-miss (north's round 4 shell). If those three hits are one ship, it's the cruiser
-and its last cell is `c7`. North never shot `c5`: south had hit it in round 1 and
-the hit is public, so a shell there would have been wasted. That's the whole
-game in one picture: use everyone's shots, not just your own.
+miss (one of north's round 4 shots). If those three hits are one ship, it's the
+cruiser and its last cell is `c7`, which nobody has touched yet. The top three
+rows are pocked with misses: four salvos of four shots land a lot of water.
+North never shot `c5`: south had hit it in round 1 and the hit is public, so a
+shot there would have been wasted. That's the whole game in one picture: use
+everyone's shots, not just your own.
 
 The table hears the round once it has landed, in one line credited to nobody
-(`{north}` stands for whoever sits north):
+(`{north}` stands for whoever sits north). Hits and sinkings are named; misses
+are only counted, since a four-player round can fire sixteen shots:
 
 ```
-Round 4: {north} misses {east}, {east} hits {north} at e2, {south} misses {east}, {west} hits {south} at d3.
+Round 4: {east} hits {north} at e2, {west} hits {south} at d3 and 13 misses.
 ```
 
-A miss doesn't say where; a hit does, because the hit is on the board for
-everyone anyway.
+The line doesn't say where the misses fell; the board does, for everyone.
 
 ### Exactly how a round resolves
 
 The order never depends on who committed first, and the dice are never rolled:
 
 1. Every committed shell is gathered, listed in seat order (north, east, south,
-   west).
-2. Shells are grouped by sea and cell. A cell of a sea that **two or more**
-   shells aimed at is a Time on Target: it covers that cell and the up to eight
+   west), each seat's in the order it sent them.
+2. Shells are grouped by sea and cell. A cell of a sea that shells from **two or
+   more players** aimed at is a Time on Target: it covers that cell and the up to eight
    cells around it, credited to every shooter. Every other shell covers its own
    cell, credited to its shooter.
 3. Every covered cell is recorded on that sea as a hit (a ship is there) or a
@@ -272,7 +283,9 @@ and **every player who fired into it gets the credit for every hit**, and for an
 ship it sinks.
 
 Nobody can do it alone. It only happens because players talk it over in the
-table chat: "everybody hit east at f2." And then somebody doesn't.
+table chat: "everybody hit east at f2." And then somebody doesn't. With a salvo
+of several shots it costs you only one of them to join a strike, so promises are
+cheap to make, and to break.
 
 ### A worked strike
 
@@ -282,10 +295,10 @@ and after, as north sees east's sea:
 ```
 east, scrap 3, 7 ship cells afloat     east, scrap 3, 4 ship cells afloat
   a b c d e f g h                        a b c d e f g h
-8 . . . . . . . .                      8 . . . . . . . .   fog lifted: 1 afloat
-7 . o . . . . . .                      7 . o . . . . . .
-6 . . X . . . . .                      6 . . X . . . . .
-5 . o X . . . . .                      5 . o X . . . . .
+8 o o o o o . . .                      8 o o o o o . . .   fog lifted: 1 afloat
+7 o o . o o . o .                      7 o o . o o . o .
+6 . . X o o . o .                      6 o o X o o . o .
+5 . o X . . . . .                      5 . o X o o o . o
 4 . . X o . . * *                      4 . . X o . . * *
 3 . . o . . . . .                      3 . . o . o o o .
 2 . . . . . . . .                      2 . . . . * * * .
@@ -296,10 +309,11 @@ east, scrap 3, 7 ship cells afloat     east, scrap 3, 4 ship cells afloat
 The blast covered `e1` to `g3`. East's destroyer was lying on `e2`, `f2` and
 `g2`: all three cells hit at once, and it sank. North and south each earn 3 scrap
 for the three hits and 3 more for the sinking. The six water cells are recorded
-as misses. The table hears:
+as misses. The table hears it, with the rest of everyone's salvos counted as
+misses:
 
 ```
-Round 5: {east} misses {north}, {west} misses {south}.
+Round 5: 13 misses.
 Time on Target at {east} f2 by {north} and {south}: 9 cells, 3 hits.
 {north} and {south} sink {east}'s destroyer.
 The fog lifts from row 8.
@@ -312,9 +326,20 @@ And the volley as the machine view carries it:
   "round": 5,
   "shells": [
     {"from": "north", "sea": "east", "cell": "f2", "result": "sunk", "ship": "destroyer", "blast": true},
+    {"from": "north", "sea": "east", "cell": "b6", "result": "miss", "ship": null, "blast": false},
+    {"from": "north", "sea": "east", "cell": "a6", "result": "miss", "ship": null, "blast": false},
+    {"from": "north", "sea": "east", "cell": "h5", "result": "miss", "ship": null, "blast": false},
     {"from": "east", "sea": "north", "cell": "h1", "result": "miss", "ship": null, "blast": false},
+    {"from": "east", "sea": "north", "cell": "a7", "result": "miss", "ship": null, "blast": false},
+    {"from": "east", "sea": "north", "cell": "h6", "result": "miss", "ship": null, "blast": false},
     {"from": "south", "sea": "east", "cell": "f2", "result": "sunk", "ship": "destroyer", "blast": true},
-    {"from": "west", "sea": "south", "cell": "f5", "result": "miss", "ship": null, "blast": false}
+    {"from": "south", "sea": "east", "cell": "f5", "result": "miss", "ship": null, "blast": false},
+    {"from": "south", "sea": "east", "cell": "e5", "result": "miss", "ship": null, "blast": false},
+    {"from": "south", "sea": "east", "cell": "d5", "result": "miss", "ship": null, "blast": false},
+    {"from": "west", "sea": "south", "cell": "f5", "result": "miss", "ship": null, "blast": false},
+    {"from": "west", "sea": "south", "cell": "b7", "result": "miss", "ship": null, "blast": false},
+    {"from": "west", "sea": "south", "cell": "a7", "result": "miss", "ship": null, "blast": false},
+    {"from": "west", "sea": "south", "cell": "h6", "result": "miss", "ship": null, "blast": false}
   ],
   "buoys": [],
   "blasts": [
@@ -350,7 +375,7 @@ And the volley as the machine view carries it:
 Shells are **secret until the volley lands**. The table hears "is ready" and
 nothing more; the game's narration and its description of a command never name a
 sea, a cell or a ship before the round resolves, and no view shows a pending
-shell to anyone, not even the player who fired it. So when somebody in the chat
+shell to anyone but the player who fired it. So when somebody in the chat
 says "I'm in, f2", there is no way to check until the shells come down. Keep your
 word or don't; everyone finds out together. And the player you're planning to
 blast can read the chat too, which is half the fun.
@@ -372,22 +397,25 @@ Here are east's and south's seas as a spectator sees them at the start of round
 ```
 east, scrap 3, 4 ship cells afloat           south, scrap 12, 11 ship cells afloat
   a b c d e f g h                              a b c d e f g h
-8 . . . . . . o o   fog lifted: 1 afloat     8 . . . . . o . .   fog lifted: 4 afloat
-7 . o . . . . . o   fog lifted: 2 afloat     7 . . . . . o o .   fog lifted: 1 afloat
-6 . . X . . . . o   fog lifted: 1 afloat     6 . . . . . o . .   fog lifted: 1 afloat
-5 . o X . . . . .                            5 . . . . . o . .
-4 o . X o . . * *                            4 . . . . . . . .
-3 o . o . o o o .                            3 . . . X . . . .
-2 o . . . * * * .   fog lifted: 0 afloat     2 . . . . . . . .   fog lifted: 1 afloat
-1 . . . . o o o .   fog lifted: 0 afloat     1 o . . . . . . .   fog lifted: 1 afloat
+8 o o o o o . o o   fog lifted: 1 afloat     8 . . . . o o o o   fog lifted: 4 afloat
+7 o o . o o . o o   fog lifted: 2 afloat     7 o o o o . o o o   fog lifted: 1 afloat
+6 o o X o o . o o   fog lifted: 1 afloat     6 o o o o . o o o   fog lifted: 1 afloat
+5 o o X o o o . o                            5 o o o o o o o o
+4 o o X o o o * *                            4 . . . . . . . .
+3 o o o o o o o o                            3 . . . X . . . .
+2 o o o o * * * o   fog lifted: 0 afloat     2 . . . . . . . .   fog lifted: 1 afloat
+1 . . . . o o o o   fog lifted: 0 afloat     1 o . . . . . . .   fog lifted: 1 afloat
   a b c d e f g h                              a b c d e f g h
 ```
 
-East's row 1 and row 2 read `0`: every cell left in them is open water, so
-nobody needs to fire there again. Row 7 has two ship cells afloat somewhere in
-its six unshot cells. South's row 8 has **four**: with only seven cells unshot,
-that's a ship lying along the row, or the tops of several ships running north,
-and either way row 8 is worth a shell. The fog never says which ships they are.
+East's rows 1 and 2 read `0`: every cell left in them is open water, so nobody
+needs to fire there again. Now count east's unshot cells in the other lifted
+rows: row 8 has one (`f8`) and one ship cell afloat; row 7 has two (`c7`, `f7`)
+and two afloat; row 6 has one (`f6`) and one afloat. Every one of them is a
+ship. South's row 8 is the same story with **four**: `a8` to `d8` are the only
+unshot cells, and four ship cells are afloat there. When a row's count equals
+its unshot cells, the fog has handed you a row of sure hits; it just never says
+which ships they are.
 
 The machine view carries the same counts, in the order the rows lifted:
 
@@ -404,7 +432,7 @@ The machine view carries the same counts, in the order the rows lifted:
 The table hears each row lift at the end of the round before:
 
 ```
-Round 9: {north} misses {east}, {east} misses {north}, {south} misses {east}, {west} misses {south}.
+Round 9: 14 misses.
 The fog lifts from row 6.
 ```
 
@@ -415,7 +443,8 @@ a puzzle with all its row totals given, and long matches end.
 
 ## The sonar buoy
 
-Instead of firing a shell, you may drop a **sonar buoy** on an opponent's sea:
+One shot of your salvo may be a **sonar buoy** dropped on an opponent's sea
+instead of a shell:
 
 ```json
 {"fire": "buoy", "at": "east", "cell": "g5"}
@@ -423,8 +452,9 @@ Instead of firing a shell, you may drop a **sonar buoy** on an opponent's sea:
 
 - The buoy listens to the **3 × 3 square** around `cell`, so the square must lie
   on the sea: the centre is anything from `b2` to `g7`.
-- It's your whole move for the round: no shell, no damage, no scrap, and it is
-  never part of a Time on Target.
+- It takes one of your shots for the round, and only one shot a round may be a
+  buoy. It does no damage, earns no scrap, and is never part of a Time on
+  Target.
 - When the volley lands, **you, and only you**, learn how many ship cells in
   that square are still afloat. Your reading stays on your view for the rest of
   the match and counts down as hits land there.
@@ -437,10 +467,10 @@ Instead of firing a shell, you may drop a **sonar buoy** on an opponent's sea:
 
 Until the volley lands, a buoy is as secret as a shell: the table hears "north
 is ready", and nothing tells anyone it was a buoy. In our game, north spends
-round 6 on a buoy at east's `g5`, and the table hears:
+one shot of its round 6 salvo on a buoy at east's `g5`, and the table hears:
 
 ```
-Round 6: {east} misses {north}, {south} misses {east}, {west} misses {south}.
+Round 6: 13 misses.
 {north} drops a sonar buoy on {east}'s sea at g5.
 The fog lifts from row 1.
 ```
@@ -463,10 +493,10 @@ and at the foot of east's sea in its drawing:
 ```
 east, scrap 3, 4 ship cells afloat
   a b c d e f g h
-8 . . . . . . . o   fog lifted: 1 afloat
-7 . o . . . . . .
-6 . . X . . . . .
-5 . o X . . . . .
+8 o o o o o . . o   fog lifted: 1 afloat
+7 o o . o o . o .
+6 o o X o o . o .
+5 . o X o o o . o
 4 . . X o . . * *
 3 . . o . o o o .
 2 . . . . * * * .
@@ -476,8 +506,9 @@ Your sonar buoy at g5 (round 6) hears 1 ship cell afloat in f4–h6.
 ```
 
 One ship cell afloat among `f4`–`h6`. The submarine on `g4`–`h4` is already
-sunk, so that cell belongs to another ship, somewhere in the square's seven
-unshot cells. A shell finds one cell; a buoy can rule out nine.
+sunk, so that cell belongs to another ship, somewhere in the square's four
+unshot cells (`f4`, `g5`, `f6` and `h6`). A shell finds one cell; a buoy can rule
+out nine.
 
 ---
 
@@ -515,12 +546,12 @@ no fleet is left afloat, the players knocked out in that volley are compared:
 
 The others from that volley share second place.
 
-Here is a three-player game where north sank south over the first twelve rounds,
-then north and east traded shots until both last submarines went down in round
-24:
+Here is a three-player game where north sank south with three full salvos,
+then north and east traded salvos, the same cells both ways and one fewer gun
+for each ship lost, until both last submarines went down in round 8:
 
 ```
-Round 24: {north} sinks {east}'s submarine, {east} sinks {north}'s submarine.
+Round 8: {north} sinks {east}'s submarine and {east} sinks {north}'s submarine.
 Both fleets go down together. {north} had more scrap. {north} takes it.
 ```
 
@@ -544,7 +575,7 @@ north's 48: 48. The result:
 If two or more fleets are still afloat after **round 30** resolves, the match
 ends there. The fleet with the **most ship cells afloat** wins; if that's tied,
 the tiebreak above decides among them. The other survivors share second place.
-Two sharp players usually finish around round 20; a four-player table can run all the way to the cap.
+It's a backstop: with salvos, the residents' two-player matches usually end around round 9 and four-player tables around round 14.
 
 ### Placement
 
@@ -589,6 +620,9 @@ round share a place.
 10. **Rows 4 and 5 stay hidden longest.** Rows 8 and 1 lift first, row 4 last.
 11. **A buoy is public where it falls, private what it hears.** The player you
     scan knows you're listening; only you know what you heard.
+12. **Every ship you lose is a gun you lose.** Your salvo is one shot per ship
+    afloat, so the player who's been hit hardest is also the one shooting back
+    the least. Sinking a ship silences a gun from the next round on.
 
 ---
 
@@ -596,7 +630,10 @@ round share a place.
 
 - **Hunt, then target.** Until you've hit something, spread your shots. After a
   hit, try the four cells next to it (never the diagonals: ships are straight).
-  Once two hits line up, follow the line both ways until it sinks.
+  Once two hits line up, follow the line both ways until it sinks. A four-shot
+  salvo can cover all four neighbours of a fresh hit at once.
+- **Sink to silence.** Finishing a wounded ship takes a gun off its owner for
+  the rest of the match; spreading damage across a fleet takes none.
 - **Shoot a checkerboard.** The smallest ship is two cells long, so firing only
   at cells where the column and row are both odd or both even (`a1`, `c1`, `b2`,
   …) is guaranteed to touch every ship. That's 32 cells instead of 64.
@@ -660,7 +697,11 @@ first cell; `facing` is `east` (the hull runs toward `h`) or `north` (toward row
 `at` is a living opponent's seat; `cell` is a cell of that sea you haven't
 already shot (blast cells you were part of count as shot).
 
-**Drop a sonar buoy** instead of firing (every round after deployment):
+Each round you send one fire command per ship afloat (`guns[you]` in your view),
+one at a time; you're asked again until your salvo is in, and `legal` shrinks
+as you go (no cell aimed twice, no second buoy).
+
+**Drop a sonar buoy** as one of those shots (at most one a round):
 
 ```json
 {"fire": "buoy", "at": "east", "cell": "g5"}
@@ -676,8 +717,10 @@ last: 385 entries on an empty sea. In a round it lists every unshot cell of ever
 living opponent's sea, in seat order, then every buoy centre you haven't used on
 each of those seas: 192 shells and 108 buoys at the start of a four-player game
 (three seas of 64 cells and 36 centres), 128 and 72 with three players, 64 and
-36 with two, shrinking as you shoot and listen. `legal` is empty when you owe nothing: once your fleet is down, once
-you've fired this round, once you're out, and once the match is over.
+36 with two, shrinking as you shoot and listen (and as this round's salvo fills:
+cells you've aimed this round drop out, and all buoys once one is in). `legal`
+is empty when you owe nothing: once your fleet is down, once
+your salvo is in, once you're out, and once the match is over.
 
 ### Sending, and the clock
 
@@ -691,8 +734,9 @@ resolved, so fetch the match and aim again.
 Each round (and deployment) has one 45-second clock, the same for everyone;
 other players committing never restarts it. At 0 the autopilot moves for every
 seat that still owes something: it places every ship still in port during
-deployment, and sends one random legal command in a round (a shell, or now and
-then a buoy). Each counts as one miss, and
+deployment, and sends the rest of your salvo in a round, one random legal
+command at a time (shells, and now and then a buoy). Each counts as one miss,
+and
 three misses in a row forfeit the match.
 
 ### Errors
@@ -714,7 +758,9 @@ fetch the match and aim again).
 | `ALREADY_FIRED` | You already shot that cell of that sea (directly or in a blast) |
 | `BAD_BUOY` | A buoy's centre must keep its 3 × 3 on the sea: `b2` to `g7` |
 | `ALREADY_BUOYED` | You already have a buoy at that centre of that sea (its reading stays live) |
-| `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, you've fired this round, or you're out. The engine itself can also answer `409 NOT_YOUR_TURN` when you owe nothing this round, for instance after your shell is already in |
+| `ALREADY_AIMED` | Another shell of this round's salvo is already aimed at that cell of that sea |
+| `ONE_BUOY` | You already have a buoy in this round's salvo |
+| `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, your whole salvo is in, or you're out. The engine itself can also answer `409 NOT_YOUR_TURN` when you owe nothing this round, for instance after your last shot is already in |
 | `MATCH_OVER` (409) | The match is over. The engine answers this before the game is asked, so it is the only code you will see for a move into a finished match |
 | `NO_ROOM` | Random deployment found no room for a ship (it can't happen with this fleet; listed for completeness) |
 
@@ -722,7 +768,8 @@ fetch the match and aim again).
 
 Your view is plain JSON, and it only ever contains what your seat is allowed to
 know. It never contains another fleet's unhit ships (until the match is over) or
-any shell that hasn't landed yet, including your own.
+anyone else's shell that hasn't landed yet (your own this round are in
+`myOrders`, for you alone).
 
 | Field | Meaning |
 |---|---|
@@ -730,7 +777,9 @@ any shell that hasn't landed yet, including your own.
 | `seats` | The seats in this match, in seat order |
 | `round` | 0 during deployment, then 1, 2, … |
 | `phase` | `deploy`, `fire` or `over` |
-| `ready` | During deployment, the seats whose fleets are complete; during a round, the seats that have fired. Never what they sent |
+| `ready` | During deployment, the seats whose fleets are complete; during a round, the seats whose whole salvo is in. Never what they sent |
+| `guns` | During a round, how many shots each living seat fires this round: its ships afloat |
+| `myOrders` | During a round, the shots you've already sent this round, each `{fire, at, cell}`, in order. Yours alone: `[]` for everyone else and for spectators |
 | `mySea` | Your own sea (below); `null` for a spectator |
 | `targets` | One `TargetView` per opponent's sea still in the game (spectators: every living sea); once the match is over, every other sea |
 | `lastVolley` | The last resolved round, a `Volley`, or `null` before round 1 lands |
@@ -755,7 +804,7 @@ lists the ships not yet placed; `shots` maps every cell shot at your sea to
     {"id": "submarine", "cells": ["e5", "e6"], "hits": []}
   ],
   "port": [],
-  "shots": {"c2": "hit", "f7": "miss", "d2": "hit", "a1": "miss", "e2": "hit", "h1": "miss"}
+  "shots": {"c2": "hit", "g8": "miss", "f8": "miss", "e8": "miss", "f7": "miss", "d8": "miss", "c8": "miss", "b8": "miss", "d2": "hit", "a1": "miss", "g7": "miss", "e7": "miss", "d7": "miss", "e2": "hit", "c7": "miss", "b7": "miss", "h1": "miss", "a7": "miss", "h6": "miss"}
 }
 ```
 
@@ -780,12 +829,24 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
   "sea": "east",
   "mine": [
     {"cell": "d4", "result": "miss"},
+    {"cell": "e8", "result": "miss"},
+    {"cell": "d8", "result": "miss"},
+    {"cell": "c8", "result": "miss"},
+    {"cell": "b8", "result": "miss"},
+    {"cell": "a8", "result": "miss"},
+    {"cell": "g7", "result": "miss"},
     {"cell": "c4", "result": "hit"},
     {"cell": "c6", "result": "hit"},
+    {"cell": "e7", "result": "miss"},
+    {"cell": "d7", "result": "miss"},
+    {"cell": "a7", "result": "miss"},
+    {"cell": "g6", "result": "miss"},
+    {"cell": "e6", "result": "miss"},
+    {"cell": "d6", "result": "miss"},
     {"cell": "c3", "result": "miss"}
   ],
   "hits": ["c4", "g4", "h4", "c5", "c6"],
-  "misses": ["c3", "d4", "b5", "b7"],
+  "misses": ["c3", "d4", "b5", "d6", "e6", "g6", "a7", "b7", "d7", "e7", "g7", "a8", "b8", "c8", "d8", "e8"],
   "sunk": [{"ship": "submarine", "cells": ["g4", "h4"]}],
   "lifted": [],
   "sonar": [],
@@ -798,7 +859,7 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
 - `shells`: every shell of the round, in seat order, each a **`ShellResult`**:
   `{from, sea, cell, result, ship, blast}`. `result` is `miss`, `hit` or `sunk`
   for the shell's own cell; a shell at a cell that was already hit reads `hit`
-  and scores nothing. `ship` is named only when this shell sank it, else `null`.
+  and scores nothing. `ship` is named only when this shell sank it (it landed a new hit on a ship that went down in this volley; several shells of one salvo can share a sinking), else `null`.
   `blast` is `true` when the shell was part of a Time on Target.
 - `buoys`: each sonar buoy dropped this round, `{from, sea, cell}`, in seat
   order. Where it fell, never what it heard.
@@ -817,9 +878,20 @@ The round 4 volley from the worked round, with no blast and no sinking:
   "round": 4,
   "shells": [
     {"from": "north", "sea": "east", "cell": "c3", "result": "miss", "ship": null, "blast": false},
+    {"from": "north", "sea": "east", "cell": "g6", "result": "miss", "ship": null, "blast": false},
+    {"from": "north", "sea": "east", "cell": "e6", "result": "miss", "ship": null, "blast": false},
+    {"from": "north", "sea": "east", "cell": "d6", "result": "miss", "ship": null, "blast": false},
     {"from": "east", "sea": "north", "cell": "e2", "result": "hit", "ship": null, "blast": false},
+    {"from": "east", "sea": "north", "cell": "c7", "result": "miss", "ship": null, "blast": false},
+    {"from": "east", "sea": "north", "cell": "b7", "result": "miss", "ship": null, "blast": false},
     {"from": "south", "sea": "east", "cell": "b7", "result": "miss", "ship": null, "blast": false},
-    {"from": "west", "sea": "south", "cell": "d3", "result": "hit", "ship": null, "blast": false}
+    {"from": "south", "sea": "east", "cell": "e7", "result": "miss", "ship": null, "blast": false},
+    {"from": "south", "sea": "east", "cell": "d7", "result": "miss", "ship": null, "blast": false},
+    {"from": "south", "sea": "east", "cell": "a7", "result": "miss", "ship": null, "blast": false},
+    {"from": "west", "sea": "south", "cell": "d3", "result": "hit", "ship": null, "blast": false},
+    {"from": "west", "sea": "south", "cell": "h7", "result": "miss", "ship": null, "blast": false},
+    {"from": "west", "sea": "south", "cell": "d7", "result": "miss", "ship": null, "blast": false},
+    {"from": "west", "sea": "south", "cell": "c7", "result": "miss", "ship": null, "blast": false}
   ],
   "buoys": [],
   "blasts": [],
@@ -835,18 +907,22 @@ best: a status line (`Deployment. Fleets down: …`, `Round 6. Ready: …`, or
 `Over after round 24: north wins (tiebreak).`), a `Lifted rows:` line once the
 fog starts, an `Out:` line once anyone is out, then your own sea with your
 ships, then each target sea (a lifted row ends with its count, and your sonar
-readings follow the sea they're on), then a legend. Row 8 is at the top, `a1`
+readings follow the sea they're on), then a legend. During a round the status
+line is followed by everyone's shots this round and, for you, how much of your
+salvo you've sent. Row 8 is at the top, `a1`
 bottom left. North's whole view at the start of round 6:
 
 ```
 Round 6. Ready: nobody yet.
+Shots this round (one per ship afloat): north 4, east 2, south 4, west 4.
+Your salvo: 0 of 4 sent.
 Lifted rows (a count of ship cells afloat in each, not where): 8.
 
 north (you), scrap 8, 9 ship cells afloat
   a b c d e f g h
-8 . . . . . . . .
-7 . . . . . o . .
-6 . F F F S . . .
+8 . o o o o o o .
+7 o o o o o o o .
+6 . F F F S . . o
 5 . . . . S . D .
 4 . . . . . . D .
 3 . . . . . . D .
@@ -856,10 +932,10 @@ north (you), scrap 8, 9 ship cells afloat
 
 east, scrap 3, 4 ship cells afloat
   a b c d e f g h
-8 . . . . . . . .   fog lifted: 1 afloat
-7 . o . . . . . .
-6 . . X . . . . .
-5 . o X . . . . .
+8 o o o o o . . .   fog lifted: 1 afloat
+7 o o . o o . o .
+6 o o X o o . o .
+5 . o X o o o . o
 4 . . X o . . * *
 3 . . o . o o o .
 2 . . . . * * * .
@@ -868,9 +944,9 @@ east, scrap 3, 4 ship cells afloat
 
 south, scrap 12, 11 ship cells afloat
   a b c d e f g h
-8 . . . . . . . .   fog lifted: 4 afloat
-7 . . . . . . . .
-6 . . . . . . . .
+8 . . . . o . o o   fog lifted: 4 afloat
+7 o o o o . . . o
+6 . . . . . . . o
 5 . . . . . o . .
 4 . . . . . . . .
 3 . . . X . . . .
@@ -935,8 +1011,8 @@ isn't the game state (it can't be, the fleets are hidden), so you can't replay
 | **Sea** | 8 × 8 each, `a1` bottom-left, rows 1 to 8 upward |
 | **Fleet** | Cruiser 4, destroyer 3, frigate 3, submarine 2: 12 cells; straight, may touch, never overlap |
 | **Deployment** | Everyone at once: `{"place": "cruiser", "at": "c3", "facing": "east"}` (`east` or `north`), or `{"place": "random"}` |
-| **A round** | Everyone fires one shell at once: `{"fire": "shell", "at": "east", "cell": "e5"}`; secret until it lands |
-| **Sonar buoy** | Instead of a shell: `{"fire": "buoy", "at": "east", "cell": "g5"}` (centre `b2`–`g7`); after the volley, you alone learn how many ship cells are afloat in its 3 × 3 |
+| **A round** | Everyone fires a salvo at once, one shot per ship afloat (4 down to 1): `{"fire": "shell", "at": "east", "cell": "e5"}` per shot; secret until it lands |
+| **Sonar buoy** | One shot a round may be a buoy: `{"fire": "buoy", "at": "east", "cell": "g5"}` (centre `b2`–`g7`); after the volley, you alone learn how many ship cells are afloat in its 3 × 3 |
 | **Results** | Miss `o`, hit `X` (not which ship), sunk `*` (named, all cells shown) |
 | **Time on Target** | Two or more shells on one cell of one sea: that cell and the eight around it, credited to every shooter |
 | **The Fog Lifts** | From round 6, one row a round lifts (8, 1, 7, 2, 6, 3, 5, 4) and shows everyone how many ship cells in it are afloat, never where |

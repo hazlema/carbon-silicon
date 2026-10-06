@@ -91,24 +91,32 @@ function check(ok: boolean, what: string): void {
   if (!ok) throw new Error(`leak check failed: ${what}`);
 }
 
-/** Review Focus 1: no unrevealed ship cell and no pending aim reaches any view. */
+/** Review Focus 1: no unrevealed ship cell and nobody else's pending aim reaches any view. */
 function assertNoLeaks(s: SalvoState, step: number): void {
   const over = s.phase === 'over';
   const viewers = [null, ...s.seats];
-  // One viewer per step (rotating) is compared against the same state with every pending shell removed.
+  // One viewer per step (rotating) is compared against the same state with every pending shot removed.
   const witness = viewers[step % viewers.length];
   const blank = structuredClone(s);
-  for (const x of blank.seats) blank.pending[x] = null;
+  for (const x of blank.seats) blank.pending[x] = [];
   for (const seat of viewers) {
     const v = viewOf(s, seat);
     const { ascii, ...rest } = v;
     const where = `round ${s.round}, ${seat ?? 'spectator'}`;
-    // Pending shells reach nobody's view, the shooter's own included: the view is the same without them.
+    // A viewer's own queued shots are in myOrders, exactly; nobody else's, and a spectator's is empty.
+    const own = seat !== null && s.phase === 'fire' ? s.pending[seat].map((x) => ({ fire: x.kind, at: x.sea, cell: x.cell })) : [];
+    check(JSON.stringify(v.myOrders) === JSON.stringify(own), `${where}: myOrders is not my own pending`);
+    // Apart from myOrders (and the ascii line that recites it), the view is the same without anyone's pending.
     if (seat === witness) {
-      check(JSON.stringify(v) === JSON.stringify(viewOf(blank, seat)), `${where}: the view depends on pending`);
+      const { myOrders: _o, ascii: _a, ...without } = viewOf(blank, seat);
+      const { myOrders: _p, ...mine } = rest;
+      check(JSON.stringify(mine) === JSON.stringify(without), `${where}: the view depends on pending`);
       // The drawing is made from the view alone, so it can only say what the view says.
       check(ascii === renderAscii(rest), `${where}: ascii is not drawn from the view`);
     }
+    // guns: one per ship afloat, for every living seat, during fire only.
+    const guns = s.phase === 'fire' ? Object.fromEntries(s.seats.filter((x) => !isOut(s, x)).map((x) => [x, s.fleets[x].filter((y) => y.hits.length < y.cells.length).length])) : {};
+    check(JSON.stringify(v.guns) === JSON.stringify(guns), `${where}: guns miscounted`);
     if (seat === null) check(v.mySea === null, `${where}: a spectator has a sea`);
     else check(JSON.stringify(v.mySea!.ships.filter((x) => x.cells.length > 0)) === JSON.stringify(s.fleets[seat]), `${where}: mySea is not my fleet`);
     for (const t of v.targets) {
@@ -139,8 +147,8 @@ function assertNoLeaks(s: SalvoState, step: number): void {
       for (const b of v.lastVolley.buoys) check(s.sonar[b.from].some((x) => x.sea === b.sea && x.cell === b.cell), `${where}: unresolved buoy`);
       check(!JSON.stringify(v.lastVolley.buoys).includes('afloat'), `${where}: a buoy's reading in the public volley`);
     }
-    // Nothing outside mySea, targets and lastVolley names a cell.
-    const { mySea: _m, targets: _t, lastVolley: _l, ...top } = rest;
+    // Nothing outside mySea, targets, lastVolley and the viewer's own myOrders names a cell.
+    const { mySea: _m, targets: _t, lastVolley: _l, myOrders: _o, ...top } = rest;
     for (const str of strings(top)) check(cellIndex(str) === null, `${where}: a cell in the view's top level`);
   }
 }
@@ -175,7 +183,7 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
   let s = G.setup({ seats: SEATS.slice(0, n) as string[], seed: 7 * g + 3 });
   let guard = 0;
   while (!G.outcome(s)) {
-    if (++guard > 1000) throw new Error(`game ${g} did not finish`);
+    if (++guard > 3000) throw new Error(`game ${g} did not finish`);
     const owing = turn.toMove(s);
     check(owing.length > 0, `game ${g}: nobody owes a move`);
     const before = s;
@@ -193,6 +201,20 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
       if (s.phase === 'fire') {
         const spent = mine.targets.flatMap((t) => t.mine.map((m) => ({ fire: 'shell', at: t.sea, cell: m.cell })));
         if (spent.length > 0) check(codeOf(() => turn.apply(s, seat, rng.pick(spent))) === 'ALREADY_FIRED', `game ${g}: a spent cell was accepted`);
+        // A cell already in this salvo, or a second buoy, is refused, and legal never offers either.
+        // (Shots queued at a sea that has since gone out are tested against a living sea instead.)
+        const living = new Set(mine.targets.map((t) => t.sea));
+        const queued = mine.myOrders.filter((x) => x.fire === 'shell');
+        const live = queued.filter((x) => living.has(x.at));
+        if (live.length > 0) check(codeOf(() => turn.apply(s, seat, rng.pick(live))) === 'ALREADY_AIMED', `game ${g}: a cell aimed twice in a salvo`);
+        for (const c of legal as { fire: string; at: string; cell: string }[]) check(!queued.some((q) => q.at === c.at && q.cell === c.cell && c.fire === 'shell'), `game ${g}: legal offers an aimed cell`);
+        const buoyed = mine.myOrders.find((x) => x.fire === 'buoy');
+        if (buoyed) {
+          check(!legal.some((c) => 'fire' in c && c.fire === 'buoy'), `game ${g}: legal offers a second buoy`);
+          const again = { fire: 'buoy', at: mine.targets[0].sea, cell: buoyed.cell };
+          check(codeOf(() => turn.apply(s, seat, again)) === 'ONE_BUOY', `game ${g}: a second buoy was accepted`);
+        }
+        check(mine.myOrders.length < mine.guns[seat], `game ${g}: ${seat} owes a shot with its salvo full`);
       }
       const cmd = choose(mine, legal, rng);
       s = turn.apply(s, seat, cmd);
@@ -273,15 +295,16 @@ describe('fuzz', () => {
     expect(forced + tally.knockouts).toBeGreaterThan(0);
   });
 
-  test('resolution never depends on commit order: all 24 orders agree', () => {
+  test('resolution never depends on commit order: all 24 seat orders agree, shot by shot or salvo by salvo', () => {
     let full = 0;
-    for (let seed = 1; seed <= 12; seed++) {
+    for (let seed = 1; seed <= 16; seed++) {
       const rng = createRng(seed * 31);
       let s = deployedAtRandom(4, seed);
-      // play some rounds so there are hits, sinkings and lifted rows to land on
+      // play some rounds, whole salvos, so there are hits, sinkings and lifted rows to land on
       const rounds = 3 + (seed % 12);
       while (s.round <= rounds && !G.outcome(s)) {
-        for (const seat of turn.toMove(s)) s = turn.apply(s, seat, choose(viewOf(s, seat), turn.legal(s, seat) as SalvoCommand[], rng));
+        const seat = turn.toMove(s)[0];
+        s = turn.apply(s, seat, choose(viewOf(s, seat), turn.legal(s, seat) as SalvoCommand[], rng));
       }
       if (G.outcome(s)) continue;
       const alive = turn.toMove(s);
@@ -292,18 +315,38 @@ describe('fuzz', () => {
       const open = ship.cells.find((x) => !ship.hits.includes(x))!;
       ship.hits = ship.cells.filter((x) => x !== open);
       for (const h of ship.hits) s.shots[victim][h] ??= { result: 'hit', by: [victim === a ? b : a] };
-      // everyone fires somewhere; a and b share a cell (Time on Target); c finishes the ship
-      const shells: Record<string, unknown> = {};
-      for (const seat of alive) shells[seat] = rng.pick(turn.legal(s, seat) as SalvoCommand[]);
+      // a and b share a cell (Time on Target); c finishes the ship; each salvo is then filled out by the player
       const legalB = turn.legal(s, b) as SalvoCommand[];
-      const shared = (turn.legal(s, a) as SalvoCommand[]).find((x) => 'fire' in x && legalB.some((y) => 'fire' in y && y.at === x.at && y.cell === x.cell));
-      if (shared) shells[a] = shells[b] = shared;
-      if (c) shells[c] = { fire: 'shell', at: victim, cell: open };
-      const results = permutations(alive).map((order) => {
+      const shared = (turn.legal(s, a) as SalvoCommand[]).find(
+        (x) => 'fire' in x && x.fire === 'shell' && legalB.some((y) => 'fire' in y && y.fire === 'shell' && y.at === x.at && y.cell === x.cell),
+      );
+      const salvos: Record<string, SalvoCommand[]> = {};
+      for (const seat of alive) {
+        const first: SalvoCommand[] = seat === c ? [{ fire: 'shell', at: victim, cell: open }] : shared && (seat === a || seat === b) ? [shared] : [];
+        // queue the salvo on a scratch copy (this seat alone, so the round never resolves) to keep every shot legal
         let t = s;
-        for (const seat of order) t = turn.apply(t, seat, shells[seat]);
-        return JSON.stringify(t);
-      });
+        for (const cmd of first) t = turn.apply(t, seat, cmd);
+        const cmds = [...first];
+        while (turn.toMove(t).includes(seat)) {
+          const cmd = choose(viewOf(t, seat), turn.legal(t, seat) as SalvoCommand[], rng);
+          cmds.push(cmd);
+          t = turn.apply(t, seat, cmd);
+        }
+        expect(t.round).toBe(s.round);
+        salvos[seat] = cmds;
+      }
+      const results: string[] = [];
+      for (const order of permutations(alive)) {
+        // salvo by salvo
+        let t = s;
+        for (const seat of order) for (const cmd of salvos[seat]) t = turn.apply(t, seat, cmd);
+        results.push(JSON.stringify(t));
+        // shot by shot, round robin in this seat order (each seat's own shots keep their order)
+        let u = s;
+        const longest = Math.max(...alive.map((x) => salvos[x].length));
+        for (let k = 0; k < longest; k++) for (const seat of order) if (k < salvos[seat].length) u = turn.apply(u, seat, salvos[seat][k]);
+        results.push(JSON.stringify(u));
+      }
       if (alive.length === 4) full += 1;
       expect(new Set(results).size).toBe(1);
       const after = JSON.parse(results[0]) as SalvoState;
