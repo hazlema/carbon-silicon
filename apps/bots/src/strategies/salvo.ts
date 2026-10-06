@@ -20,8 +20,10 @@ const HARD_BUOY_GAP = 3;
 const HARD_SALVO_BUOY_GAP = 2;
 /** With a salvo of two or more, medium spares a shot for a buoy in about one hunting round in this many. */
 const MEDIUM_SALVO_BUOY_ODDS = 2;
-/** Medium only scans a 3×3 with at least this many cells it has neither shot nor heard. */
-const MEDIUM_BUOY_FRESH = 5;
+/** Medium shoots one of its best cells: those with at least this share of the best chance… */
+const MEDIUM_SPREAD = 0.8;
+/** …and no more than this many of them. */
+const MEDIUM_CHOICES = 6;
 
 const rowOf = (cell: string) => Number(cell.slice(1));
 const ALL_CELLS = Array.from({ length: SIZE * SIZE }, (_, i) => cellName(i));
@@ -148,11 +150,6 @@ function chases(t: TargetView, shells: Fire[], straight: boolean): Fire[] {
   return shells.filter((s) => near.has(s.cell));
 }
 
-const parity = (cell: string) => {
-  const i = cellIndex(cell)!;
-  return ((i % SIZE) + Math.floor(i / SIZE)) % 2 === 0;
-};
-
 /** Seats that put a shell into my fleet in the last volley (shell hits, sinkings and blasts). */
 export function whoHitMe(view: SalvoView): string[] {
   const v = view.lastVolley;
@@ -175,12 +172,6 @@ function easy(view: SalvoView, seas: Map<string, Fire[]>, rng: () => number): Fi
   return pick(fresh.length > 0 ? fresh : [...seas.values()].flat(), rng);
 }
 
-/** Unshot cells a count of 0 (a lifted row or one of my readings) says are open water. */
-function emptyWater(t: TargetView): Set<string> {
-  const { rows, readings } = regions(t);
-  return new Set([...rows.values(), ...readings].filter((r) => r.afloat === 0).flatMap((r) => r.open));
-}
-
 /** Where my salvo stands this round: the shells already aimed, whether a buoy is in, and the guns. */
 interface Salvo {
   /** Cells my shells already aim at this round, by sea. */
@@ -201,96 +192,88 @@ function salvoOf(view: SalvoView): Salvo {
   return { queued, sea: orders.find((o) => o.fire === 'shell')?.at ?? null, guns, first: orders.length === 0 };
 }
 
-const NONE: ReadonlySet<string> = new Set();
+/**
+ * Every unshot cell of a target as the chance a ship is there: the heatmap scaled so the sea's
+ * likely cells add up to its ship cells afloat that aren't already sure (sure cells are certain).
+ * Unlike raw heat, chances compare across seas: a dense lifted row on one sea outranks a guess on
+ * another. A cell anyone has shot is absent.
+ */
+export function chances(target: TargetView): Map<string, number> {
+  const { heat, sure } = analyse(target);
+  const shot = new Set([...target.hits, ...target.misses]);
+  const open = ALL_CELLS.filter((c) => !shot.has(c));
+  const likely = open.filter((c) => !sure.has(c));
+  const left = Math.max(0, target.afloat - open.filter((c) => sure.has(c)).length);
+  const total = likely.reduce((n, c) => n + heat.get(c)!, 0);
+  return new Map(open.map((c) => [c, sure.has(c) ? 1 : total > 0 ? Math.min(1, (heat.get(c)! / total) * left) : 0]));
+}
+
+/** Every legal shell with its chance of a hit, best first (ties in legal order). */
+function ranked(view: SalvoView, seas: Map<string, Fire[]>): { s: Fire; p: number }[] {
+  const odds = new Map(view.targets.filter((t) => seas.has(t.sea)).map((t) => [t.sea, chances(t)]));
+  return [...seas.values()]
+    .flat()
+    .map((s) => ({ s, p: odds.get(s.at)?.get(s.cell) ?? 0 }))
+    .sort((a, b) => b.p - a.p);
+}
+
+/** Something to chase on any sea: an open hit, or a cell a count says must be ship. */
+const chasing = (view: SalvoView, seas: Map<string, Fire[]>) =>
+  view.targets.some((t) => seas.has(t.sea) && (openHits(t).length > 0 || analyse(t).sure.size > 0));
+
+/** The best buoy on a sea: where the chances of the cells it hasn't heard yet add up highest. */
+function scan(target: TargetView, drops: Buoy[]): Buoy | null {
+  if (drops.length === 0) return null;
+  const odds = chances(target);
+  const heard = new Set((target.sonar ?? []).flatMap((x) => x.cells));
+  const unheard = (cells: string[]) => cells.reduce((n, c) => n + (heard.has(c) ? 0 : (odds.get(c) ?? 0)), 0);
+  const where = bestBuoys(drops, unheard);
+  return unheard(buoyCells(where[0].cell)) > 0 ? where[0] : null;
+}
 
 /**
- * Medium bears a grudge, chases in line, and hunts on one colour of the checkerboard away from
- * water a count of 0 has cleared, under a reading that hears ships first; a salvo keeps to the sea
- * its first shell went to. With one gun,
- * hunting after round 2, about one round in five (never two running) it drops a buoy instead of a
- * shell; with a salvo it spares the round's first shot for one about every other hunting round.
- * The buoy goes where its 3×3 has the most cells it has neither shot nor heard.
+ * Medium reads the board like hard (every legal shell ranked by its chance of a hit, on any sea) but
+ * shoots one of its top few at random, so it chases and follows the fog without being sharp. With
+ * nothing to chase it sometimes spends a shot on a buoy where its best guess lies: with one gun,
+ * after round 2, about one round in five (never two running); with a salvo, the round's first shot
+ * about every other round.
  */
 function medium(view: SalvoView, seas: Map<string, Fire[]>, buoys: Map<string, Buoy[]>, salvo: Salvo, rng: () => number): Order {
-  const targets = view.targets.filter((t) => seas.has(t.sea));
-  let target = salvo.sea ? targets.find((t) => t.sea === salvo.sea) : undefined;
-  const grudges = whoHitMe(view).filter((x) => seas.has(x));
-  if (!target && grudges.length > 0) {
-    const sea = pick(grudges, rng);
-    target = targets.find((t) => t.sea === sea);
-  }
-  if (!target) {
-    const most = Math.max(...targets.map((t) => t.hits.length));
-    target = pick(targets.filter((t) => t.hits.length === most), rng);
-  }
-  if (!target) return pick([...seas.values()].flat(), rng);
-  const shells = seas.get(target.sea)!;
-  const near = chases(target, shells, true);
-  if (near.length > 0) return pick(near, rng);
-  const shot = new Set([...target.hits, ...target.misses]);
-  const drops = buoys.get(target.sea) ?? [];
+  const shells = ranked(view, seas);
+  const top = shells[0]?.p ?? 0;
   const due =
     salvo.guns > 1
       ? salvo.first && view.round > 1 && lastBuoyRound(view) < view.round - 1 && rng() < 1 / MEDIUM_SALVO_BUOY_ODDS
       : view.round > 2 && lastBuoyRound(view) < view.round - 1 && rng() < 1 / MEDIUM_BUOY_ODDS;
-  if (drops.length > 0 && due) {
-    const heard = new Set(target.sonar.flatMap((x) => x.cells));
-    const fresh = (cells: string[]) => cells.filter((c) => !shot.has(c) && !heard.has(c)).length;
-    const where = bestBuoys(drops, fresh);
-    if (salvo.guns <= 1 || fresh(buoyCells(where[0].cell)) >= MEDIUM_BUOY_FRESH) return pick(where, rng);
+  if (due && shells.length > 0 && !chasing(view, seas)) {
+    const target = view.targets.find((t) => t.sea === shells[0].s.at)!;
+    const drop = scan(target, buoys.get(target.sea) ?? []);
+    if (drop) return drop;
   }
-  // Parity: every ship is at least two long, so one colour of the checkerboard finds them all.
-  const water = emptyWater(target);
-  const fresh = shells.filter((s) => !shot.has(s.cell));
-  const dry = fresh.filter((s) => !water.has(s.cell));
-  let pool = dry.length > 0 ? dry : fresh;
-  // A reading that hears ship cells is where to look first.
-  const busy = new Set(target.sonar.filter((x) => x.afloat > 0).flatMap((x) => x.cells));
-  const heard = pool.filter((s) => busy.has(s.cell));
-  if (heard.length > 0) pool = heard;
-  const even = pool.filter((s) => parity(s.cell));
-  return pick(even.length > 0 ? even : pool.length > 0 ? pool : shells, rng);
+  // Its top few: within MEDIUM_SPREAD of the best, at most MEDIUM_CHOICES of them.
+  const pool = shells.filter((x) => x.p >= top * MEDIUM_SPREAD).slice(0, MEDIUM_CHOICES);
+  return pick(pool.length > 0 ? pool : shells, rng).s;
 }
 
 /**
- * Hard shoots the hottest cell on the fleet closest to the bottom. The shells its salvo already
- * aims this round take no heat, so each shot goes to the next-best cell (the most hits expected
- * from the salvo); around an open hit that spreads it over the hit's neighbours. (Counting queued
- * shells as misses to fan a hunting salvo out was tried and lost 40-60 to this in the mirror.)
- * With nothing to chase anywhere (no open hit, no sure cell) it drops a buoy on that sea, where the
- * summed heat of the cells it hasn't heard yet is greatest: with one gun instead of its shell, no
- * more than once in three rounds; with a salvo as the round's first shot, once in two.
+ * Hard fires every shot of its salvo at the likeliest legal cell on any sea: the chance a ship is
+ * there, from the hits, misses, sinkings, fog counts and its own sonar (see chances). Nobody is
+ * safe for being healthy: a fresh hit or a dense lifted row anywhere draws fire. Its queued shells
+ * leave `legal`, so each shot takes the next-best cell. With nothing to chase anywhere it drops a
+ * buoy where its best guess lies: with one gun instead of its shell, no more than once in three
+ * rounds; with a salvo as the round's first shot, once in two.
  */
 function hard(view: SalvoView, seas: Map<string, Fire[]>, buoys: Map<string, Buoy[]>, salvo: Salvo, rng: () => number): Order {
-  const scored = view.targets
-    .filter((t) => seas.has(t.sea))
-    .map((t) => {
-      const queued = salvo.queued.get(t.sea) ?? NONE;
-      const { heat, sure } = analyse(t, queued);
-      const chasing = openHits(t).length > 0 || sure.size > 0;
-      const shells = seas.get(t.sea)!.map((s) => ({ s, h: heat.get(s.cell) ?? 0 }));
-      const top = Math.max(...shells.map((x) => x.h));
-      return { t, heat, shells, top, chasing };
-    })
-    .filter((x) => x.top > 0);
-  if (scored.length === 0) return pick([...seas.values()].flat(), rng);
-  // The fleet closest to the bottom, and the hottest cell in it (the hotter sea breaks a tie).
-  scored.sort((a, b) => a.t.afloat - b.t.afloat || b.top - a.top);
-  const best = scored.filter((x) => x.t.afloat === scored[0].t.afloat && x.top === scored[0].top);
-  const sea = pick(best, rng);
-  const hunting = scored.every((x) => !x.chasing);
-  const drops = buoys.get(sea.t.sea) ?? [];
+  const shells = ranked(view, seas);
+  if (shells.length === 0) return pick([...seas.values()].flat(), rng);
   const due = salvo.guns > 1 ? salvo.first && view.round - lastBuoyRound(view) > HARD_SALVO_BUOY_GAP : view.round - lastBuoyRound(view) > HARD_BUOY_GAP;
-  if (hunting && drops.length > 0 && due) {
-    const heard = new Set(sea.t.sonar.flatMap((x) => x.cells));
-    const warm = (cells: string[]) => cells.reduce((n, c) => n + (heard.has(c) ? 0 : (sea.heat.get(c) ?? 0)), 0);
-    const where = bestBuoys(drops, warm);
-    if (warm(buoyCells(where[0].cell)) > 0) return pick(where, rng);
+  if (due && !chasing(view, seas)) {
+    const target = view.targets.find((t) => t.sea === shells[0].s.at)!;
+    const drop = scan(target, buoys.get(target.sea) ?? []);
+    if (drop) return drop;
   }
-  return pick(
-    sea.shells.filter((x) => x.h === sea.top).map((x) => x.s),
-    rng,
-  );
+  const best = shells.filter((x) => x.p >= shells[0].p - 1e-9);
+  return pick(best, rng).s;
 }
 
 /**

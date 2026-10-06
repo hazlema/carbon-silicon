@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createRng } from '@cs/game-api';
 import { buoyCells, cellIndex, cellName, isBuoyCentre, neighbours, salvoGame, type SalvoCommand, type SalvoView, type TargetView, type Volley } from '@cs/salvo';
-import { chooseSalvoMove, heatmap, volleyMoment, type SalvoStrength } from './salvo';
+import { chances, chooseSalvoMove, heatmap, volleyMoment, type SalvoStrength } from './salvo';
 
 const turn = salvoGame.turn;
 const CELLS = Array.from({ length: 64 }, (_, i) => cellName(i));
@@ -172,43 +172,38 @@ describe('chooseSalvoMove', () => {
     const v = view([target('east', { hits: ['e5'], misses: ['e4', 'e6', 'd5'], afloat: 11 })]);
     for (let k = 0; k < 10; k++) expect(fire(chooseSalvoMove(v, legalFor(v), { strength: 'hard', rng: createRng(k).next })).cell).toBe('f5');
   });
-  test('hard aims at the fleet closest to the bottom', () => {
-    const v = view([target('north'), target('east', { hits: ['a1'], misses: ['b1', 'a2'], afloat: 11 }), target('west')]);
-    for (let k = 0; k < 10; k++) expect(fire(chooseSalvoMove(v, legalFor(v), { strength: 'hard', rng: createRng(k).next })).at).toBe('east');
+  test('hard aims where a ship is likeliest on any sea: a hit, or a dense lifted row on a healthy fleet', () => {
+    const hit = view([target('north'), target('east', { hits: ['e5'], afloat: 11 }), target('west')]);
+    for (let k = 0; k < 10; k++) expect(fire(chooseSalvoMove(hit, legalFor(hit), { strength: 'hard', rng: createRng(k).next })).at).toBe('east');
+    // North is untouched, but its lifted row 1 holds 6 ship cells in 8: a far better bet than anywhere on east.
+    const dense = view([target('north', { lifted: [{ row: 1, afloat: 6 }] }), target('east', { misses: ['a1', 'h8'], afloat: 12 })]);
+    for (let k = 0; k < 10; k++) {
+      const c = fire(chooseSalvoMove(dense, legalFor(dense), { strength: 'hard', rng: createRng(k).next }));
+      expect([c.at, c.cell.slice(1)]).toEqual(['north', '1']);
+    }
   });
-
-  test('medium keeps to one colour of the checkerboard while it lasts, then takes the rest', () => {
-    const rng = createRng(3);
-    const shots: string[] = [];
-    for (let k = 0; k < 40; k++) {
-      const t = target('east', { mine: shots.map((cell) => ({ cell, result: 'miss' as const })), misses: [...shots] });
-      const v = view([t]);
-      const cell = fire(chooseSalvoMove(v, legalFor(v), { strength: 'medium', rng: rng.next })).cell;
-      const i = cellIndex(cell)!;
-      const even = ((i % 8) + Math.floor(i / 8)) % 2 === 0;
-      expect(even).toBe(k < 32);
-      shots.push(cell);
+  test('chances add up to the ship cells afloat, with sure cells certain and shot cells absent', () => {
+    const t = target('east', { hits: ['e5'], misses: ['a1', 'b1'], lifted: [{ row: 8, afloat: 0 }], afloat: 11 });
+    const odds = chances(t);
+    expect(odds.has('e5')).toBe(false);
+    expect(odds.has('a1')).toBe(false);
+    expect([...odds.values()].reduce((n, x) => n + x, 0)).toBeCloseTo(11, 5);
+    for (const c of CELLS.filter((c) => c.endsWith('8'))) expect(odds.get(c)).toBe(0);
+    const full = chances(target('north', { misses: ['a1', 'b1', 'c1', 'd1'], lifted: [{ row: 1, afloat: 4 }], afloat: 12 }));
+    for (const c of ['e1', 'f1', 'g1', 'h1']) expect(full.get(c)).toBe(1);
+  });
+  test('medium shoots one of its best few cells, never far below the best', () => {
+    const v = view([target('north', { misses: CELLS.slice(0, 20) }), target('east', { hits: ['c3'], misses: ['c2'], afloat: 11 })]);
+    const odds = new Map(v.targets.map((t) => [t.sea, chances(t)]));
+    const best = Math.max(...v.targets.flatMap((t) => [...odds.get(t.sea)!.values()]));
+    for (let k = 0; k < 30; k++) {
+      const c = fire(chooseSalvoMove(v, legalFor(v), { strength: 'medium', rng: createRng(k).next }));
+      expect(odds.get(c.at)!.get(c.cell)!).toBeGreaterThanOrEqual(best * 0.8 - 1e-9);
     }
   });
   test('medium chases a hit in line with it', () => {
     const v = view([target('east', { hits: ['e5'], afloat: 11 })]);
     for (let k = 0; k < 10; k++) expect(['e4', 'e6', 'd5', 'f5']).toContain(fire(chooseSalvoMove(v, legalFor(v), { strength: 'medium', rng: createRng(k).next })).cell);
-  });
-  test("medium's grudge: the sea of whoever hit him last, else the sea with most hits", () => {
-    const targets = [target('north', { hits: ['a1', 'a2', 'a3'], afloat: 9 }), target('east'), target('west')];
-    const hitMe = volley({
-      shells: [
-        { from: 'east', sea: 'south', cell: 'c3', result: 'hit', ship: null, blast: false },
-        { from: 'west', sea: 'north', cell: 'h8', result: 'miss', ship: null, blast: false },
-        { from: 'north', sea: 'south', cell: 'd3', result: 'miss', ship: null, blast: false },
-      ],
-    });
-    const angry = view(targets, { lastVolley: hitMe });
-    const calm = view(targets);
-    for (let k = 0; k < 10; k++) {
-      expect(fire(chooseSalvoMove(angry, legalFor(angry), { strength: 'medium', rng: createRng(k).next })).at).toBe('east');
-      expect(fire(chooseSalvoMove(calm, legalFor(calm), { strength: 'medium', rng: createRng(k).next })).at).toBe('north');
-    }
   });
 
   test('easy chases a neighbour after a hit', () => {
@@ -255,22 +250,21 @@ describe('salvos', () => {
     const v = view([target('east', { hits: ['d5', 'e5'], afloat: 10 })], { guns: { south: 2 } });
     for (let k = 0; k < 10; k++) expect(salvoRound(v, 'hard', createRng(k).next).map((o) => o.cell).sort()).toEqual(['c5', 'f5']);
   });
-  test('a hunting salvo from hard takes the hottest cells of the fleet closest to the bottom', () => {
-    // East is lower (a sunk submarine); its open middle is hottest. No buoys on offer here.
+  test('a hunting salvo from hard takes the four likeliest cells, whichever seas they are on', () => {
+    // East has lost its submarine (fewer, longer ships left) and north is untouched. No buoys on offer here.
     const sunk = target('east', { hits: ['a1', 'a2'], sunk: [{ ship: 'submarine', cells: ['a1', 'a2'] }], afloat: 10 });
     const v = view([target('north'), sunk], { round: 1 });
+    const odds = [...v.targets.flatMap((t) => [...chances(t)].map(([cell, p]) => ({ key: `${t.sea}:${cell}`, p })))].sort((a, b) => b.p - a.p);
+    const fourth = odds[3].p;
     for (let k = 0; k < 5; k++) {
       const shells = salvoRound(v, 'hard', createRng(k).next, false);
-      expect(shells.every((o) => o.at === 'east')).toBe(true);
-      expect(shells.map((o) => o.cell).sort()).toEqual(['d4', 'd5', 'e4', 'e5']);
+      for (const o of shells) expect(odds.find((x) => x.key === `${o.at}:${o.cell}`)!.p).toBeGreaterThanOrEqual(fourth - 1e-9);
     }
   });
-  test('a medium salvo keeps to the sea its first shell went to', () => {
-    const targets = [target('north'), target('east'), target('west')];
-    for (let k = 0; k < 20; k++) {
-      const shells = salvoRound(view(targets, { round: 1 }), 'medium', createRng(k).next).filter((o) => o.fire === 'shell');
-      expect(new Set(shells.map((o) => o.at)).size).toBe(1);
-    }
+  test('residents spread a salvo across seas when the odds say so', () => {
+    // Open hits on two seas: hard's four shots go to both.
+    const v = view([target('north', { hits: ['c3'], afloat: 11 }), target('east', { hits: ['f6'], afloat: 11 })]);
+    for (let k = 0; k < 5; k++) expect(new Set(salvoRound(v, 'hard', createRng(k).next, false).map((o) => o.at))).toEqual(new Set(['north', 'east']));
   });
 });
 

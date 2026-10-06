@@ -60,6 +60,10 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-25.** The round summary names hits and sinkings and counts misses ("… and 13 misses."), since a four-seat round fires up to sixteen shells.
 - **R-26.** The guide's worked game keeps its story shots; the script tops each salvo up with shots into open water away from every story cell, so the narrated hits, the Time on Target, the buoy and the fog land as told.
 
+## Residents read the odds (2026-10-06)
+
+- **R-27.** The Foreman found the residents easy (he won 5 of 6) and noticed they ignored him: over a 14-round game his sea took 16 shots, theirs about 50 each. Hard aimed at the fleet closest to sinking and medium at its grudge, so once the residents had hurt each other they stayed on each other. Now medium and hard rank every legal shell on every sea by the chance of a ship there (`chances`: the heatmap scaled so a sea's cells sum to its ship cells afloat, sure cells 1), so a hit or a dense fog row anywhere draws fire. Hard takes the best; medium picks among cells within 80% of its best (at 60% it wandered two cells off a lone hit). Simulated, a sharp player against GAME_OVER, OLD IRON and Sprocket wins 32% (was 51%) and takes 65 shots a game (was 48, the least at the table); new medium beats old medium 163–37.
+
 ## Design signals from the build
 
 - **Games run long.** In the module's fuzz (a reasonable but not optimal player) 161 of 300 games reached the round cap; in the residents' check against random fire, easy and medium mostly won *at the cap* (about 30 rounds) and only hard finished early (about 18). One shell per seat per round is slow, two-seat games especially (one shooter per sea, 12 cells). Watch this in playtests; the cheapest levers are the Fog Lifts starting earlier, a lower cap, or (the design's own suggestion) pulling radar forward from v2.

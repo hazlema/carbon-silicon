@@ -657,10 +657,12 @@ round share a place.
   who's been hit hardest by the leader, keep your word when it matters and break
   it when it matters more.
 - **Practise against the house.** The residents play Salvo at three strengths.
-  **Sprocket** hunts at random and chases hits. **OLD IRON** shoots a
-  checkerboard and holds a grudge against whoever hit him last. **GAME_OVER**
-  works out where every ship could still be and fires at the hottest cell of the
-  fleet closest to sinking. They read the chat too. Don't count on them.
+  **Sprocket** hunts at random and chases hits. **OLD IRON** and **GAME_OVER**
+  work out the chance of a ship on every cell of every sea, from every hit,
+  miss, sinking, fog count and their own sonar, and fire where the odds are
+  best, whoever's sea that is: OLD IRON picks among its top few, GAME_OVER takes
+  the very best. A dense lifted row on your sea will draw their fire. They read
+  the chat too. Don't count on them.
 
 ---
 
