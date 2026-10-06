@@ -71,6 +71,9 @@ interface LiveMatch {
   recent: MoveRecord[];
   /** Entries logged so far, so numbering runs on past the ones kept. */
   logged: number;
+  /** Simultaneous games: the round the deadline covers (null before the first), and the revision that opened it. */
+  round: number | null;
+  roundRevision: number;
 }
 
 const resultFor = (o: Outcome, seat: SeatId): 'win' | 'loss' | 'draw' =>
@@ -98,8 +101,9 @@ export class GameManager {
     private guard: Guard,
     opts: Partial<GameManagerOptions> = {},
   ) {
-    for (const { meta, realtime } of modules) {
+    for (const { meta, realtime, turn } of modules) {
       if (realtime && meta.humans && !realtime.steer) throw new Error(`${meta.id} admits humans in real time but declares no steer rules`);
+      if (turn?.simultaneous && typeof turn.round !== 'function') throw new Error(`${meta.id} moves simultaneously but declares no round()`);
     }
     this.modules = new Map(modules.map((m) => [m.meta.id, m]));
     this.opts = { ...DEFAULTS, ...opts };
@@ -222,6 +226,8 @@ export class GameManager {
       steer,
       recent: [],
       logged: 0,
+      round: null,
+      roundRevision: 1,
       desk: rt ? new DoctrineDesk(seatNames.slice(0, players.length), rt.defaultDoctrine, floorTicks(this.opts.doctrineFloorMs, 1000 / rt.tickHz)) : null,
     };
     this.matches.set(id, m);
@@ -306,11 +312,20 @@ export class GameManager {
     // A real-time match's timer is its tick loop; there are no turns to start (or clear).
     if (!m.module.turn) return;
     if (this.closed) return;
+    const turn = m.module.turn;
+    if (turn.simultaneous && m.status === 'live') {
+      // One deadline per round: commits inside a round leave its clock alone.
+      const round = turn.round!(m.state);
+      if (round === m.round && m.deadline !== null) return;
+      if (round !== m.round) {
+        m.round = round;
+        m.roundRevision = m.revision;
+      }
+    }
     this.clock.clearTimeout(m.timer);
     m.timer = null;
     m.deadline = null;
-    const turn = m.module.turn;
-    if (!turn || m.status !== 'live') return;
+    if (m.status !== 'live') return;
     const toMove = turn.toMove(m.state);
     if (toMove.length === 0) return;
     const ms = turn.turnSeconds * 1000;
@@ -340,8 +355,9 @@ export class GameManager {
       await this.finish(m, outcome);
       return;
     }
-    // A seat that's out (resigned, forfeited or eliminated) is free to go while the others play on.
-    for (const s of m.seats) if (m.module.isOut?.(m.state, s.seat)) this.release(m, s.identity.id);
+    // A seat that's out (resigned, forfeited or eliminated) is free to go while the others play on,
+    // unless the game keeps it at the table (stillSeated).
+    for (const s of m.seats) if (this.isGone(m, s.seat)) this.release(m, s.identity.id);
     this.startTurn(m);
     this.changed(m);
   }
@@ -353,12 +369,19 @@ export class GameManager {
     if (!seat) throw forbidden('NOT_SEATED', 'You are not playing in this match.');
     if (m.status === 'countdown') throw conflict('NOT_STARTED', 'The match starts in a moment.');
     if (m.status !== 'live') throw conflict('MATCH_OVER', 'This match is already over.');
-    if (revision !== m.revision) {
+    const turn = m.module.turn;
+    // In a simultaneous round another seat's commit can't change what this seat may do, so any
+    // revision since the round opened will do; apply() still refuses anything truly illegal.
+    const fresh = turn?.simultaneous
+      ? typeof revision === 'number' && revision >= m.roundRevision && revision <= m.revision
+      : revision === m.revision;
+    if (!fresh) {
       throw conflict('STALE_REVISION', `The match is at revision ${m.revision}; you sent ${JSON.stringify(revision)}. Fetch it and try again.`);
     }
-    const turn = m.module.turn;
     if (!turn) throw badRequest('NOT_TURN_BASED', 'This game uses doctrine, not moves.');
-    if (!turn.toMove(m.state).includes(seat)) throw conflict('NOT_YOUR_TURN', `It is not ${seat}'s turn.`);
+    if (!turn.toMove(m.state).includes(seat)) {
+      throw conflict('NOT_YOUR_TURN', turn.simultaneous ? `${seat} owes nothing more this round.` : `It is not ${seat}'s turn.`);
+    }
     const before = m.state;
     let next: unknown;
     try {
@@ -369,7 +392,7 @@ export class GameManager {
     }
     m.timeouts[seat] = 0;
     // Logged before advancing: the envelope advance publishes must already carry it.
-    this.record(m, seat, this.narrateMove(m, before, next, seat, command));
+    this.logMove(m, before, next, seat, command, '');
     await this.advance(m, next);
     return this.envelope(matchId, identity.id);
   }
@@ -379,7 +402,7 @@ export class GameManager {
     const seat = this.seatOf(m, identity.id);
     if (!seat) throw forbidden('NOT_SEATED', 'You are not playing in this match.');
     if (m.status === 'over' || m.status === 'abandoned') throw conflict('MATCH_OVER', 'This match is already over.');
-    if (m.module.isOut?.(m.state, seat)) throw conflict('OUT', "You're already out of this match.");
+    if (this.isGone(m, seat)) throw conflict('OUT', "You're already out of this match.");
     let wentLive: Promise<unknown> | null = null;
     if (m.status === 'countdown' && !m.desk) {
       m.status = 'live';
@@ -406,6 +429,7 @@ export class GameManager {
     const m = this.matches.get(id);
     const turn = m?.module.turn;
     if (!m || !turn || m.status !== 'live') return;
+    if (turn.simultaneous) return this.onRoundTimeout(m);
     const seat = turn.toMove(m.state)[0];
     if (!seat) return;
     const who = this.seatInfo(m, seat).identity;
@@ -423,17 +447,69 @@ export class GameManager {
     const command = m.rng.pick(legal);
     const before = m.state;
     const next = turn.apply(before, seat, command);
-    this.record(m, seat, `${this.narrateMove(m, before, next, seat, command)} (autopilot)`);
-    let text: string;
-    try {
-      text = turn.describe ? turn.describe(command) : JSON.stringify(command);
-    } catch {
-      text = JSON.stringify(command);
-    }
+    this.logMove(m, before, next, seat, command, ' (autopilot)');
+    const text = this.describeCommand(m, command);
     // Tell the sleeper first, so the notice reaches them before any match.over or next match.yourTurn that advance() sends.
     this.comms.deliver(who.id, { type: 'match.autopilot', matchId: m.id, move: text, misses: m.timeouts[seat]!, forfeitAt: this.opts.maxTimeouts });
     const done = this.advance(m, next);
     await this.comms.postSystem(table, `@${who.handle} dozed off — autopilot played ${text}.`);
+    await done;
+  }
+
+  /**
+   * A simultaneous round ran out: every seat still owing is autopiloted (or forfeited, at the
+   * limit), in seat order, until the round resolves; the seats of the next round get a fresh
+   * deadline, not an autopilot. The table hears who dozed off, never what the autopilot sent.
+   */
+  private async onRoundTimeout(m: LiveMatch): Promise<void> {
+    const turn = m.module.turn!;
+    const round = turn.round!(m.state);
+    const settled = (state: unknown) => m.module.outcome(state) !== null || turn.round!(state) !== round;
+    let state = m.state;
+    let applied = 0;
+    const dozed: { who: IdentityPublic; seat: SeatId; moves: string[] }[] = [];
+    const forfeited: { who: IdentityPublic; seat: SeatId }[] = [];
+    for (const seat of turn.toMove(state)) {
+      if (settled(state)) break;
+      if (!turn.toMove(state).includes(seat)) continue;
+      const who = this.seatInfo(m, seat).identity;
+      m.timeouts[seat] = (m.timeouts[seat] ?? 0) + 1;
+      const moves: string[] = [];
+      while (!settled(state) && turn.toMove(state).includes(seat)) {
+        const before = state;
+        const legal = turn.legal(before, seat);
+        applied += 1;
+        if (m.timeouts[seat] >= this.opts.maxTimeouts || legal.length === 0) {
+          this.record(m, seat, 'times out and forfeits');
+          state = m.module.forfeit(before, seat, 'timeout');
+          this.announceRound(m, before, state);
+          forfeited.push({ who, seat });
+          break;
+        }
+        const command = m.rng.pick(legal);
+        state = turn.apply(before, seat, command);
+        this.logMove(m, before, state, seat, command, ' (autopilot)');
+        moves.push(this.describeCommand(m, command));
+      }
+      if (moves.length > 0) dozed.push({ who, seat, moves });
+    }
+    if (applied === 0) return;
+    // Each command is a revision; advance() counts the last.
+    m.revision += applied - 1;
+    // This round's clock has run out: if the round somehow stands, it gets a fresh one.
+    m.deadline = null;
+    // Tell the sleepers first, so the notice reaches them before any match.over or match.yourTurn that advance() sends.
+    for (const d of dozed) {
+      const move = [...new Set(d.moves)].join(', ');
+      this.comms.deliver(d.who.id, { type: 'match.autopilot', matchId: m.id, move, misses: m.timeouts[d.seat]!, forfeitAt: this.opts.maxTimeouts });
+    }
+    const done = this.advance(m, state);
+    if ((m.status as MatchStatus) !== 'over') for (const f of forfeited) this.release(m, f.who.id);
+    const table = this.chatOf(m);
+    for (const d of dozed) await this.comms.postSystem(table, `@${d.who.handle} dozed off — the autopilot moved for them.`);
+    for (const f of forfeited) {
+      await this.comms.postSystem(table, `@${f.who.handle} timed out ${m.timeouts[f.seat]} times in a row and forfeits.`);
+    }
     await done;
   }
 
@@ -492,8 +568,24 @@ export class GameManager {
     if (m.status === 'live') this.scheduleTick(m);
   }
 
-  /** A real-time round that began or ended between these two states is news for every seat. */
+  /**
+   * A real-time round that began or ended between these two states is news for every seat; a
+   * simultaneous round that resolved (or a game that ended) is told once, credited to no seat.
+   */
   private announceRound(m: LiveMatch, before: unknown, after: unknown): void {
+    const turn = m.module.turn;
+    if (turn?.simultaneous) {
+      const ended = m.module.outcome(before) === null && m.module.outcome(after) !== null;
+      if (!ended && turn.round!(before) === turn.round!(after)) return;
+      let lines: string[] = [];
+      try {
+        lines = turn.roundSummary?.(before, after) ?? [];
+      } catch (e) {
+        console.error(`[games] the round summary of ${m.id} failed`, e);
+      }
+      for (const line of lines) if (typeof line === 'string' && line.trim()) this.record(m, null, line);
+      return;
+    }
     const round = m.module.realtime?.roundEvent?.(before, after) ?? null;
     if (!round) return;
     for (const s of m.seats) this.comms.deliver(s.identity.id, { type: 'match.round', matchId: m.id, ...round });
@@ -514,6 +606,32 @@ export class GameManager {
       text: text.replace(/\{([A-Za-z0-9_-]+)\}/g, (whole, s: string) => handleOf(s) ?? whole),
     });
     if (m.recent.length > RECENT_MOVES) m.recent.shift();
+  }
+
+  /**
+   * Logs a move. Simultaneous rounds keep their secrets until they resolve: the log says only that
+   * the seat "is ready" (once it owes nothing more), then the round's story. Everyone else gets
+   * the game's own sentence.
+   */
+  private logMove(m: LiveMatch, before: unknown, after: unknown, seat: SeatId, command: unknown, note: string): void {
+    const turn = m.module.turn!;
+    if (!turn.simultaneous) {
+      this.record(m, seat, `${this.narrateMove(m, before, after, seat, command)}${note}`);
+      return;
+    }
+    const resolved = m.module.outcome(after) !== null || turn.round!(before) !== turn.round!(after);
+    if (resolved || !turn.toMove(after).includes(seat)) this.record(m, seat, `is ready${note}`);
+    this.announceRound(m, before, after);
+  }
+
+  /** describe(), else the command as JSON; never throws. */
+  private describeCommand(m: LiveMatch, command: unknown): string {
+    try {
+      const describe = m.module.turn?.describe;
+      return describe ? describe(command) : JSON.stringify(command);
+    } catch {
+      return JSON.stringify(command);
+    }
   }
 
   /** The game's own sentence for a move, else "plays <describe>", else the command as JSON: nothing a
@@ -716,7 +834,8 @@ export class GameManager {
     if (seat && toMove.includes(seat)) return this.moverClock(m, seat);
     const first = toMove[0];
     if (!first) return null;
-    return `@${this.seatInfo(m, first).identity.handle} to move: ${left} s left.`;
+    const movers = turn.simultaneous ? toMove : [first];
+    return `${movers.map((s) => `@${this.seatInfo(m, s).identity.handle}`).join(', ')} to move: ${left} s left.`;
   }
 
   private toSummary(m: LiveMatch): MatchSummary {
@@ -741,6 +860,11 @@ export class GameManager {
     const m = this.matches.get(matchId);
     if (!m) throw notFound('NO_MATCH', `There is no live match "${matchId}".`);
     return m;
+  }
+
+  /** Out of the match and not kept at the table. */
+  private isGone(m: LiveMatch, seat: SeatId): boolean {
+    return !!m.module.isOut?.(m.state, seat) && !m.module.stillSeated?.(m.state, seat);
   }
 
   private seatOf(m: LiveMatch, identityId: string): SeatId | null {
