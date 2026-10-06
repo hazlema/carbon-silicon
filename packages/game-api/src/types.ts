@@ -49,6 +49,8 @@ export interface GameModule<S = unknown> {
   forfeit(state: S, seat: SeatId, reason: string): S;
   /** Is this seat already out of the game (eliminated or forfeited)? Optional; without it a seat is never out. */
   isOut?(state: S, seat: SeatId): boolean;
+  /** Out of the running but still at the table (Salvo's wreck ghosts). Without it, an out seat is released at once. */
+  stillSeated?(state: S, seat: SeatId): boolean;
   turn?: TurnRules<S>;
   realtime?: RealtimeRules<S>;
 }
@@ -69,6 +71,16 @@ export interface TurnRules<S> {
    * seats as {seat}; the server swaps in their handles. Optional: without it the log says "plays <describe>".
    */
   narrate?(before: S, after: S, seat: SeatId, command: unknown): string;
+  /**
+   * Every seat in toMove() moves at once (Salvo). The deadline covers the whole round, any revision
+   * since the round opened is accepted, a timeout autopilots every seat still owing, and nothing a
+   * seat commits is narrated until the round resolves: the log says "is ready", then roundSummary().
+   */
+  simultaneous?: boolean;
+  /** Required when simultaneous: the current round number. A change opens a new round. */
+  round?(state: S): number;
+  /** Simultaneous only: the round's story once it has resolved (or the game has ended), credited to no seat. Seats are written {seat}. */
+  roundSummary?(before: S, after: S): string[];
 }
 
 // ── Doctrine (standing orders for real-time games, rule 11). Validated and evaluated in doctrine.ts. ──
