@@ -17,6 +17,7 @@
     fit = false,
     settling = $bindable(false),
     secondsLeft = null,
+    toMove,
   }: {
     view: SalvoView;
     /** Kept for the table page's call; Salvo draws people in their identity colours (orange carbon, cyan silicon). */
@@ -34,6 +35,8 @@
     settling?: boolean;
     /** Seconds left on the round clock (the page's), for the ghost card; without it the card leaves the clock out. */
     secondsLeft?: number | null;
+    /** The seats the match still waits on (the page's match.toMove): exact, where the view can only guess about ghosts. */
+    toMove?: string[];
   } = $props();
 
   /** The resting isometric view, and the flat one. */
@@ -755,8 +758,9 @@
     step(e, k);
   }
 
-  /** The seats still owing this round: the living and the ghosts (a ghost with no trick to play, rare, is counted too: the view doesn't say). */
-  const owes = (s: string) => (!out(s) || ghostOf(s)) && !view.ready.includes(s);
+  /** The seats still owing this round: the match's own list when the page passes it; else the living and the ghosts
+   *  not yet ready (a ghost with no trick to play, rare, is counted too: the view doesn't say). */
+  const owes = (s: string) => (toMove ? toMove.includes(s) : (!out(s) || ghostOf(s)) && !view.ready.includes(s));
   /** Those still owing, besides you. */
   const waitingFor = $derived(view.seats.filter((s) => s !== me && owes(s)).map(handleOf));
   /** The one seat everybody is waiting on, when it comes to that. */

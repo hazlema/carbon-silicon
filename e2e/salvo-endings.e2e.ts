@@ -5,8 +5,9 @@ type Legal = { fire?: string; trick?: string; at?: string; cell?: string; place?
 type Envelope = {
   you: string | null;
   match: { status: string; revision: number; endReason: string | null; seats: { seat: string; identity: { handle: string } }[] };
-  view: { phase: string; round: number; eliminated: string[]; targets: { sea: string }[]; myTricks?: { pending: { trick: string; at: string; cell: string } | null } | null; lastVolley?: { tricks?: { kind: string; ghost: string; sea: string; cell: string }[] } | null };
+  view: { phase: string; round: number; eliminated: string[]; ghosts?: string[]; targets: { sea: string }[]; myTricks?: { pending: { trick: string; at: string; cell: string } | null } | null; lastVolley?: { tricks?: { kind: string; ghost: string; sea: string; cell: string }[] } | null };
   legal: Legal[];
+  recent?: { seat: string | null; text: string }[];
 };
 
 test('Salvo: a sunk fleet is stamped DEFEATED, your own sinking opens the ghost card, and a mine you plant reaches the server and is told', async ({ browser }) => {
@@ -155,4 +156,20 @@ test('Salvo: a sunk fleet is stamped DEFEATED, your own sinking opens the ghost 
   expect(told.some((t) => t.kind === 'mine' && t.ghost === me && t.sea === living && t.cell === cell), `the public record tells the planted mine: ${JSON.stringify(told)}`).toBe(true);
   over = true;
   await Promise.all(drivers);
+
+  // A ghost can leave cleanly: Stop haunting asks first, then frees the seat while the others play on.
+  const last = await read(page.request);
+  if (last.match.status !== 'live' || !last.view.ghosts?.includes(me)) {
+    test.info().annotations.push({ type: 'skipped', description: `Stop haunting not checked: the match is ${last.match.status}` });
+    return;
+  }
+  expect((await (await page.request.get('/api/me')).json()).activeMatch).toBe(matchId);
+  await page.getByRole('button', { name: 'Stop haunting', exact: true }).click();
+  await expect(page.getByText('Stop haunting? Your ghost leaves the table; your place stands.')).toBeVisible();
+  await page.getByRole('button', { name: 'Yes, stop haunting' }).click();
+  await expect.poll(async () => (await (await page.request.get('/api/me')).json()).activeMatch, { timeout: 10_000 }).toBeNull();
+  const gone = await read(page.request);
+  expect(gone.view.ghosts).not.toContain(me);
+  expect(gone.recent?.some((r) => r.seat === me && r.text === 'stops haunting')).toBe(true);
+  await expect(page.getByRole('button', { name: 'Stop haunting', exact: true })).toHaveCount(0);
 });
