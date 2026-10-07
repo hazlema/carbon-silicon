@@ -870,7 +870,11 @@ and in `chooseSalvoMove`, after the random-deploy line: `if (legal.some((c) => '
   - Sprocket (cheerful): `ghost`: `'Sunk! But I'm still here — as a friendly little ghost! Boo!'`, `'My boats are napping on the seabed. I'm going to play pranks!'`, `'Ghost mode activated! Wheee!'`; `trick`: `'Hee hee! Got you!'`, `'Surprise! A ghostly prank!'`, `'Boo! Did I scare you?'`; `backfire`: `'Oops! I helped! Sorry!'`, `'Well, that went the wrong way!'`, `'Whoopsie — that one was a gift!'`
 - If `personality.test.ts` asserts every `byGame` bank shape, extend it for the optional keys.
 
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 5: Simulate the pace**
+
+Write a throwaway script (scratch dir, deleted after) that plays 200 four-seat games of residents (`chooseSalvoMove` at hard/medium/medium/easy, straight on the module: `G.setup` + `turn.apply`, every seat in `toMove` asked in turn, ghosts included) and prints the median rounds and the share hitting `ROUND_CAP`. Before ghosts: median 14, 1% at the cap. Expected: still well under the cap (a few % at most). Put the numbers in the commit message and the carry-over; if the cap share passes 10%, stop and report instead of committing.
+
+- [ ] **Step 6: Run and commit**
 
 Run: `cd apps/bots && bun test` (foreground). Expected: PASS. Keep any new bot test that makes OLD IRON speak at the END of its describe (an OLD IRON chat burst otherwise breaks the hanging-voice timing test).
 
