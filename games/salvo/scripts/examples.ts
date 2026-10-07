@@ -3,7 +3,7 @@
  * `bun games/salvo/scripts/examples.ts` prints each one under its name; `src/examples.test.ts` asserts
  * that docs/rules.md carries every one verbatim inside a fenced code block.
  */
-import { cellIndex, roundSummary, salvoGame as G, type SalvoState, type SalvoView, type ShipId } from '../src/index';
+import { cellIndex, roundSummary, salvoGame as G, type SalvoCommand, type SalvoState, type SalvoView, type ShipId, type Trick } from '../src/index';
 
 export interface Example {
   name: string;
@@ -17,6 +17,12 @@ const place = (s: SalvoState, seat: string, fleet: Fleet) =>
 
 type Shot = [string, string] | [string, string, 'buoy'];
 type Round = Record<string, Shot | Shot[]>;
+/** A round's ghost play: the tricks the story's ghosts send, and the tricks the volley must tell ("mine west east d6"). */
+interface Plays {
+  tricks?: Record<string, SalvoCommand>;
+  told?: string[];
+}
+const trickKey = (t: Trick) => `${t.kind} ${t.ghost} ${t.sea} ${t.cell}`;
 const shotsOf = (x: Shot | Shot[]): Shot[] => (Array.isArray(x[0]) ? (x as Shot[]) : [x as Shot]);
 
 /**
@@ -24,8 +30,10 @@ const shotsOf = (x: Shot | Shot[]): Shot[] => (Array.isArray(x[0]) ? (x as Shot[
  * (shells, or a buoy when the third entry says so), then the rest of its salvo, one shot per ship
  * afloat, into open water on the same sea, from h8 down, at cells no story shot of this game uses.
  */
-function round(s: SalvoState, shots: Round, story: Set<string>): SalvoState {
+function round(s: SalvoState, shots: Round, story: Set<string>, plays: Plays = {}): SalvoState {
   const start = s.round;
+  // The ghosts' tricks the story is about, played first (the round can't resolve while a ghost owes one).
+  for (const [ghost, trick] of Object.entries(plays.tricks ?? {})) s = G.turn.apply(s, ghost, trick);
   for (const seat of s.seats) {
     if (!shots[seat] || s.round !== start) continue;
     const mine = shotsOf(shots[seat]);
@@ -42,7 +50,7 @@ function round(s: SalvoState, shots: Round, story: Set<string>): SalvoState {
       s = G.turn.apply(s, seat, water[0]);
     }
   }
-  // Ghosts owe a trick before the round can resolve (Task 7 stages the real ones): a harmless one, a mine
+  // Any other ghost owes a trick before the round can resolve: a harmless one, a mine
   // on open water no story shot uses, so it never goes off and changes the story. Living seats are never
   // filled in here, so a round that forgets one fails visibly.
   for (const seat of s.seats) {
@@ -51,9 +59,12 @@ function round(s: SalvoState, shots: Round, story: Set<string>): SalvoState {
     const quiet = legal.find((c) => c.trick === 'mine' && !story.has(`${c.at} ${c.cell}`) && !s.fleets[c.at].some((x) => x.cells.includes(c.cell)));
     s = G.turn.apply(s, seat, quiet ?? legal[0]);
   }
-  // No story here asks for a trick: one that went off would change the story without a word, so it fails loudly.
-  if (s.lastVolley?.round === start && s.lastVolley.tricks.length > 0) {
-    throw new Error(`round ${start} set off a trick no story asked for: ${JSON.stringify(s.lastVolley.tricks)}`);
+  // A trick goes off only when the story names it (`plays.told`): one that went off unasked would change
+  // the story without a word, and one the story names that doesn't go off would tell it wrong; both fail loudly.
+  const told = s.lastVolley?.round === start ? s.lastVolley.tricks.map(trickKey) : [];
+  const asked = plays.told ?? [];
+  if (told.some((x) => !asked.includes(x)) || asked.some((x) => !told.includes(x))) {
+    throw new Error(`round ${start} told tricks ${JSON.stringify(told)}, the story asked for ${JSON.stringify(asked)}`);
   }
   return s;
 }
@@ -167,9 +178,43 @@ function tiebreakGame() {
   return { before, after: s };
 }
 
+// ── A four-seat game where west goes down early and comes back as a ghost ──
+
+/** North, east and south pile onto west for two rounds; then west's ghost plays a mine, a mine on a ship, and a false splash. */
+const GHOST_ROUNDS: Round[] = [
+  { north: [['west', 'e1'], ['west', 'e2']], east: [['west', 'a2'], ['west', 'a3']], south: [['west', 'b8'], ['west', 'c8']], west: ['north', 'a1'] },
+  { north: [['west', 'e3'], ['west', 'e4'], ['west', 'a4'], ['west', 'd8']], east: [['west', 'g6'], ['west', 'h6']], south: ['east', 'h1'], west: ['north', 'a8'] },
+  // Round 3: west's ghost hides a mine on east's d6 (open water).
+  { north: ['south', 'a1'], east: ['north', 'h1'], south: ['east', 'a2'] },
+  // Round 4: north fires at east's d6; west's ghost hides a second mine on south's c8 (south's cruiser).
+  { north: ['east', 'd6'], east: ['north', 'h2'], south: ['east', 'a3'] },
+  // Round 5: north fires at south's c8; west's ghost shows east a fake hit on north's a5.
+  { north: ['south', 'c8'], east: ['north', 'h3'], south: ['north', 'a6'] },
+  { north: ['south', 'a2'], east: ['north', 'h4'], south: ['north', 'a7'] },
+];
+const GHOST_PLAYS: Plays[] = [
+  {},
+  {},
+  { tricks: { west: { trick: 'mine', at: 'east', cell: 'd6' } } },
+  { tricks: { west: { trick: 'mine', at: 'south', cell: 'c8' } }, told: ['mine west east d6'] },
+  { tricks: { west: { trick: 'splash', fool: 'east', at: 'north', cell: 'a5' } }, told: ['mine west south c8'] },
+  { told: ['splash west north a5'] },
+];
+
+function ghostGame() {
+  let s = G.setup({ seats: ['north', 'east', 'south', 'west'], seed: 1974 });
+  for (const [seat, fleet] of [['north', NORTH], ['east', EAST], ['south', SOUTH], ['west', WEST]] as const) s = place(s, seat, fleet);
+  const story = storyOf(GHOST_ROUNDS);
+  for (const p of GHOST_PLAYS) for (const t of Object.values(p.tricks ?? {})) story.add(`${(t as { at: string }).at} ${(t as { cell: string }).cell}`);
+  const after: SalvoState[] = [s];
+  GHOST_ROUNDS.forEach((r, i) => after.push((s = round(s, r, story, GHOST_PLAYS[i]))));
+  return { beforeSinking: after[1], sunk: after[2], mined: after[3], boomerang: after[4], backfire: after[5], told: after[6] };
+}
+
 export function examples(): Example[] {
   const g = fourSeatGame();
   const t = tiebreakGame();
+  const h = ghostGame();
   const out: Example[] = [];
   const add = (name: string, text: string) => out.push({ name, text });
 
@@ -194,6 +239,18 @@ export function examples(): Example[] {
   add('tiebreak-summary', roundSummary(t.before, t.after).join('\n'));
   add('tiebreak-outcome', json(G.outcome(t.after)));
   add('tiebreak-scrap', json(viewOf(t.after, null).scrap));
+  add('ghost-rises', roundSummary(h.beforeSinking, h.sunk).join('\n'));
+  add('ghost-header', viewOf(h.mined, 'west').ascii.split('\n\n')[0]);
+  add('ghost-mine-sea', sea(viewOf(h.mined, 'west'), 'east'));
+  add('ghost-my-tricks', json(viewOf(h.mined, 'west').myTricks));
+  add('ghost-mine', beside(sea(viewOf(h.mined, 'north'), 'north'), sea(viewOf(h.boomerang, 'north'), 'north')));
+  add('ghost-mine-summary', roundSummary(h.mined, h.boomerang).join('\n'));
+  add('ghost-mine-tricks', json(viewOf(h.boomerang, 'north').lastVolley!.tricks));
+  add('ghost-backfire', beside(sea(viewOf(h.boomerang, 'north'), 'south'), sea(viewOf(h.backfire, 'north'), 'south')));
+  add('ghost-backfire-summary', roundSummary(h.boomerang, h.backfire).join('\n'));
+  add('ghost-splash', beside(sea(viewOf(h.backfire, 'east'), 'north'), sea(viewOf(h.told, 'east'), 'north')));
+  add('ghost-splash-shells', json(viewOf(h.backfire, 'east').lastVolley!.shells.filter((x) => x.sea === 'north')));
+  add('ghost-splash-summary', roundSummary(h.backfire, h.told).join('\n'));
   return out;
 }
 

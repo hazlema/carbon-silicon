@@ -20,7 +20,8 @@ they still have afloat**: you pick enemy seas and cells, and once every player
 has picked, all the shells land together. A shell
 either splashes into open water (a miss), strikes a ship (a hit), or strikes the
 last unhit part of a ship and sends it to the bottom (sunk). When every ship in a
-fleet is sunk, that player is out. **The last fleet afloat wins.**
+fleet is sunk, that player is out, and comes back as a ghost to make mischief.
+**The last fleet afloat wins.**
 
 It takes its name from the pencil-and-paper game that Battleship grew out of, and
 from its one big idea: every shell of a round is in the air at once. You never
@@ -260,14 +261,15 @@ The order never depends on who committed first, and the dice are never rolled:
    cell, credited to its shooter.
 3. Every covered cell is recorded on that sea as a hit (a ship is there) or a
    miss, with everyone who covered it.
-4. Every covered ship cell **not already hit** becomes a new hit. Each seat
+4. Any [ghost's mine](#ghosts) under a shell goes off, adding its hits.
+5. Every covered ship cell **not already hit** becomes a new hit. Each seat
    credited with it earns **1 scrap** and one hit landed.
-5. Every ship that is now fully hit, and wasn't before, sinks. Every seat that
+6. Every ship that is now fully hit, and wasn't before, sinks. Every seat that
    landed a new hit on that ship in this volley earns **3 scrap**.
-6. Any player whose ships are now all sunk is out. Each seat that sank one of
+7. Any player whose ships are now all sunk is out. Each seat that sank one of
    that player's ships in this volley earns **half the victim's scrap**, rounded
-   down, counted after steps 4 and 5 and before anyone is paid for a knockout.
-7. The volley is written to `lastVolley`, and the end is checked: one fleet left
+   down, counted after steps 5 and 6 and before anyone is paid for a knockout.
+8. The volley is written to `lastVolley`, and the end is checked: one fleet left
    wins; no fleets left goes to the tiebreak; round 30 ends the match; otherwise
    the next round opens.
 
@@ -513,9 +515,298 @@ out nine.
 
 ---
 
+## Ghosts
+
+A sunk fleet doesn't leave the table. **When your last ship goes down, you come
+back as a ghost** (👻): you can't fire and you can't win, but every round you
+play one **dirty trick** on the living. You can still decide who wins.
+
+### Becoming a ghost
+
+Only a sinking makes a ghost. If you resign, leave or miss three rounds while
+you still have a ship afloat, you're simply out, as before.
+
+In this four-player game, north, east and south pile onto west for two rounds.
+The table hears west go under, and rise:
+
+```
+Round 2: {north} sinks {west}'s cruiser, {north} sinks {west}'s destroyer, {north} sinks {west}'s frigate, {east} sinks {west}'s submarine and 10 misses.
+{west} is out, and comes back as a ghost.
+```
+
+What changes once you're a ghost:
+
+- **Your placement is fixed** at the moment you sank. Nothing a ghost does, or
+  fails to do, moves it again.
+- **You owe one trick a round**, on the same 45-second clock as everyone's
+  salvo. The round waits for your trick like it waits for a salvo. A
+  ghost's trick is as secret as a shell: the table hears "west is up to
+  something…", never what or where.
+- **When your clock runs out, the autopilot plays a random trick for you**, and
+  that counts as a miss. **Three missed rounds in a row and your ghost fades
+  away**: you leave the table, your placement stays as it was, and your live
+  mines and false splashes vanish without a word.
+- **A ghost with no trick to play sits the round out.** That only happens with
+  three live mines down and fewer than three fleets afloat (too few for a false
+  splash).
+- **A ghost knows what it knew, nothing more.** You keep your own shots and
+  sonar readings and see the public marks, like a spectator. Nothing about the
+  tricks you're offered, or refused, ever tells you where a living ship is.
+
+There are two tricks: the **mine** and the **false splash**.
+
+### Mine
+
+```json
+{"trick": "mine", "at": "east", "cell": "d6"}
+```
+
+- `at` is any living sea. `cell` is any cell of it **no shell has landed on**
+  yet, and not one where you already have a mine. Another ghost's mine may sit
+  on the same cell (you'd never know); if it goes off, both do.
+- You may have **up to 3 live mines** at once. At three, mines drop out of your
+  choices until one goes off.
+- **You plant blind.** The cell may be open water or the middle of a ship;
+  you don't know, and the game won't tell you.
+- **Nobody sees your mine but you.** Not in the views, not in the narration,
+  not in the round's story, until it goes off. When the match ends, every live
+  mine is shown on its sea.
+- **A mine is live before the shells of the round you plant it in land.** Guess
+  where somebody fires this round and you catch them this round.
+- **It goes off when a shell is aimed at that exact cell.** The shell lands
+  normally first. A Time on Target centred on the mine sets it off once for
+  every shooter in it. Cells a blast only spills onto don't set it off.
+
+What happens next depends on what's under it.
+
+**Open water: a Dirty trick.** The blast comes back on the shooter's **own
+sea**. Their fleet takes one hit at the **same cell name**, if one of their
+unhit ship cells is there; otherwise at their **nearest** unhit ship cell
+(counting steps across and up, never diagonally; a tie goes to the first in
+board order, `a1`, `b1` … `h8`). The hit is credited to the ghost, who earns the
+scrap a shell would: 1 a hit, 3 if it sinks a ship, and the knockout share if
+it finishes the shooter off. Yes, a mine can sink the shooter's ship and knock
+the shooter out.
+
+In round 3, west's ghost hides a mine on east's `d6`. West alone sees it,
+drawn `M`, and its drawing says so at the top:
+
+```
+Round 4. Ready: nobody yet.
+Shots this round (one per ship afloat): north 4, east 4, south 4.
+You are a ghost: one trick a round. Live mines: 1 of 3.
+Out: west.
+```
+
+```
+east, scrap 7, 12 ship cells afloat
+  a b c d e f g h
+8 . o o o o . o o
+7 . . . . . . . .
+6 . . . M . . . .
+5 . . . . . . . .
+4 . . . . . . . .
+3 . . . . . . . .
+2 o . . . . . . .
+1 . . . . . . . o
+  a b c d e f g h
+```
+
+and in its view, under `myTricks`:
+
+```json
+{"mines": [{"sea": "east", "cell": "d6", "round": 3}], "splashes": [], "pending": null}
+```
+
+In round 4 north fires at east's `d6`. The water is empty, and the mine comes
+back on north's own sea at `d6`, which is the end of north's frigate. North's
+sea before and after:
+
+```
+north (you), scrap 15, 12 ship cells afloat     north (you), scrap 15, 11 ship cells afloat
+  a b c d e f g h                                 a b c d e f g h
+8 o . o o o o o o                               8 o . o o o o o o
+7 . . . . . . . .                               7 . . . . . . . .
+6 . F F F S . . .                               6 . F F X S . . .
+5 . . . . S . D .                               5 . . . . S . D .
+4 . . . . . . D .                               4 . . . . . . D .
+3 . . . . . . D .                               3 . . . . . . D .
+2 . C C C C . . .                               2 . C C C C . . o
+1 o . . . . . . o                               1 o . . . . . . o
+  a b c d e f g h                                 a b c d e f g h
+```
+
+The table hears it:
+
+```
+Round 4: 12 misses.
+Dirty trick! {west}'s mine at {east} d6 goes off under {north}'s shell — it comes back on {north}'s own sea at d6, a hit.
+```
+
+The line names the sea and the cell, never the ship, the way a hit never names
+its ship unless it sinks it. The volley carries it under `tricks`:
+
+```json
+[
+  {
+    "kind": "mine",
+    "ghost": "west",
+    "sea": "east",
+    "cell": "d6",
+    "shooters": ["north"],
+    "result": "boomerang",
+    "hits": [{"sea": "north", "cell": "d6"}]
+  }
+]
+```
+
+**A ship underneath: Backfire.** The mine sinks the **whole ship** at once,
+for the shooter. Every unhit cell of it becomes a hit credited to the shooter
+(or to every shooter of a Time on Target), scored like any hits and any
+sinking. The ghost just helped.
+
+In round 4 west's ghost also hid a mine on south's `c8`, blind. South's
+cruiser was lying on `a8` to `d8`. In round 5 north fires at `c8`. South's sea
+as north sees it, before and after:
+
+```
+south, scrap 2, 12 ship cells afloat     south, scrap 2, 8 ship cells afloat
+  a b c d e f g h                          a b c d e f g h
+8 . . . . . o o o                        8 * * * * o o o o   fog lifted: 0 afloat
+7 . . . . . . . .                        7 . . . . . . o o
+6 . . . . . . . .                        6 . . . . . . . .
+5 . . . . . . . .                        5 . . . . . . . .
+4 . . . . . . . .                        4 . . . . . . . .
+3 . . . . . . . .                        3 . . . . . . . .
+2 . . . . . . . .                        2 . . . . . . . .
+1 o . . . . . . .                        1 o . . . . . . .
+  a b c d e f g h                          a b c d e f g h
+```
+
+```
+Round 5: {north} sinks {south}'s cruiser and 11 misses.
+Backfire! {west}'s mine was sitting on {south}'s cruiser. {north}'s shell sends it to the bottom. Thanks for the help, {west}.
+The fog lifts from row 8.
+```
+
+North's one shell sinks the whole cruiser: 4 scrap for the hits and 3 for the
+sinking.
+
+The fine print:
+
+- **Mines go off after every shell has landed**, seas in seat order, then cells
+  in board order, then ghosts in seat order. A mine never sets off another.
+  Eliminations are worked out after the mines, so a mine can knock a player out
+  (or send the last fleets to the tiebreak in the same volley) like any shell.
+- **A mine whose cell gets shot without a shell aimed at it is gone without a
+  word**: covered by a blast's spill, or hit by a Dirty trick or a Backfire in
+  the same volley. A spent cell can never set it off.
+- **A mine dies with its sea.** When a fleet goes out, every mine on it is gone.
+- If the shooter has no unhit ship cell left when the mine goes off, the round's
+  story says there was nothing left to hit.
+
+### False splash
+
+```json
+{"trick": "splash", "fool": "east", "at": "north", "cell": "a5"}
+```
+
+- `fool` is a living player, `at` another living sea (not the fool's own), and
+  `cell` a cell of it no shell has landed on yet.
+- **Only while three or more fleets are afloat.** The fake needs a third
+  player to wear as its shooter.
+- **At this round's volley, the fool alone sees a fake hit** on that cell: in
+  their drawing, in their `TargetView.hits` (with `afloat` one lower), and as a
+  shell in their copy of `lastVolley`. The fake shell is dressed as a real
+  shooter: a living player other than the fool and the sea's owner, one that
+  really fired at that sea this volley if there is one.
+- Nobody else sees it. The ghost sees its own splash in `myTricks`.
+- **It lasts one round.** At the next volley it's taken back and told to
+  everyone. If a shell lands on that cell first (even in the volley it was
+  meant to show in), the real result goes up and the trick is told in that
+  volley. If its sea goes out, or the match ends while it's on show, it's told
+  in that last volley.
+
+The fake never touches a fog count or a sonar reading, and the "shooter" has
+fired one shell more than its guns. A careful player can catch it. That's the
+bluff.
+
+In round 5 west's ghost shows east a fake hit on north's `a5`. South fired at
+north that round, so the fake wears south's colours. North's sea as east sees
+it after round 5, and after round 6:
+
+```
+north, scrap 22, 10 ship cells afloat        north, scrap 22, 11 ship cells afloat
+  a b c d e f g h                              a b c d e f g h
+8 o o o o o o o o   fog lifted: 0 afloat     8 o o o o o o o o   fog lifted: 0 afloat
+7 . . . . . . o o                            7 o . . o o o o o
+6 o . . X . . . .                            6 o . . X . . . .
+5 X . . . . . . .                            5 . . . . . . . .
+4 . . . . . . . .                            4 . . . . . . . o
+3 . . . . . . . o                            3 . . . . . . . o
+2 . . . . . . . o                            2 . . . . . . . o
+1 o . . . . . . o                            1 o . . . . . . o   fog lifted: 0 afloat
+  a b c d e f g h                              a b c d e f g h
+```
+
+East's count of north's ship cells afloat drops to 10 with the fake hit and
+goes back to 11 once it's taken back; the row 8 fog count never moved.
+North's shells in east's copy of the round 5 volley. South has 4 guns, and
+here it fires 5:
+
+```json
+[
+  {"from": "east", "sea": "north", "cell": "h3", "result": "miss", "ship": null, "blast": false},
+  {"from": "east", "sea": "north", "cell": "b8", "result": "miss", "ship": null, "blast": false},
+  {"from": "east", "sea": "north", "cell": "h7", "result": "miss", "ship": null, "blast": false},
+  {"from": "east", "sea": "north", "cell": "g7", "result": "miss", "ship": null, "blast": false},
+  {"from": "south", "sea": "north", "cell": "a6", "result": "miss", "ship": null, "blast": false},
+  {"from": "south", "sea": "north", "cell": "h8", "result": "miss", "ship": null, "blast": false},
+  {"from": "south", "sea": "north", "cell": "g8", "result": "miss", "ship": null, "blast": false},
+  {"from": "south", "sea": "north", "cell": "f8", "result": "miss", "ship": null, "blast": false},
+  {"from": "south", "sea": "north", "cell": "a5", "result": "hit", "ship": null, "blast": false}
+]
+```
+
+In round 6 it's gone, and the table hears why:
+
+```
+Round 6: 11 misses.
+Dirty trick! The hit {east} saw on {north} a5 was {west}'s false splash.
+The fog lifts from row 1.
+```
+
+### How tricks are told
+
+A trick is told the moment it's revealed, in the round's story, with each seat
+written `{seat}`:
+
+```
+Dirty trick! {ghost}'s mine at {sea} e5 goes off under {shooter}'s shell — it comes back on {shooter}'s own sea at e5, a hit.
+Backfire! {ghost}'s mine was sitting on {sea}'s cruiser. {shooter}'s shell sends it to the bottom. Thanks for the help, {ghost}.
+Dirty trick! The hit {fool} saw on {sea} e5 was {ghost}'s false splash.
+```
+
+A Time on Target on a mine says `{north} and {south}'s shells`, and a Dirty
+trick lists one hit for each shooter. Sinkings a Dirty trick causes are in the
+volley's `sunk`, credited to the ghost. A false splash is never told while it's
+on show, and a trick that never revealed itself is never told at all: a mine
+that never went off (until the match ends and shows it), a ghost that faded, a
+trick on a seat that left before the volley, or a false splash on show when
+everyone else forfeits.
+
+**In the browser:** once the volley that sank you has landed, a card tells you
+who sank you and what a ghost does, until you press **Haunt them**. Then pick
+**Mine** or **False splash**, click a cell on a living sea (for a splash, pick
+who to fool), and press **Plant mine** or **Splash**. Your live mines and
+your splash on show are marked on their seas.
+
+---
+
 ## Winning, placement and the tiebreak
 
-**You're out** when every one of your ships is sunk. You're also out if you
+**You're out** when every one of your ships is sunk (you stay at the table as a
+[ghost](#ghosts), but your race is run). You're also out if you
 resign, leave, or miss three rounds in a row. A player who forfeits that way
 is out at once: their sea disappears from every view until the match is over,
 when every sea is revealed. It is no longer a target, but shells already in the
@@ -624,6 +915,14 @@ round share a place.
 12. **Every ship you lose is a gun you lose.** Your salvo is one shot per ship
     afloat, so the player who's been hit hardest is also the one shooting back
     the least. Sinking a ship silences a gun from the next round on.
+13. **Sinking a fleet makes a ghost.** Every player you knock out comes back
+    with one dirty trick a round, and it remembers who sank it.
+14. **Any unshot cell might be mined.** Your shell lands first, then the mine
+    goes off: open water sends a hit back onto your own sea; a ship under it
+    sinks whole, for you.
+15. **A hit you see may be fake.** A false splash shows one player one hit for
+    one round. It never moves a fog count or a sonar reading, and its
+    "shooter" fired one shell too many.
 
 ---
 
@@ -654,6 +953,11 @@ round share a place.
   as a big number.
 - **Read the rows.** A lifted row with as many ships afloat as unshot cells is a
   row of sure hits; a row reading `0` is water.
+- **Haunt with purpose.** As a ghost, mine where the living will shoot but a
+  ship probably isn't. Next to a fresh hit is where everyone aims, but it's
+  also where a ship most likely lies, and a Backfire only helps the shooter.
+  Fool the leader with a splash on the sea they're hunting, in water their
+  hunt would otherwise skip.
 - **Talk.** Propose a strike on a known hit's neighbour, recruit the player
   who's been hit hardest by the leader, keep your word when it matters and break
   it when it matters more.
@@ -662,8 +966,9 @@ round share a place.
   work out the chance of a ship on every cell of every sea, from every hit,
   miss, sinking, fog count and their own sonar, and fire where the odds are
   best, whoever's sea that is: OLD IRON picks among its top few, GAME_OVER takes
-  the very best. A dense lifted row on your sea will draw their fire. They read
-  the chat too. Don't count on them.
+  the very best. A dense lifted row on your sea will draw their fire. As ghosts
+  they mine where you're likely to shoot and a ship is unlikely, and splash
+  whoever leads. They read the chat too. Don't count on them.
 
 ---
 
@@ -673,7 +978,7 @@ round share a place.
 
 Each turn the host gives you `legal`: every command you may send right now, in
 exactly the shape the command takes. Pick one and send it unchanged. There are
-four shapes.
+six shapes: four for a fleet, two for a ghost.
 
 **Place a ship** (deployment only):
 
@@ -714,6 +1019,26 @@ as you go (no cell aimed twice, no second buoy).
 centre where you already have a buoy on that sea. After the volley, the reading
 is in your view's entry for that sea, under `sonar`.
 
+**Plant a mine** (a ghost only, one trick a round):
+
+```json
+{"trick": "mine", "at": "east", "cell": "e5"}
+```
+
+`at` is a living sea; `cell` a cell of it no shell has landed on, where you
+don't already have a mine. Three live mines at most.
+
+**Play a false splash** (a ghost only, instead of a mine; needs three fleets
+afloat):
+
+```json
+{"trick": "splash", "fool": "south", "at": "east", "cell": "e5"}
+```
+
+`fool` is a living seat, `at` a living sea other than the fool's, `cell` a cell
+of it no shell has landed on. One trick and you're ready for the round. See
+[Ghosts](#ghosts) for what each one does.
+
 `legal` during deployment lists every placement that fits for every ship still
 in port (cells `a1` to `h8`, `east` before `north`), then `{"place": "random"}`
 last: 385 entries on an empty sea. In a round it lists every unshot cell of every
@@ -723,7 +1048,17 @@ each of those seas: 192 shells and 108 buoys at the start of a four-player game
 36 with two, shrinking as you shoot and listen (and as this round's salvo fills:
 cells you've aimed this round drop out, and all buoys once one is in). `legal`
 is empty when you owe nothing: once your fleet is down, once
-your salvo is in, once you're out, and once the match is over.
+your salvo is in, once you're out (and not a ghost), and once the match is over.
+
+A ghost's `legal` is its tricks: mines first (every unshot cell of every living
+sea, in seat order, `a1` first, less the cells you've mined), then false
+splashes (each fool, then each sea, then each cell). With one ghost and three
+fleets afloat that's up to 576 entries (192 mines and 384 splashes),
+shrinking as cells are shot. At three live mines the mines drop out; with fewer
+than three fleets afloat the splashes do. It's empty once your trick is in, and
+when nothing is left (three mines down and two fleets afloat) you sit the round
+out. Nothing in it depends on where a living ship is: a ship cell is offered
+like any other.
 
 ### Sending, and the clock
 
@@ -738,9 +1073,10 @@ Each round (and deployment) has one 45-second clock, the same for everyone;
 other players committing never restarts it. At 0 the autopilot moves for every
 seat that still owes something: it places every ship still in port during
 deployment, and sends the rest of your salvo in a round, one random legal
-command at a time (shells, and now and then a buoy). Each counts as one miss,
-and
-three misses in a row forfeit the match.
+command at a time (shells, and now and then a buoy), and a random trick for a
+ghost. Each counts as one miss, and
+three misses in a row forfeit the match (a ghost fades: its placement stays,
+its mines and splashes go).
 
 ### Errors
 
@@ -751,28 +1087,38 @@ fetch the match and aim again).
 
 | Code | Meaning |
 |---|---|
-| `BAD_COMMAND` | Not an object, the wrong shape for the phase (a shell during deployment, a placement during a round), or `at` or `cell` isn't a string |
+| `BAD_COMMAND` | Not an object, the wrong shape for the phase (a shell during deployment, a placement during a round, a shell from a ghost), or `at` or `cell` isn't a string, or `trick` isn't `mine` or `splash` |
 | `BAD_SHIP` | No such ship, or that ship is already deployed |
 | `BAD_CELL` | The cell isn't on an 8 × 8 sea (`a1` to `h8`) |
 | `BAD_FACING` | `facing` isn't `east` or `north` (or is missing) |
 | `OFF_SEA` | The hull would run off the sea |
 | `OVERLAP` | The hull would cross one of your ships |
-| `BAD_TARGET` | `at` isn't a living opponent: your own seat, a seat not in the match, or one that's out |
+| `BAD_TARGET` | `at` isn't a living opponent: your own seat, a seat not in the match, or one that's out (for a ghost's trick: `at` isn't a living sea) |
 | `ALREADY_FIRED` | You already shot that cell of that sea (directly or in a blast) |
 | `BAD_BUOY` | A buoy's centre must keep its 3 × 3 on the sea: `b2` to `g7` |
 | `ALREADY_BUOYED` | You already have a buoy at that centre of that sea (its reading stays live) |
 | `ALREADY_AIMED` | Another shell of this round's salvo is already aimed at that cell of that sea |
 | `ONE_BUOY` | You already have a buoy in this round's salvo |
-| `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, your whole salvo is in, or you're out. The engine itself can also answer `409 NOT_YOUR_TURN` when you owe nothing this round, for instance after your last shot is already in |
+| `NOT_A_GHOST` | A trick from a fleet still afloat: only a ghost plays tricks |
+| `ALREADY_SHOT` | A trick on a cell a shell has already landed on (anyone's shell) |
+| `YOUR_MINE` | You already have a mine on that cell of that sea |
+| `MINE_LIMIT` | You already have 3 live mines: wait for one to go off, or play a false splash |
+| `TOO_FEW` | A false splash with fewer than three fleets afloat |
+| `BAD_FOOL` | `fool` isn't a living seat, or is the owner of the sea the splash is on |
+| `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, your whole salvo (or your ghost's trick) is in, you're a ghost with nothing to play, or you're out. The engine itself can also answer `409 NOT_YOUR_TURN` when you owe nothing this round, for instance after your last shot is already in |
 | `MATCH_OVER` (409) | The match is over. The engine answers this before the game is asked, so it is the only code you will see for a move into a finished match |
 | `NO_ROOM` | Random deployment found no room for a ship (it can't happen with this fleet; listed for completeness) |
 
 ### The view
 
 Your view is plain JSON, and it only ever contains what your seat is allowed to
-know. It never contains another fleet's unhit ships (until the match is over) or
+know. It never contains another fleet's unhit ships (until the match is over),
 anyone else's shell that hasn't landed yet (your own this round are in
-`myOrders`, for you alone).
+`myOrders`, for you alone), or a ghost's trick before it's revealed (a ghost's
+own are in `myTricks`). One thing in it can be false: if a ghost plays a
+[false splash](#false-splash) on you, the fake hit is in your view, your
+`targets` and your `lastVolley`, exactly like a real one, until the next
+volley takes it back.
 
 | Field | Meaning |
 |---|---|
@@ -780,14 +1126,16 @@ anyone else's shell that hasn't landed yet (your own this round are in
 | `seats` | The seats in this match, in seat order |
 | `round` | 0 during deployment, then 1, 2, … |
 | `phase` | `deploy`, `fire` or `over` |
-| `ready` | During deployment, the seats whose fleets are complete; during a round, the seats whose whole salvo is in. Never what they sent |
-| `guns` | During a round, how many shots each living seat fires this round: its ships afloat |
+| `ready` | During deployment, the seats whose fleets are complete; during a round, the seats whose whole salvo (or ghost's trick) is in. Never what they sent |
+| `ghosts` | The sunk fleets still at the table, in seat order (`[]` once the match is over) |
+| `guns` | During a round, how many shots each living seat fires this round: its ships afloat. Ghosts have no entry |
 | `myOrders` | During a round, the shots you've already sent this round, each `{fire, at, cell}`, in order. Yours alone: `[]` for everyone else and for spectators |
+| `myTricks` | If you're a ghost, your own mischief: `{mines, splashes, pending}`, below. `null` for everyone else |
 | `mySea` | Your own sea (below); `null` for a spectator |
 | `targets` | One `TargetView` per opponent's sea (spectators: every sea), fleets that are out included and marked `out` |
 | `lastVolley` | The last resolved round, a `Volley`, or `null` before round 1 lands |
 | `scrap` | Everyone's scrap, by seat |
-| `eliminated` | The seats that are out, in the order they went |
+| `eliminated` | The seats that are out, in the order they went (ghosts included) |
 | `liftedRows` | The rows the fog has lifted, in the order they lifted (the same for every sea); each sea's counts are in its `TargetView.lifted` |
 | `winner` | The winning seat once it's over, else `null` |
 | `endReason` | `last-afloat`, `tiebreak`, `round-cap`, a forfeit reason, or `null` |
@@ -811,6 +1159,14 @@ lists the ships not yet placed; `shots` maps every cell shot at your sea to
 }
 ```
 
+**`myTricks`**, a ghost's alone, is `{mines, splashes, pending}`: `mines` your
+live mines, each `{sea, cell, round}` (the round you planted it); `splashes`
+your false splash on show, each `{fool, sea, cell, round}`; and `pending` this
+round's trick once you've sent it, `{trick, at, cell}` (with `fool` for a
+splash), else `null`. West's at the start of round 4, in the
+[mine example](#mine), is
+`{"mines": [{"sea": "east", "cell": "d6", "round": 3}], "splashes": [], "pending": null}`.
+
 **`TargetView`**, one per enemy sea:
 
 | Field | Meaning |
@@ -825,6 +1181,7 @@ lists the ships not yet placed; `shots` maps every cell shot at your sea to
 | `afloat` | Ship cells still unhit: 12 minus the hits |
 | `out` | `true` once that fleet is out (sunk, or its player forfeited): still on view, no longer a target |
 | `revealed` | Only once the match is over: every ship, `{id, cells, hits}` |
+| `mines` | Only once the match is over: every mine still live on that sea, `{ghost, cell}` |
 
 East's sea from north's view after round 4 (the [worked round](#a-worked-round)):
 
@@ -875,8 +1232,14 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
   credited with the sinking.
 - `eliminated`: the seats whose last ship went down in this volley, in seat
   order (a tiebreak winner included).
-- `tricks`: the ghosts' dirty tricks revealed in this volley (mines that went
-  off, false splashes taken back), `[]` when none.
+- `tricks`: the ghosts' dirty tricks revealed in this volley, in the order
+  they were told, `[]` when none. Each is one of:
+  - `{kind: "mine", ghost, sea, cell, shooters, result: "boomerang", hits}`: a
+    Dirty trick; `hits` lists each `{sea, cell}` it struck on the shooters'
+    own seas. Any ship it sank is in `sunk`, credited to the ghost.
+  - `{kind: "mine", ghost, sea, cell, shooters, result: "backfire", ship}`: the
+    mine sat on `ship`, which sank whole for the shooters (it's in `sunk` too).
+  - `{kind: "splash", ghost, fool, sea, cell}`: a false splash taken back.
 
 The round 4 volley from the worked round, with no blast and no sinking:
 
@@ -917,7 +1280,11 @@ fog starts, an `Out:` line once anyone is out, then your own sea with your
 ships, then each target sea (a lifted row ends with its count, and your sonar
 readings follow the sea they're on), then a legend. During a round the status
 line is followed by everyone's shots this round and, for you, how much of your
-salvo you've sent. Row 8 is at the top, `a1`
+salvo you've sent. A ghost's drawing adds a line saying so, with its live mines
+counted and, once sent, its trick for the round; its mines are drawn `M` on
+their seas, in its drawing only, and a legend line explains the `M`. Once the
+match is over, every live mine left on open water shows as `M` on its sea, for
+everyone (one on a ship shows the ship's letter; `TargetView.mines` lists them all). Row 8 is at the top, `a1`
 bottom left. North's whole view at the start of round 6:
 
 ```
@@ -983,6 +1350,8 @@ X = hit, * = sunk ship, o = miss, . = unknown or open water
 The move log and the table chat never carry an aim before it lands. A command is
 described only as "fires", "deploys a ship" or "deploys the fleet", and a commit
 is narrated as "is ready", whether a person, a machine or the autopilot sent it.
+A ghost's trick is described as "plays a dirty trick" and narrated as "is up to
+something…", never which trick, where or on whom.
 The round's story is told once it has resolved, in lines like the ones in this
 guide, with each seat written `{seat}` for the platform to fill in a name.
 
@@ -1005,7 +1374,7 @@ That's a joke, not a rule; nobody could enforce a ban anyway.
 `neighbours` (the up to eight cells around a cell), `hullCells(at, length,
 facing)`, `liftedRows(round)`, `isBuoyCentre(cell)`, `buoyCells(centre)`,
 `renderAscii(view)`, and the constants `SHIPS`, `SIZE` (8), `FOG_FROM` (6),
-`ROUND_CAP` (30) and `TURN_SECONDS` (45). Your view
+`ROUND_CAP` (30), `TURN_SECONDS` (45) and `MINE_LIMIT` (3). Your view
 isn't the game state (it can't be, the fleets are hidden), so you can't replay
 `apply` on it; reason over the view instead.
 
@@ -1027,4 +1396,5 @@ isn't the game state (it can't be, the fleets are hidden), so you can't replay
 | **Scrap** | Hit 1, sinking 3, knockout half the victim's scrap |
 | **Win** | Last fleet afloat; same-volley knockouts go to most scrap, then most hits, then a seeded coin |
 | **Round cap** | After round 30: most ship cells afloat, then the tiebreak |
+| **Ghosts** | A sunk fleet stays as a ghost, placement fixed, and plays one trick a round: a hidden mine `{"trick": "mine", "at": "east", "cell": "e5"}` (open water hits the shooter's own sea; a ship sinks whole, for the shooter) or a false splash `{"trick": "splash", "fool": "south", "at": "east", "cell": "e5"}` (one fake hit, one player, one round) |
 | **Clock** | 45 s a round; the autopilot moves at random; 3 misses in a row forfeit |
