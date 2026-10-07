@@ -70,6 +70,11 @@
   // The sea you picked stays on view even after its fleet goes out; left to us, a living one.
   const target = $derived(view.targets.find((t) => t.sea === picked) ?? view.targets.find((t) => !t.out) ?? view.targets[0] ?? null);
   const targetSea = $derived(target?.sea ?? null);
+  // The sea on view is yours to leave: one we chose counts as picked, so a fleet that sinks while you watch
+  // stays put for its stamp instead of the board sliding to the next living sea.
+  $effect(() => {
+    if (picked === null && target && !target.out) picked = target.sea;
+  });
   const fireCells = $derived(new Set(legal.filter(isFire).filter((l) => l.at === targetSea).map((l) => l.cell)));
   /** The centres a sonar buoy may still go on the shown sea (b2..g7, once each). */
   const buoyCentres = $derived(new Set(legal.filter(isBuoy).filter((l) => l.at === targetSea).map((l) => l.cell)));
@@ -347,7 +352,10 @@
           warnFor,
         );
       }
-      openRound(Math.max(p.total, warnFor) + 400);
+      // Your last ship went down in this volley: say so once it has landed, in place of the next round's call.
+      const sunkNow = atSea && !!me && v.eliminated.includes(me) && view.phase !== 'over';
+      if (sunkNow) announce({ tone: 'hot', text: "Your fleet is sunk — you're out. The others play on." }, Math.max(p.total, warnFor) + 400, 6000);
+      else openRound(Math.max(p.total, warnFor) + 400);
       settling = true;
       clearTimeout(settleTimer);
       settleTimer = setTimeout(() => (settling = false), Math.max(p.total, warnFor) + 400);
@@ -846,9 +854,18 @@
 
     {#if !deploying && ownCells && me}
       <section class="fleet" aria-label="Your fleet" bind:this={ownEl}>
-        <p class="head"><span>Your fleet</span><span class="count">{afloatOf(me)} afloat</span></p>
+        <p class="head"><span>Your fleet</span><span class="count" class:sunk={amOut && !settling}>{amOut && !settling ? 'sunk' : `${afloatOf(me)} afloat`}</span></p>
         <div class="ownbox">
           {@render sea(me, ownCells, ownCell, false, 'view', true)}
+          {#if amOut && !settling}
+            <svg class="defeated small" viewBox="0 0 340 150" role="img" aria-label="Your fleet is sunk" data-testid="sunk">
+              <g transform="rotate(-12 170 75)">
+                <rect x="24" y="41" width="292" height="68" rx="8" />
+                <rect x="32" y="49" width="276" height="52" rx="4" class="inner" />
+                <text x="170" y="94" text-anchor="middle" class="big">SUNK</text>
+              </g>
+            </svg>
+          {/if}
         </div>
         <p class="legend"><span><i class="k-hit"></i>hit on you</span><span><i class="k-miss"></i>miss</span></p>
       </section>
@@ -913,12 +930,12 @@
             {#if room === 0}<p class="hint">Salvo aimed. Click an aim to take it back.</p>{/if}
           {:else}
             <button type="button" class="slot" data-testid="fire" disabled
-              >{aimKind === 'buoy' ? 'Pick a centre for the buoy' : sent.length ? `Pick ${plural(room, 'more cell')}` : `Pick ${plural(room, 'cell')} to fire`}</button
+              >{target?.out ? 'That fleet is sunk: pick a living sea' : aimKind === 'buoy' ? 'Pick a centre for the buoy' : sent.length ? `Pick ${plural(room, 'more cell')}` : `Pick ${plural(room, 'cell')} to fire`}</button
             >
           {/if}
         {/if}
       {:else if live && amOut}
-        <p class="slot">Your fleet is down. The others play on.</p>
+        <p class="slot">{settling ? 'The volley is landing…' : 'Your fleet is sunk. Watch any sea: the others play on.'}</p>
       {:else if !live}
         <p class="slot">{settling ? 'The last volley is landing…' : 'Every fleet is shown.'}</p>
       {/if}
@@ -1071,10 +1088,20 @@
     stroke-width: 2;
     opacity: 0.8;
   }
+  .defeated.small {
+    width: 86%;
+  }
+  .count.sunk {
+    color: #ff3b4f;
+    font-weight: 700;
+  }
   .defeated text {
     fill: #ff3b4f;
     font: 800 40px var(--font-ui);
     letter-spacing: 0.1em;
+  }
+  .defeated text.big {
+    font-size: 56px;
   }
 
   /* ── Banners: over the stage, never in the way of a click ── */
@@ -1372,6 +1399,7 @@
     flex-direction: column;
   }
   .ownbox {
+    position: relative;
     min-width: 0;
     padding: 6px;
     border-radius: var(--r-control);

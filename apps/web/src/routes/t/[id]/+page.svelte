@@ -412,6 +412,8 @@
       if (sv.phase === 'deploy') return { lead: myTurn ? 'Place your fleet' : 'Waiting for the others to deploy…', secs };
       const owing = sv.seats.filter((s) => !sv.eliminated.includes(s) && !sv.ready.includes(s) && s !== mySeat).map(handleOf);
       const who = owing.length <= 1 ? owing.join('') : `${owing.slice(0, -1).join(', ')} and ${owing.at(-1)}`;
+      // Out mid-match: said once the volley that sank you has landed.
+      if (mySeat && sv.eliminated.includes(mySeat) && !svSettling) return { lead: 'Your fleet is sunk.', detail: `You're out. ${owing.length ? `Round ${sv.round} — waiting on ${who}…` : 'The others play on.'}` };
       if (myTurn) {
         const detail = owing.length === 0 ? 'Everyone else is locked in.' : `${who} ${owing.length === 1 ? 'is' : 'are'} still aiming.`;
         const guns = (mySeat && sv.guns?.[mySeat]) || 0;
