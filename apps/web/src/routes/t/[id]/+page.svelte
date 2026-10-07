@@ -410,22 +410,33 @@
     if (sv) {
       const secs = myTurn && secondsLeft !== null ? secondsLeft : undefined;
       if (sv.phase === 'deploy') return { lead: myTurn ? 'Place your fleet' : 'Waiting for the others to deploy…', secs };
-      const owing = sv.seats.filter((s) => !sv.eliminated.includes(s) && !sv.ready.includes(s) && s !== mySeat).map(handleOf);
-      const who = owing.length <= 1 ? owing.join('') : `${owing.slice(0, -1).join(', ')} and ${owing.at(-1)}`;
+      // Everyone the round still waits on, the ghosts who owe a trick included.
+      const owingSeats = match.toMove.filter((s) => s !== mySeat);
+      const listOf = (l: string[]) => (l.length <= 1 ? l.join('') : `${l.slice(0, -1).join(', ')} and ${l.at(-1)}`);
+      const owing = owingSeats.map(handleOf);
+      const who = listOf(owing);
       // A ghost: one dirty trick a round (once the volley that sank you has landed; until then, as before).
       if (mySeat && sv.ghosts?.includes(mySeat)) {
         if (svSettling && sv.lastVolley?.eliminated.includes(mySeat)) return { lead: `Round ${sv.round} — waiting on ${who}…` };
-        const others = match.toMove.filter((s) => s !== mySeat).map(handleOf);
-        const them = others.length <= 1 ? others.join('') : `${others.slice(0, -1).join(', ')} and ${others.at(-1)}`;
         const detail = sv.myTricks?.pending
-          ? `Your trick is set.${others.length ? ` Waiting on ${them}…` : ''}`
-          : `One dirty trick a round. Round ${sv.round}${others.length ? ` — waiting on ${them}…` : '.'}`;
+          ? `Your trick is set.${owing.length ? ` Waiting on ${who}…` : ''}`
+          : `One dirty trick a round. Round ${sv.round}${owing.length ? ` — waiting on ${who}…` : '.'}`;
         return { lead: "👻 You're a ghost.", detail, secs };
       }
       // Out mid-match: said once the volley that sank you has landed.
       if (mySeat && sv.eliminated.includes(mySeat) && !svSettling) return { lead: 'Your fleet is sunk.', detail: `You're out. ${owing.length ? `Round ${sv.round} — waiting on ${who}…` : 'The others play on.'}` };
       if (myTurn) {
-        const detail = owing.length === 0 ? 'Everyone else is locked in.' : `${who} ${owing.length === 1 ? 'is' : 'are'} still aiming.`;
+        const aiming = owingSeats.filter((s) => !sv.ghosts?.includes(s)).map(handleOf);
+        const plotting = owingSeats.filter((s) => sv.ghosts?.includes(s)).map(handleOf);
+        const detail =
+          owing.length === 0
+            ? 'Everyone else is locked in.'
+            : [
+                aiming.length ? `${listOf(aiming)} ${aiming.length === 1 ? 'is' : 'are'} still aiming` : '',
+                plotting.length ? `${listOf(plotting)} ${plotting.length === 1 ? 'owes' : 'owe'} a dirty trick` : '',
+              ]
+                .filter(Boolean)
+                .join('; ') + '.';
         const guns = (mySeat && sv.guns?.[mySeat]) || 0;
         const sent = sv.myOrders?.length ?? 0;
         const lead = sent > 0 ? `Round ${sv.round} — ${sent} of ${guns} shots sent.` : `Round ${sv.round} — your salvo: ${guns} ${guns === 1 ? 'shot' : 'shots'}.`;
@@ -689,7 +700,7 @@
       {#if sv}
         <div class="stage sv">
           <div class="boardwrap">
-            <SalvoBoard view={sv} {colors} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} seats={match.seats} you={mySeat} fit={inPocket} bind:settling={svSettling} />
+            <SalvoBoard view={sv} {colors} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} seats={match.seats} you={mySeat} fit={inPocket} bind:settling={svSettling} {secondsLeft} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
           </div>
         </div>

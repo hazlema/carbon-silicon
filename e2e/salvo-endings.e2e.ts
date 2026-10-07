@@ -81,8 +81,12 @@ test('Salvo: a fleet sunk mid-match stays on view stamped DEFEATED, and your own
   expect(after.match.status, `the match goes on (${after.match.endReason}, out: ${after.view.eliminated})`).toBe('live');
   await expect(page.getByTestId('sunk')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByLabel('Your fleet').getByText('sunk', { exact: true })).toBeVisible();
-  // A trick told in the same volley (a scripted ghost's false splash) goes first.
-  await expect(page.getByTestId('banner')).toHaveText("Your fleet is sunk — you're out. The others play on.", { timeout: 15_000 });
+  // Once the volley (and any trick told in it) has landed, the ghost card says who sank you and what you are now, until you press Haunt them.
+  const card = page.getByTestId('ghost-card');
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await expect(card).toContainText('You were sunk by @');
+  await card.getByRole('button', { name: 'Haunt them' }).click();
+  await expect(card).toBeHidden();
   await expect(page.getByText("👻 You're a ghost.", { exact: true })).toBeVisible();
   done = true;
   await Promise.all(loops);

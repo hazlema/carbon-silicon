@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { buoyCells, cellIndex, cellName, hullCells, MINE_LIMIT, SHIPS, SIZE, type Facing, type SalvoCommand, type SalvoView, type ShipId, type TargetView, type Trick } from '@cs/salvo';
+  import { buoyCells, cellIndex, cellName, hullCells, MINE_LIMIT, SHIPS, SIZE, type Facing, type SalvoCommand, type SalvoView, type ShipId, type TargetView, type Trick, type Volley } from '@cs/salvo';
   import type { TableColors } from '$lib/seats';
   import { clampTilt, DRAG_THRESHOLD, fitScale, nearestTurn } from '../critical-mass/iso';
   import { createSound } from '../critical-mass/sound';
@@ -16,6 +16,7 @@
     you,
     fit = false,
     settling = $bindable(false),
+    secondsLeft = null,
   }: {
     view: SalvoView;
     /** Kept for the table page's call; Salvo draws people in their identity colours (orange carbon, cyan silicon). */
@@ -31,6 +32,8 @@
     fit?: boolean;
     /** True while a volley is still landing (the page holds the verdict until the last shell is down). */
     settling?: boolean;
+    /** Seconds left on the round clock (the page's), for the ghost card; without it the card leaves the clock out. */
+    secondsLeft?: number | null;
   } = $props();
 
   /** The resting isometric view, and the flat one. */
@@ -272,12 +275,16 @@
   const trickMarks = $derived.by(() => {
     const at = new Map<string, { kind: TrickKind; pending: boolean }>();
     const t = view.myTricks;
+    // Your mine that went off this volley keeps its skull until its flash plays.
+    for (const k of fusing) at.set(k, { kind: 'mine', pending: false });
     if (t?.pending) at.set(`${t.pending.at} ${t.pending.cell}`, { kind: t.pending.trick, pending: true });
     for (const x of t?.splashes ?? []) at.set(`${x.sea} ${x.cell}`, { kind: 'splash', pending: false });
     for (const x of t?.mines ?? []) at.set(`${x.sea} ${x.cell}`, { kind: 'mine', pending: false });
     if (!settling) for (const tv of view.targets) for (const x of tv.mines ?? []) at.set(`${tv.sea} ${x.cell}`, { kind: 'mine', pending: false });
     return at;
   });
+  /** Your mines that went off in the volley now landing, by `sea cell`, until each one's flash (the new view has already dropped them). */
+  let fusing = $state<string[]>([]);
   /** A revealed trick, told as the round summary tells it (handles for seats). */
   function trickText(t: Trick): string {
     if (t.kind === 'splash') return `Dirty trick! The hit ${handleOf(t.fool)} saw on ${handleOf(t.sea)} ${t.cell} was ${handleOf(t.ghost)}'s false splash.`;
@@ -432,6 +439,13 @@
       plan = p;
       planKey += 1;
       playVolley(p);
+      // Your own mines that went off: their skulls stay until each one's flash.
+      const fused = me ? p.mines.filter((m) => m.ghost === me) : [];
+      fusing = fused.map((m) => `${m.sea} ${m.cell}`);
+      for (const m of fused) {
+        const key = `${m.sea} ${m.cell}`;
+        bannerTimers.push(setTimeout(() => (fusing = fusing.filter((k) => k !== key)), m.at));
+      }
       clearTimeout(clearFx);
       clearFx = setTimeout(() => (plan = null), p.total + 3000);
       // The warning hangs there until the first shell at you lands (and is long enough to read with no motion at all).
@@ -470,16 +484,46 @@
         told = at + TRICK_MS;
       }
       const after = Math.max(p.total, warnFor, tells.length ? told : 0) + 400;
-      // Your last ship went down in this volley: say so once it has landed, in place of the next round's call.
+      // Your last ship went down in this volley: once it (and its tricks) have landed, the ghost card says what you are now.
       const sunkNow = atSea && !!me && v.eliminated.includes(me) && view.phase !== 'over';
-      if (sunkNow) announce({ tone: 'hot', text: "Your fleet is sunk — you're out. The others play on." }, after, 6000);
-      else openRound(after);
+      if (sunkNow && me) {
+        const card = { sinkers: sinkersOf(v, me), round: view.round };
+        bannerTimers.push(
+          setTimeout(() => {
+            if (live && amGhost) ghostCard = card;
+          }, after),
+        );
+      } else openRound(after);
       settling = true;
       clearTimeout(settleTimer);
       settleTimer = setTimeout(() => (settling = false), Math.max(p.total, warnFor) + 400);
     });
   });
   let settleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // ── The ghost card: who sank you, the mission and the two tricks, until you press Haunt them ──
+  let ghostCard = $state<{ sinkers: string; round: number } | null>(null);
+  let ghostBtn: HTMLButtonElement | undefined = $state();
+  /** Who sank your last ship(s) in this volley: the shooters credited, a ghost by its mine. */
+  function sinkersOf(v: Volley, me: string): string {
+    const mineGhosts = new Set((v.tricks ?? []).filter((t) => t.kind === 'mine' && t.result === 'boomerang' && t.hits.some((h) => h.sea === me)).map((t) => t.ghost));
+    const by = [...new Set(v.sunk.filter((x) => x.sea === me).flatMap((x) => x.by))];
+    const named = by.map((s) => (mineGhosts.has(s) ? `@${handleOf(s)}'s mine` : `@${handleOf(s)}`));
+    return names(named.length ? named : ['the volley']);
+  }
+  // The match ending (or the ghost fading) takes the card away.
+  $effect(() => {
+    if (!(live && amGhost)) ghostCard = null;
+  });
+  // Open, it takes the focus (so Escape reaches it), unless you're typing in the chat.
+  $effect(() => {
+    if (ghostCard && ghostBtn && !typing(document.activeElement)) ghostBtn.focus({ preventScroll: true });
+  });
+  function ghostKey(e: KeyboardEvent) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    ghostCard = null;
+  }
   $effect(() => () => {
     clearTimeout(clearFx);
     clearTimeout(settleTimer);
@@ -600,7 +644,7 @@
   const turnsFrom360 = (a: number, b: number) => (((a - b) % 360) + 360) % 360 === 0;
   const isView = (v: { spin: number; tilt: number }) => rest.tilt === v.tilt && turnsFrom360(rest.spin, v.spin);
   function down(e: PointerEvent) {
-    if (e.button !== 0 || (e.target as Element).closest('.pill')) return;
+    if (e.button !== 0 || (e.target as Element).closest('.pill, .ghostcard')) return;
     drag = { x: e.clientX, y: e.clientY, spin, tilt, touch: e.pointerType === 'touch', moved: false };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -711,12 +755,14 @@
     step(e, k);
   }
 
-  /** The living seats still owing this round, besides you. */
-  const waitingFor = $derived(view.seats.filter((s) => s !== me && !out(s) && !view.ready.includes(s)).map(handleOf));
+  /** The seats still owing this round: the living and the ghosts (a ghost with no trick to play, rare, is counted too: the view doesn't say). */
+  const owes = (s: string) => (!out(s) || ghostOf(s)) && !view.ready.includes(s);
+  /** Those still owing, besides you. */
+  const waitingFor = $derived(view.seats.filter((s) => s !== me && owes(s)).map(handleOf));
   /** The one seat everybody is waiting on, when it comes to that. */
   const holdout = $derived.by(() => {
     const living = view.seats.filter((s) => !out(s));
-    const owing = living.filter((s) => !view.ready.includes(s));
+    const owing = view.seats.filter(owes);
     return live && living.length > 1 && owing.length === 1 ? owing[0] : null;
   });
   const stateOf = (seat: string) =>
@@ -901,8 +947,8 @@
         class="m-{m.mark}"
         class:m-aim={!!aimAt(t.sea, cell)}
         class:m-out={!!sent.find((o) => o.at === t.sea && o.cell === cell)}
-        class:m-mine={trickMarks.get(`${t.sea} ${cell}`)?.kind === 'mine' || trickAimAt(t.sea, cell)}
-        class:m-splash={trickMarks.get(`${t.sea} ${cell}`)?.kind === 'splash'}
+        class:m-mine={trickMarks.get(`${t.sea} ${cell}`)?.kind === 'mine' || (trickAimAt(t.sea, cell) && trickNow === 'mine')}
+        class:m-splash={trickMarks.get(`${t.sea} ${cell}`)?.kind === 'splash' || (trickAimAt(t.sea, cell) && trickNow === 'splash')}
         class:land={land !== undefined}
         style:--d="{land ?? 0}ms"
       ></i>
@@ -959,6 +1005,21 @@
       <button type="button" class="snd" aria-label="Sound" aria-pressed={soundOn} onclick={() => (soundOn = sound?.toggle() ?? false)}>♪</button>
       <span class="hint-drag">drag to swivel</span>
     </div>
+    {#if ghostCard}
+      <!-- You've just been sunk: what you are now, over the stage, until you dismiss it (the round clock runs on behind it). -->
+      <div class="ghostcard" role="dialog" aria-modal="false" aria-labelledby="ghost-title" tabindex="-1" data-testid="ghost-card" onkeydown={ghostKey}>
+        <p class="gc-head" id="ghost-title"><span class="gc-icon" aria-hidden="true">👻</span> <strong>You were sunk by {ghostCard.sinkers}.</strong></p>
+        <p>Your fleet is gone, but your spirit stays at the table. You're a ghost now. <strong class="gc-mission">Your mission: mischief.</strong></p>
+        <p class="gc-sub">Each round, play one dirty trick:</p>
+        <ul>
+          <li><span class="gc-li" aria-hidden="true">💀</span><span><strong>Mine:</strong> hide it on a cell. Whoever shoots there gets hit on their own sea… unless a ship is under it, then you've just sunk that ship for them.</span></li>
+          <li><span class="gc-li" aria-hidden="true">💦</span><span><strong>False splash:</strong> show one player a fake hit, to waste their shots.</span></li>
+        </ul>
+        <p class="gc-sub">You can't win now, but you can decide who does. Idle three rounds and your ghost fades away.</p>
+        {#if secondsLeft !== null && !pendingTrick}<p class="gc-clock" data-testid="ghost-clock">Round {view.round}: {secondsLeft} s to play your first trick</p>{/if}
+        <button type="button" class="btn primary" data-testid="haunt" bind:this={ghostBtn} onclick={() => (ghostCard = null)}>Haunt them</button>
+      </div>
+    {/if}
   </div>
 
   <aside class="side">
@@ -1341,6 +1402,102 @@
     border-color: var(--ready);
     font-size: var(--step-1);
     letter-spacing: 0.04em;
+  }
+
+  /* ── The ghost card: over the stage (and its banners), dark glass with a violet edge ── */
+  .ghostcard {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    z-index: 6;
+    width: min(30rem, calc(100% - 24px));
+    height: fit-content;
+    max-height: calc(100% - 24px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 1.1rem 1.25rem 1.2rem;
+    border: 1px solid #b06bff;
+    border-radius: 14px;
+    background: rgba(13, 16, 32, 0.94);
+    backdrop-filter: blur(6px);
+    color: var(--chalk);
+    font-size: 15px;
+    line-height: 1.45;
+    text-align: left;
+    cursor: auto;
+    user-select: text;
+    box-shadow: 0 0 34px rgba(176, 107, 255, 0.35), 0 12px 40px rgba(0, 0, 0, 0.6);
+    animation: sv-banner 0.35s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  }
+  .ghostcard:focus {
+    outline: none;
+  }
+  .ghostcard p,
+  .ghostcard ul {
+    margin: 0 0 0.6rem;
+  }
+  .ghostcard .gc-head {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.7rem;
+    border-bottom: 1px solid color-mix(in oklab, #b06bff 35%, transparent);
+    color: #e6d2ff;
+    font-size: var(--step-1);
+    line-height: 1.25;
+  }
+  .ghostcard .gc-icon {
+    font-size: 1.6em;
+    filter: drop-shadow(0 0 8px rgba(176, 107, 255, 0.7));
+  }
+  .ghostcard .gc-mission {
+    color: #cfa6ff;
+  }
+  .ghostcard .gc-sub {
+    color: var(--fog);
+  }
+  .ghostcard ul {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    gap: 0.45rem;
+  }
+  .ghostcard li {
+    display: flex;
+    gap: 0.6rem;
+    padding: 0.5rem 0.7rem;
+    border-radius: var(--r-control);
+    background: color-mix(in oklab, #b06bff 10%, transparent);
+  }
+  .ghostcard li strong {
+    color: #e6d2ff;
+  }
+  .ghostcard .gc-li {
+    flex: none;
+  }
+  .ghostcard .gc-clock {
+    color: #cfa6ff;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .ghostcard .btn.primary {
+    display: flex;
+    width: 100%;
+    margin-top: 0.3rem;
+    background: #b06bff;
+    border-color: #b06bff;
+    color: #12051f;
+    box-shadow: 0 8px 24px rgba(176, 107, 255, 0.28);
+  }
+  .ghostcard .btn.primary:hover {
+    background: #c896ff;
+  }
+  @container salvo (max-width: 480px) {
+    .ghostcard {
+      font-size: 14px;
+      padding: 0.9rem 1rem 1rem;
+    }
   }
 
   /* ── The side column ── */
@@ -2418,7 +2575,8 @@
     .state.locked,
     .state.deployed,
     .chip.holdout,
-    .banner {
+    .banner,
+    .ghostcard {
       animation: none;
     }
     .bubbles {
