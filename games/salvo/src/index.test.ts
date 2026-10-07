@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   FOG_FROM,
+  MINE_LIMIT,
   ROUND_CAP,
   SEATS,
   SHIPS,
@@ -94,8 +95,15 @@ function volley(s: SalvoState, shots: Record<string, Shot | Shot[]>): SalvoState
   const round = s.round;
   for (const seat of s.seats) {
     if (s.round !== round || s.phase !== 'fire') break;
+    if (isOut(s, seat)) continue;
     if (lists[seat] || turn.toMove(s).includes(seat)) s = salvo(s, seat, lists[seat], avoid);
   }
+  return s;
+}
+
+/** Every ghost still owing plays the first trick on offer, which closes the round. */
+function haunt(s: SalvoState): SalvoState {
+  for (const seat of s.seats) if (s.phase === 'fire' && turn.toMove(s).includes(seat)) s = turn.apply(s, seat, (turn.legal(s, seat) as unknown[])[0]);
   return s;
 }
 
@@ -567,7 +575,8 @@ describe('elimination and the end', () => {
     expect(G.isOut!(s, 'north')).toBe(false);
     expect(s.phase).toBe('fire');
     expect(s.winner).toBeNull();
-    expect(turn.toMove(s)).toEqual(['north', 'south']);
+    // east is a ghost now and owes a trick
+    expect(turn.toMove(s)).toEqual(['north', 'east', 'south']);
     expect(codeOf(() => fire(s, 'north', 'east', 'e5'))).toBe('BAD_TARGET');
     // south's sea alone, less north's three fillers there
     expect(shellsOf(s, 'north')).toHaveLength(64 - 3);
@@ -589,9 +598,9 @@ describe('elimination and the end', () => {
     let s = nearlySunk(4);
     preHit(s, 'west', SHIP_CELLS.filter((c) => c !== 'd1'));
     s = volley(s, { north: ['east', 'd1'], east: ['north', 'h8'], south: ['north', 'h7'], west: ['north', 'h6'] });
-    s = volley(s, { north: ['west', 'd1'], south: ['north', 'g7'], west: ['north', 'g6'] });
+    s = haunt(volley(s, { north: ['west', 'd1'], south: ['north', 'g7'] })); // west's salvo is already in (the helper's filler)
     preHit(s, 'south', SHIP_CELLS.filter((c) => c !== 'd1'));
-    s = volley(s, { north: ['south', 'd1'], south: ['north', 'f7'] });
+    s = haunt(volley(s, { north: ['south', 'd1'], south: ['north', 'f7'] }));
     expect(G.outcome(s)).toEqual({ winners: ['north'], placement: [['north'], ['south'], ['west'], ['east']], reason: 'last-afloat' });
   });
   test('the last fleets sinking together go to the tiebreak: scrap first', () => {
@@ -1008,5 +1017,136 @@ describe('views', () => {
     const spectator = viewOf(s, null).ascii;
     expect(spectator).not.toContain('(you)');
     for (const line of spectator.split('\n').filter((l) => /^[1-8] /.test(l))) expect(line).not.toMatch(/[CDFS]/);
+  });
+});
+
+/** West's fleet all but sunk, then north sinks its last cell (b7): west is a ghost, three fleets afloat. */
+function withGhost(n = 4): SalvoState {
+  const s = deployed(n);
+  preHit(s, 'west', SHIP_CELLS.filter((c) => c !== 'b7'));
+  return volley(s, { north: ['west', 'b7'] });
+}
+const trick = (s: SalvoState, seat: string, cmd: Record<string, unknown>) => turn.apply(s, seat, cmd);
+type TrickCmd = { trick: 'mine' | 'splash'; at: string; cell: string; fool?: string };
+const tricksOf = (s: SalvoState, seat: string) => (turn.legal(s, seat) as SalvoCommand[]).filter((c) => 'trick' in c) as TrickCmd[];
+
+describe('ghosts', () => {
+  test('a sunk fleet stays seated as a ghost and owes a trick', () => {
+    const s = withGhost();
+    expect(s.eliminated.map((x) => x.seat)).toEqual(['west']);
+    expect(G.isOut!(s, 'west')).toBe(true);
+    expect(G.stillSeated!(s, 'west')).toBe(true);
+    expect(turn.toMove(s)).toEqual(['north', 'east', 'south', 'west']);
+    expect(viewOf(s, null).ghosts).toEqual(['west']);
+    expect(viewOf(s, 'west').myTricks).toEqual({ mines: [], splashes: [], pending: null });
+    expect(viewOf(s, 'north').myTricks).toBeNull();
+  });
+
+  test('a seat that resigns afloat is out and not a ghost', () => {
+    const s = G.forfeit!(deployed(), 'west', 'resign');
+    expect(G.stillSeated!(s, 'west')).toBe(false);
+    expect(turn.toMove(s)).not.toContain('west');
+    expect(viewOf(s, null).ghosts).toEqual([]);
+  });
+
+  test("a ghost's legal is mines on unshot cells of living seas, then splashes", () => {
+    const s = withGhost();
+    const legal = tricksOf(s, 'west');
+    const mines = legal.filter((c) => c.trick === 'mine');
+    const splashes = legal.filter((c) => c.trick === 'splash');
+    const unshot = ['north', 'east', 'south'].reduce((n, sea) => n + 64 - Object.keys(s.shots[sea]).length, 0);
+    expect(mines.length).toBe(unshot);
+    expect(mines.every((c) => !s.shots[c.at][c.cell])).toBe(true);
+    expect(splashes.every((c) => c.fool !== c.at && ['north', 'east', 'south'].includes(c.fool!))).toBe(true);
+    expect(splashes.length).toBe(['north', 'east', 'south'].reduce((n, fool) => n + ['north', 'east', 'south'].filter((x) => x !== fool).reduce((m, sea) => m + 64 - Object.keys(s.shots[sea]).length, 0), 0));
+    expect(mines.some((c) => c.at === 'east' && c.cell === 'a1')).toBe(true);
+  });
+
+  test('a trick makes the ghost ready; the living still owe', () => {
+    let s = withGhost();
+    s = trick(s, 'west', { trick: 'mine', at: 'east', cell: 'e2' });
+    expect(s.ready).toEqual(['west']);
+    expect(turn.toMove(s)).toEqual(['north', 'east', 'south']);
+    expect(turn.legal(s, 'west')).toEqual([]);
+    expect(viewOf(s, 'west').myTricks!.pending).toEqual({ trick: 'mine', at: 'east', cell: 'e2' });
+    expect(viewOf(s, 'east').myTricks).toBeNull();
+    expect(codeOf(() => trick(s, 'west', { trick: 'mine', at: 'east', cell: 'e3' }))).toBe('NOT_YOUR_TURN');
+  });
+
+  test("the ghost's trick is the last commit: it resolves the round", () => {
+    let s = withGhost();
+    const round = s.round;
+    for (const seat of ['north', 'east', 'south']) s = salvo(s, seat);
+    expect(s.round).toBe(round);
+    s = trick(s, 'west', { trick: 'mine', at: 'east', cell: 'e2' });
+    expect(s.round).toBe(round + 1);
+  });
+
+  test('illegal tricks carry precise codes', () => {
+    const s = withGhost();
+    expect(codeOf(() => trick(s, 'north', { trick: 'mine', at: 'east', cell: 'e2' }))).toBe('NOT_A_GHOST');
+    expect(codeOf(() => trick(s, 'west', { fire: 'shell', at: 'east', cell: 'e2' }))).toBe('BAD_COMMAND');
+    expect(codeOf(() => trick(s, 'west', { trick: 'curse', at: 'east', cell: 'e2' }))).toBe('BAD_COMMAND');
+    expect(codeOf(() => trick(s, 'west', { trick: 'mine', at: 'west', cell: 'e2' }))).toBe('BAD_TARGET');
+    expect(codeOf(() => trick(s, 'west', { trick: 'mine', at: 'east', cell: 'z9' }))).toBe('BAD_CELL');
+    const shot = Object.keys(s.shots.east)[0] ?? null;
+    if (shot) expect(codeOf(() => trick(s, 'west', { trick: 'mine', at: 'east', cell: shot }))).toBe('ALREADY_SHOT');
+    expect(codeOf(() => trick(s, 'west', { trick: 'splash', fool: 'east', at: 'east', cell: 'e2' }))).toBe('BAD_FOOL');
+    expect(codeOf(() => trick(s, 'west', { trick: 'splash', fool: 'west', at: 'east', cell: 'e2' }))).toBe('BAD_FOOL');
+  });
+
+  test('a ghost may hold three live mines; the fourth is refused and mines leave legal', () => {
+    let s = withGhost();
+    s.mines = [
+      { ghost: 'west', sea: 'east', cell: 'h1', round: 1 },
+      { ghost: 'west', sea: 'east', cell: 'h2', round: 1 },
+      { ghost: 'west', sea: 'south', cell: 'h3', round: 1 },
+    ];
+    expect(MINE_LIMIT).toBe(3);
+    expect(codeOf(() => trick(s, 'west', { trick: 'mine', at: 'north', cell: 'h4' }))).toBe('MINE_LIMIT');
+    expect(tricksOf(s, 'west').every((c) => c.trick === 'splash')).toBe(true);
+    s = { ...s, mines: s.mines.slice(0, 1) };
+    expect(codeOf(() => trick(s, 'west', { trick: 'mine', at: 'east', cell: 'h1' }))).toBe('YOUR_MINE');
+    s = { ...s, mines: [{ ghost: 'north', sea: 'east', cell: 'h5', round: 1 }] };
+    expect(tricksOf(s, 'west').some((c) => c.trick === 'mine' && c.at === 'east' && c.cell === 'h5')).toBe(true);
+  });
+
+  test('a false splash needs three fleets afloat', () => {
+    let s = deployed(3);
+    preHit(s, 'south', SHIP_CELLS.filter((c) => c !== 'b7'));
+    s = volley(s, { north: ['south', 'b7'] });
+    expect(G.stillSeated!(s, 'south')).toBe(true);
+    expect(codeOf(() => trick(s, 'south', { trick: 'splash', fool: 'north', at: 'east', cell: 'e2' }))).toBe('TOO_FEW');
+    expect(tricksOf(s, 'south').every((c) => c.trick === 'mine')).toBe(true);
+  });
+
+  test('a ghost with no trick sits out', () => {
+    let s = deployed(3);
+    preHit(s, 'south', SHIP_CELLS.filter((c) => c !== 'b7'));
+    s = volley(s, { north: ['south', 'b7'] });
+    s.mines = ['h1', 'h2', 'h3'].map((cell) => ({ ghost: 'south', sea: 'east', cell, round: 1 }));
+    expect(turn.legal(s, 'south')).toEqual([]);
+    expect(turn.toMove(s)).toEqual(['north', 'east']);
+  });
+
+  test('a ghost forfeit keeps placement, clears its tricks and resolves the round when it was last', () => {
+    let s = withGhost();
+    s.mines = [{ ghost: 'west', sea: 'east', cell: 'h1', round: 1 }];
+    for (const seat of ['north', 'east', 'south']) s = salvo(s, seat);
+    const round = s.round;
+    const placementBefore = s.eliminated.map((x) => ({ ...x }));
+    s = G.forfeit!(s, 'west', 'timeout');
+    expect(s.eliminated).toEqual(placementBefore);
+    expect(s.ghostsGone).toEqual(['west']);
+    expect(s.mines).toEqual([]);
+    expect(G.stillSeated!(s, 'west')).toBe(false);
+    expect(s.round).toBe(round + 1);
+  });
+
+  test('narration never names the trick before the reveal', () => {
+    const cmd = { trick: 'mine', at: 'east', cell: 'e2' };
+    const s = withGhost();
+    expect(turn.describe!(cmd)).toBe('plays a dirty trick');
+    expect(turn.narrate!(s, trick(s, 'west', cmd), 'west', cmd)).toBe('is up to something…');
   });
 });

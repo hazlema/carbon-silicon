@@ -40,6 +40,31 @@ export type Buoy = Shell;
 export interface Order extends Shell {
   kind: 'shell' | 'buoy';
 }
+/** A ghost's mine: hidden from everyone but its ghost until a shell sets it off. */
+export interface Mine {
+  ghost: SeatId;
+  sea: SeatId;
+  cell: string;
+  round: number;
+}
+/** A false splash: one living seat (the fool) sees a fake hit on `sea` at `cell`, dressed as a shell from `as`. */
+export interface Splash {
+  ghost: SeatId;
+  fool: SeatId;
+  sea: SeatId;
+  cell: string;
+  /** The volley it first shows in. */
+  round: number;
+  as: SeatId;
+}
+/** A ghost's commit for the round. */
+export interface PendingTrick {
+  kind: 'mine' | 'splash';
+  sea: SeatId;
+  cell: string;
+  fool?: SeatId;
+}
+export const MINE_LIMIT = 3;
 /** What a shell did at its own cell. `ship` is named only when the shell sank it. */
 export interface ShellResult extends Shell {
   result: ShotResult;
@@ -83,6 +108,14 @@ export interface SalvoState {
   sonar: Record<SeatId, { sea: SeatId; cell: string; round: number }[]>;
   /** Seats that owe nothing this round (fleet down, or every shot committed), in seat order. Public. */
   ready: SeatId[];
+  /** Live mines, oldest first. Each is seen by its ghost alone. */
+  mines: Mine[];
+  /** False splashes on show (one volley each). Each is seen by its ghost and its fool alone. */
+  splashes: Splash[];
+  /** Ghosts that missed three rounds: released, placement unchanged. */
+  ghostsGone: SeatId[];
+  /** Each ghost's trick for this round, secret until the volley. */
+  pendingTrick: Record<SeatId, PendingTrick | null>;
   lastVolley: Volley | null;
   scrap: Record<SeatId, number>;
   hitsLanded: Record<SeatId, number>;
@@ -99,7 +132,9 @@ export type SalvoCommand =
   | { place: ShipId; at: string; facing: Facing }
   | { place: 'random' }
   | { fire: 'shell'; at: SeatId; cell: string }
-  | { fire: 'buoy'; at: SeatId; cell: string };
+  | { fire: 'buoy'; at: SeatId; cell: string }
+  | { trick: 'mine'; at: SeatId; cell: string }
+  | { trick: 'splash'; fool: SeatId; at: SeatId; cell: string };
 
 export interface TargetView {
   sea: SeatId;
@@ -128,10 +163,18 @@ export interface SalvoView {
   round: number;
   phase: Phase;
   ready: SeatId[];
+  /** Sunk fleets still at the table (public). */
+  ghosts: SeatId[];
   /** How many shots each living seat fires this round: one per ship still afloat (public: sinkings are). */
   guns: Record<SeatId, number>;
   /** The shots you have sent this round, in order (yours alone; [] for spectators and outside a round). */
   myOrders: { fire: 'shell' | 'buoy'; at: SeatId; cell: string }[];
+  /** A ghost's own mischief: its live mines, its live splashes, this round's commit. Null for everyone else. */
+  myTricks: {
+    mines: { sea: SeatId; cell: string; round: number }[];
+    splashes: { fool: SeatId; sea: SeatId; cell: string; round: number }[];
+    pending: { trick: 'mine' | 'splash'; at: SeatId; cell: string; fool?: SeatId } | null;
+  } | null;
   /** Your fleet: every ship, its cells and hits; ships still in port are listed with `cells: []`. Null for spectators. */
   mySea: { ships: Ship[]; port: ShipId[]; shots: Record<string, 'miss' | 'hit'> } | null;
   /** One per sea that is not yours (spectators: every sea), fleets that are out included (`out`). */
@@ -165,9 +208,38 @@ const isShipId = (x: unknown): x is ShipId => SHIPS.some((ship) => ship.id === x
 /** Shots a seat fires this round: one per ship still afloat. */
 const gunsOf = (s: SalvoState, seat: SeatId) => s.fleets[seat].filter((x) => !isSunk(x)).length;
 
+/** Sunk fleets still at the table: ghosts (none once the match is over). */
+const ghosts = (s: SalvoState): SeatId[] =>
+  s.phase === 'over' ? [] : bySeatOrder(s, s.eliminated.filter((x) => x.reason === 'sunk' && !s.ghostsGone.includes(x.seat)).map((x) => x.seat));
+const isGhost = (s: SalvoState, seat: SeatId) => ghosts(s).includes(seat);
+const minesOf = (s: SalvoState, ghost: SeatId) => s.mines.filter((x) => x.ghost === ghost);
+
+/**
+ * A ghost's tricks: a mine on any unshot cell of a living sea (not on one of its own; another ghost's
+ * mine is no bar, or refusing would tell it where that mine is), while it has fewer than MINE_LIMIT;
+ * then, with three fleets afloat, a false splash: a living fool, another living sea, an unshot cell.
+ * Ship cells are on offer like any other: nothing here may depend on where a ship is.
+ */
+function trickLegal(s: SalvoState, ghost: SeatId): SalvoCommand[] {
+  const out: SalvoCommand[] = [];
+  const alive = living(s);
+  const own = minesOf(s, ghost);
+  const unshot = (sea: SeatId) => Array.from({ length: SIZE * SIZE }, (_, i) => cellName(i)).filter((c) => !s.shots[sea][c]);
+  if (own.length < MINE_LIMIT) {
+    for (const sea of alive) for (const cell of unshot(sea)) if (!own.some((m) => m.sea === sea && m.cell === cell)) out.push({ trick: 'mine', at: sea, cell });
+  }
+  if (alive.length >= 3) {
+    for (const fool of alive) for (const sea of alive) if (sea !== fool) for (const cell of unshot(sea)) out.push({ trick: 'splash', fool, at: sea, cell });
+  }
+  return out;
+}
+
 function toMove(s: SalvoState): SeatId[] {
   if (s.phase === 'deploy') return living(s).filter((x) => inPort(s, x).length > 0);
-  if (s.phase === 'fire') return living(s).filter((x) => !s.ready.includes(x));
+  if (s.phase === 'fire') {
+    const owing = [...living(s), ...ghosts(s).filter((x) => trickLegal(s, x).length > 0)];
+    return bySeatOrder(s, owing.filter((x) => !s.ready.includes(x)));
+  }
   return [];
 }
 
@@ -247,6 +319,33 @@ const firedAt = (s: SalvoState, seat: SeatId, sea: SeatId, cell: string) => s.sh
 /** Has this seat already dropped a buoy at this centre of this sea? */
 const buoyedAt = (s: SalvoState, seat: SeatId, sea: SeatId, cell: string) => s.sonar[seat].some((x) => x.sea === sea && x.cell === cell);
 
+function applyTrick(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
+  if (!isGhost(s, seat)) throw new GameRuleError('NOT_A_GHOST', 'Only a sunk fleet plays tricks; you fire: {"fire":"shell","at":"east","cell":"e5"}.');
+  const { trick, at, cell, fool } = command;
+  if ((trick !== 'mine' && trick !== 'splash') || typeof at !== 'string' || typeof cell !== 'string') {
+    throw new GameRuleError('BAD_COMMAND', 'Send {"trick":"mine","at":"east","cell":"e5"} or {"trick":"splash","fool":"south","at":"east","cell":"e5"}.');
+  }
+  const alive = living(s);
+  if (!alive.includes(at)) throw new GameRuleError('BAD_TARGET', `Play your trick on a living sea: ${alive.join(', ')}.`);
+  const i = cellIndex(cell);
+  if (i === null) throw new GameRuleError('BAD_CELL', `There is no cell "${cell}" on an 8×8 sea (a1 to h8).`);
+  const name = cellName(i);
+  if (s.shots[at][name]) throw new GameRuleError('ALREADY_SHOT', `A shell has already landed on ${at}'s ${name}.`);
+  if (trick === 'mine') {
+    if (minesOf(s, seat).length >= MINE_LIMIT) throw new GameRuleError('MINE_LIMIT', `You have ${MINE_LIMIT} live mines; wait for one to go off, or play a false splash.`);
+    if (minesOf(s, seat).some((m) => m.sea === at && m.cell === name)) throw new GameRuleError('YOUR_MINE', `Your mine is already on ${at}'s ${name}.`);
+    s.pendingTrick[seat] = { kind: 'mine', sea: at, cell: name };
+  } else {
+    if (alive.length < 3) throw new GameRuleError('TOO_FEW', 'A false splash needs three fleets afloat; plant a mine.');
+    if (typeof fool !== 'string' || !alive.includes(fool) || fool === at) {
+      throw new GameRuleError('BAD_FOOL', `Fool a living player who fires at ${at}: ${alive.filter((x) => x !== at).join(', ')}.`);
+    }
+    s.pendingTrick[seat] = { kind: 'splash', sea: at, cell: name, fool };
+  }
+  s.ready = bySeatOrder(s, [...s.ready, seat]);
+  if (toMove(s).length === 0) resolve(s);
+}
+
 function applyFire(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
   const { fire, at, cell } = command;
   if ((fire !== 'shell' && fire !== 'buoy') || typeof at !== 'string' || typeof cell !== 'string') {
@@ -270,7 +369,7 @@ function applyFire(s: SalvoState, seat: SeatId, command: Record<string, unknown>
   s.pending[seat].push({ kind: fire, from: seat, sea: at, cell: name });
   // Ready once the whole salvo is in: one shot per ship afloat.
   if (s.pending[seat].length >= gunsOf(s, seat)) s.ready = bySeatOrder(s, [...s.ready, seat]);
-  if (living(s).every((x) => s.ready.includes(x))) resolve(s);
+  if (toMove(s).length === 0) resolve(s);
 }
 
 /** Is one of this seat's shells already aimed at that cell this round? */
@@ -388,6 +487,7 @@ function resolve(s: SalvoState): void {
 
   s.lastVolley = { round: s.round, shells: results, buoys, blasts, sunk, eliminated: out };
   for (const x of s.seats) s.pending[x] = [];
+  for (const x of s.seats) s.pendingTrick[x] = null;
   s.ready = [];
 
   const alive = living(s);
@@ -407,7 +507,10 @@ function apply(state: SalvoState, seat: SeatId, command: unknown): SalvoState {
     if (!('place' in cmd)) throw new GameRuleError('BAD_COMMAND', 'The fleets are deploying: send {"place":"random"} or a placement.');
     applyPlace(s, seat, cmd);
     maybeOpenFire(s);
+  } else if ('trick' in cmd) {
+    applyTrick(s, seat, cmd);
   } else {
+    if (isGhost(s, seat)) throw new GameRuleError('BAD_COMMAND', 'You are a ghost: send {"trick":"mine","at":"east","cell":"e5"} or {"trick":"splash","fool":"south","at":"east","cell":"e5"}.');
     if (!('fire' in cmd)) throw new GameRuleError('BAD_COMMAND', 'The fleets are down: send {"fire":"shell","at":"east","cell":"e5"}.');
     applyFire(s, seat, cmd);
   }
@@ -416,6 +519,7 @@ function apply(state: SalvoState, seat: SeatId, command: unknown): SalvoState {
 
 function legal(s: SalvoState, seat: SeatId): SalvoCommand[] {
   if (!toMove(s).includes(seat)) return [];
+  if (isGhost(s, seat)) return trickLegal(s, seat);
   if (s.phase === 'deploy') {
     const out: SalvoCommand[] = inPort(s, seat).flatMap((ship) => placements(s, seat, ship));
     out.push({ place: 'random' });
@@ -456,6 +560,16 @@ function outcome(s: SalvoState): Outcome | null {
 
 function forfeit(state: SalvoState, seat: SeatId, reason: string): SalvoState {
   const s = clone(state);
+  if (s.phase !== 'over' && isGhost(s, seat)) {
+    // A ghost that misses three rounds fades: released, its placement untouched, its mischief gone with it.
+    s.ghostsGone.push(seat);
+    s.pendingTrick[seat] = null;
+    s.mines = s.mines.filter((x) => x.ghost !== seat);
+    s.splashes = s.splashes.filter((x) => x.ghost !== seat);
+    s.ready = s.ready.filter((x) => x !== seat);
+    if (s.phase === 'fire' && toMove(s).length === 0) resolve(s);
+    return s;
+  }
   if (s.phase === 'over' || !s.seats.includes(seat) || isEliminated(s, seat)) return s;
   s.eliminated.push({ seat, round: s.round, reason });
   s.pending[seat] = [];
@@ -465,7 +579,7 @@ function forfeit(state: SalvoState, seat: SeatId, reason: string): SalvoState {
     for (const x of s.seats) s.pending[x] = [];
     s.ready = [];
     finish(s, alive[0], reason);
-  } else if (s.phase === 'fire' && alive.every((x) => s.ready.includes(x))) {
+  } else if (s.phase === 'fire' && toMove(s).length === 0) {
     resolve(s);
   } else {
     maybeOpenFire(s);
@@ -527,8 +641,17 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
     round: s.round,
     phase: s.phase,
     ready: [...s.ready],
+    ghosts: ghosts(s),
     guns: s.phase === 'fire' ? Object.fromEntries(living(s).map((x) => [x, gunsOf(s, x)])) : {},
     myOrders: you && s.phase === 'fire' ? s.pending[you].map((x) => ({ fire: x.kind, at: x.sea, cell: x.cell })) : [],
+    myTricks:
+      you && isGhost(s, you)
+        ? {
+            mines: minesOf(s, you).map(({ sea, cell, round }) => ({ sea, cell, round })),
+            splashes: s.splashes.filter((x) => x.ghost === you).map(({ fool, sea, cell, round }) => ({ fool, sea, cell, round })),
+            pending: s.pendingTrick[you] ? { trick: s.pendingTrick[you]!.kind, at: s.pendingTrick[you]!.sea, cell: s.pendingTrick[you]!.cell, ...(s.pendingTrick[you]!.fool ? { fool: s.pendingTrick[you]!.fool } : {}) } : null,
+          }
+        : null,
     mySea,
     targets: seas.map((x) => targetView(s, x, you)),
     lastVolley: s.lastVolley && copy(s.lastVolley),
@@ -546,12 +669,16 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
 const isFire = (c: unknown) => typeof c === 'object' && c !== null && 'fire' in c;
 const isRandom = (c: unknown) => typeof c === 'object' && c !== null && (c as { place?: unknown }).place === 'random';
 
+const isTrick = (c: unknown) => typeof c === 'object' && c !== null && 'trick' in c;
+
 function describe(command: unknown): string {
+  if (isTrick(command)) return 'plays a dirty trick';
   if (isFire(command)) return 'fires';
   return isRandom(command) ? 'deploys the fleet' : 'deploys a ship';
 }
 
 function narrate(_before: SalvoState, _after: SalvoState, _seat: SeatId, command: unknown): string {
+  if (isTrick(command)) return 'is up to something…';
   return isFire(command) ? 'is ready' : describe(command);
 }
 
@@ -647,6 +774,10 @@ export const salvoGame: GameModule<SalvoState> & { turn: TurnRules<SalvoState> &
       pending: each<Order[]>(() => []),
       sonar: each<SalvoState['sonar'][SeatId]>(() => []),
       ready: [],
+      mines: [],
+      splashes: [],
+      ghostsGone: [],
+      pendingTrick: each<PendingTrick | null>(() => null),
       lastVolley: null,
       scrap: each(() => 0),
       hitsLanded: each(() => 0),
@@ -660,6 +791,7 @@ export const salvoGame: GameModule<SalvoState> & { turn: TurnRules<SalvoState> &
   outcome,
   forfeit,
   isOut: (s, seat) => isEliminated(s, seat),
+  stillSeated: (s, seat) => isGhost(s, seat),
   turn: {
     turnSeconds: TURN_SECONDS,
     simultaneous: true,
