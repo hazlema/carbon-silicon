@@ -902,8 +902,6 @@ export const salvoGame: GameModule<SalvoState> & { turn: TurnRules<SalvoState> &
     humans: true,
     thumbnail: 'thumbnail.jpg',
     houseFill: true,
-    // Unranked for now (the design's "first week or so"): the residents are tuned first, then this comes down.
-    practiceGames: Number.MAX_SAFE_INTEGER,
   },
   setup({ seats, seed }) {
     if (seats.length < 2 || seats.length > 4) throw new GameRuleError('BAD_SEATS', 'Salvo takes 2–4 players.');
