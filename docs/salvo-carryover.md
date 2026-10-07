@@ -69,7 +69,24 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-28.** A fleet that's out stays in every view (`TargetView.out`), so a sea you're looking at never vanishes when it sinks; the board stamps it DEFEATED (a red angled SVG) once the volley that sank it has landed. It's no longer a target (legal never names it).
 - **R-29.** The verdict waits for the last volley: the board reports `settling` while a volley plays and the table page holds the end-of-match panel and the status verdict ("The last volley is landing…"); the winner label, the revealed fleets and the DEFEATED stamp wait too. The server's GG line in chat still lands at once.
 - **R-30.** (2026-10-07) The sea on view counts as picked even when the board chose it, so a fleet that sinks while you watch it stays the big sea for its stamp (before, the default slid to the next living sea and the stamp never showed mid-match). You leave it by picking another card; while it's on view the fire control says "That fleet is sunk: pick a living sea".
-- **R-31.** (2026-10-07) Your own sinking is told once its volley has landed: a hot banner ("Your fleet is sunk — you're out. The others play on.", 6 s, in place of the next round's call), a red SUNK stamp on your fleet with its count reading "sunk", and the status line "Your fleet is sunk." with who the round waits on. Covered by e2e/salvo-endings.e2e.ts (four seats, scripted agents).
+- **R-31.** (banner superseded by R-39: the ghost card) (2026-10-07) Your own sinking is told once its volley has landed: a hot banner ("Your fleet is sunk — you're out. The others play on.", 6 s, in place of the next round's call), a red SUNK stamp on your fleet with its count reading "sunk", and the status line "Your fleet is sunk." with who the round waits on. Covered by e2e/salvo-endings.e2e.ts (four seats, scripted agents).
+
+## Ghosts (2026-10-07)
+
+- **R-32.** Only a sinking makes a ghost.
+- **R-33.** Mines are blind: one may sit on a ship (the reveal says Backfire!), and two ghosts may share a cell.
+- **R-34.** A mine on a cell that was spent without a direct shot fizzles untold.
+- **R-35.** Splashes on show at a match's end are told in the final volley; a forfeit ending clears them.
+- **R-36.** A false splash doesn't change the fog or sonar counts (a detectable bluff).
+- **R-37.** A ghost with no legal trick sits out.
+- **R-38.** The boomerang names the cell, never the ship.
+- **R-39.** The ghost card replaces R-31's banner and opens after the volley's trick banners.
+- **R-40.** Resident ghosts mine where the living will shoot but ships are unlikely (sim: median 12 rounds, 0% at the cap).
+- **R-41.** A ghost is still in the match for leaving: the table offers Stop haunting where Resign lives (asked first: "Stop haunting? Your ghost leaves the table; your place stands."; it posts the ordinary resign, which releases the seat at once), and the phone's ✕ asks before it goes: "Leave the table? The round waits for your trick: the autopilot plays it, and after 3 missed rounds your ghost fades away."
+- **R-42.** A ghost's leaving is told as a ghost's (engine-generic: any seat the game keeps at the table via `stillSeated`): a resign is "stops haunting" ("@x stops haunting."), three missed rounds "fades away" ("@x's ghost fades away."). The living keep "resigns" and "times out and forfeits".
+- **R-43.** A seat's run of missed rounds starts afresh when it becomes a ghost (the engine resets its timeout count when `stillSeated` turns true), so autopiloted rounds while afloat don't hurry its fade.
+- **R-44.** A false splash is told as soon as its cell is spent by anything (a shell, a blast's spill, a boomerang or a backfire hull), not only by shells.
+- **R-45.** The board's "Waiting on …" and holdout follow the match's own `toMove`, so a ghost sitting out (R-37) isn't shown as owed. That makes a ghost sitting out visible in `toMove`, which publicly shows it has 3 live mines while fewer than 3 fleets are afloat: spec-sanctioned (no ship information).
 
 ## Design signals from the build
 

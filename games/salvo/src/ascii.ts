@@ -1,4 +1,4 @@
-import { LETTERS, SIZE, cellName } from './board';
+import { LETTERS, MINE_LIMIT, SIZE, cellName } from './board';
 import type { SalvoView, Ship, ShipId, TargetView } from './index';
 
 /** Ship letters for cells you are allowed to see whole: your own fleet, and every fleet once it is over. */
@@ -29,9 +29,10 @@ function wholeFleet(ships: Ship[], shots: Record<string, 'miss' | 'hit'>) {
   return (cell: string): string => marks.get(cell) ?? '.';
 }
 
-/** An enemy sea as the public sees it: hits, misses and sinkings; nothing else. */
-function publicSea(t: TargetView) {
+/** An enemy sea as the public sees it: hits, misses and sinkings; plus `mines`, the viewer's own live mines there. */
+function publicSea(t: TargetView, mines: string[] = []) {
   const marks = new Map<string, string>();
+  for (const cell of mines) marks.set(cell, 'M');
   for (const cell of t.misses) marks.set(cell, 'o');
   for (const cell of t.hits) marks.set(cell, 'X');
   for (const cell of t.sunk.flatMap((x) => x.cells)) marks.set(cell, '*');
@@ -59,6 +60,11 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
   } else {
     lines.push(`Over after round ${view.round}: ${view.winner} wins (${view.endReason}).`);
   }
+  if (view.myTricks) {
+    lines.push(`You are a ghost: one trick a round. Live mines: ${view.myTricks.mines.length} of ${MINE_LIMIT}.`);
+    const p = view.myTricks.pending;
+    if (p) lines.push(`Your trick this round: ${p.trick === 'mine' ? `mine at ${p.at} ${p.cell}` : `false splash for ${p.fool} on ${p.at} ${p.cell}`}.`);
+  }
   if (view.liftedRows.length > 0) lines.push(`Lifted rows (a count of ship cells afloat in each, not where): ${view.liftedRows.join(', ')}.`);
   if (view.eliminated.length > 0) lines.push(`Out: ${view.eliminated.join(', ')}.`);
 
@@ -73,9 +79,12 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
     if (t.revealed) {
       const shots: Record<string, 'miss' | 'hit'> = {};
       for (const c of t.misses) shots[c] = 'miss';
-      lines.push(...grid(wholeFleet(t.revealed, shots)));
+      const whole = wholeFleet(t.revealed, shots);
+      const mined = new Set((t.mines ?? []).map((x) => x.cell));
+      lines.push(...grid((c) => (mined.has(c) && whole(c) === '.' ? 'M' : whole(c))));
     } else {
-      lines.push(...grid(publicSea(t), fogNote(t)));
+      const mines = (view.myTricks?.mines ?? []).filter((x) => x.sea === t.sea).map((x) => x.cell);
+      lines.push(...grid(publicSea(t, mines), fogNote(t)));
     }
     for (const b of t.sonar) {
       lines.push(`Your sonar buoy at ${b.cell} (round ${b.round}) hears ${b.afloat} ship ${b.afloat === 1 ? 'cell' : 'cells'} afloat in ${b.cells[0]}–${b.cells.at(-1)}.`);
@@ -86,5 +95,6 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
     'C D F S = cruiser, destroyer, frigate, submarine (shown for your own fleet, and for every fleet once it is over)',
     'X = hit, * = sunk ship, o = miss, . = unknown or open water',
   );
+  if (view.myTricks || view.targets.some((t) => (t.mines ?? []).length > 0)) lines.push('M = a mine (your own; every live mine once it is over)');
   return lines.join('\n');
 }

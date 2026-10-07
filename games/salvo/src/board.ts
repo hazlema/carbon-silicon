@@ -2,6 +2,8 @@
 
 export const SIZE = 8;
 export const LETTERS = 'abcdefgh';
+/** Live mines a ghost may hold at once. */
+export const MINE_LIMIT = 3;
 /** The first round with a lifted row. */
 export const FOG_FROM = 6;
 /** The order rows lift in, edges inward. */

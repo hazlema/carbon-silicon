@@ -318,6 +318,8 @@
         (!!sv && sv.eliminated.includes(mySeat)) ||
         (!!ll && !!ll.cycles.find((c) => c.seat === mySeat)?.resigned)),
   );
+  /** A sunk Salvo fleet that still haunts the table: out of the running, but still in the match (it owes a trick a round). */
+  const iAmGhost = $derived(!!mySeat && !!sv && (sv.ghosts ?? []).includes(mySeat));
   const steerable = $derived(
     !!ll && !!mySeat && live.me?.kind === 'human' && (match?.status === 'live' || match?.status === 'countdown') && !iAmOut,
   );
@@ -410,12 +412,33 @@
     if (sv) {
       const secs = myTurn && secondsLeft !== null ? secondsLeft : undefined;
       if (sv.phase === 'deploy') return { lead: myTurn ? 'Place your fleet' : 'Waiting for the others to deploy…', secs };
-      const owing = sv.seats.filter((s) => !sv.eliminated.includes(s) && !sv.ready.includes(s) && s !== mySeat).map(handleOf);
-      const who = owing.length <= 1 ? owing.join('') : `${owing.slice(0, -1).join(', ')} and ${owing.at(-1)}`;
+      // Everyone the round still waits on, the ghosts who owe a trick included.
+      const owingSeats = match.toMove.filter((s) => s !== mySeat);
+      const listOf = (l: string[]) => (l.length <= 1 ? l.join('') : `${l.slice(0, -1).join(', ')} and ${l.at(-1)}`);
+      const owing = owingSeats.map(handleOf);
+      const who = listOf(owing);
+      // A ghost: one dirty trick a round (once the volley that sank you has landed; until then, as before).
+      if (mySeat && sv.ghosts?.includes(mySeat)) {
+        if (svSettling && sv.lastVolley?.eliminated.includes(mySeat)) return { lead: `Round ${sv.round} — waiting on ${who}…` };
+        const detail = sv.myTricks?.pending
+          ? `Your trick is set.${owing.length ? ` Waiting on ${who}…` : ''}`
+          : `One dirty trick a round. Round ${sv.round}${owing.length ? ` — waiting on ${who}…` : '.'}`;
+        return { lead: "👻 You're a ghost.", detail, secs };
+      }
       // Out mid-match: said once the volley that sank you has landed.
       if (mySeat && sv.eliminated.includes(mySeat) && !svSettling) return { lead: 'Your fleet is sunk.', detail: `You're out. ${owing.length ? `Round ${sv.round} — waiting on ${who}…` : 'The others play on.'}` };
       if (myTurn) {
-        const detail = owing.length === 0 ? 'Everyone else is locked in.' : `${who} ${owing.length === 1 ? 'is' : 'are'} still aiming.`;
+        const aiming = owingSeats.filter((s) => !sv.ghosts?.includes(s)).map(handleOf);
+        const plotting = owingSeats.filter((s) => sv.ghosts?.includes(s)).map(handleOf);
+        const detail =
+          owing.length === 0
+            ? 'Everyone else is locked in.'
+            : [
+                aiming.length ? `${listOf(aiming)} ${aiming.length === 1 ? 'is' : 'are'} still aiming` : '',
+                plotting.length ? `${listOf(plotting)} ${plotting.length === 1 ? 'owes' : 'owe'} a dirty trick` : '',
+              ]
+                .filter(Boolean)
+                .join('; ') + '.';
         const guns = (mySeat && sv.guns?.[mySeat]) || 0;
         const sent = sv.myOrders?.length ?? 0;
         const lead = sent > 0 ? `Round ${sv.round} — ${sent} of ${guns} shots sent.` : `Round ${sv.round} — your salvo: ${guns} ${guns === 1 ? 'shot' : 'shots'}.`;
@@ -484,7 +507,7 @@
 
   /** ✕: during your own live match ask first (the match plays on without you); otherwise straight to the lobby. */
   function leave() {
-    if (mySeat && !iAmOut && (match?.status === 'live' || match?.status === 'countdown')) {
+    if (canResign) {
       moreOpen = false;
       confirmLeave = true;
     } else {
@@ -510,9 +533,17 @@
   const leaveText = $derived(
     ll
       ? 'Leave the table? The match keeps going and your rider carries on without you.'
-      : 'Leave the table? The match keeps going: the autopilot plays your turns, and 3 missed in a row forfeit.',
+      : iAmGhost
+        ? 'Leave the table? The round waits for your trick: the autopilot plays it, and after 3 missed rounds your ghost fades away.'
+        : 'Leave the table? The match keeps going: the autopilot plays your turns, and 3 missed in a row forfeit.',
   );
-  const canResign = $derived(!!match && !!mySeat && !iAmOut && (match.status === 'live' || match.status === 'countdown'));
+  /** Still in the match (a ghost included): the ✕ asks first, and there's a way out (Resign, or a ghost's Stop haunting). */
+  const canResign = $derived(!!match && !!mySeat && (!iAmOut || iAmGhost) && (match.status === 'live' || match.status === 'countdown'));
+  const resignWords = $derived(
+    iAmGhost
+      ? { ask: 'Stop haunting? Your ghost leaves the table; your place stands.', yes: 'Yes, stop haunting', no: 'Keep haunting', open: 'Stop haunting' }
+      : { ask: 'Resign this match?', yes: 'Yes, resign', no: 'Keep playing', open: 'Resign' },
+  );
 
   $effect(() => {
     if (!canResign) confirmLeave = false;
@@ -630,13 +661,13 @@
         {#if moreOpen && canResign}
           <div class="sheetnote more" role="group" aria-label="More" bind:this={moreMenu}>
             {#if confirmResign}
-              <span>Resign this match?</span>
+              <span>{resignWords.ask}</span>
               <div class="row">
-                <button class="btn" type="button" onclick={() => { moreOpen = false; void resign(); }}>Yes, resign</button>
-                <button class="btn quiet" type="button" onclick={() => { confirmResign = false; moreOpen = false; }}>Keep playing</button>
+                <button class="btn" type="button" onclick={() => { moreOpen = false; void resign(); }}>{resignWords.yes}</button>
+                <button class="btn quiet" type="button" onclick={() => { confirmResign = false; moreOpen = false; }}>{resignWords.no}</button>
               </div>
             {:else}
-              <button class="btn quiet" type="button" onclick={() => (confirmResign = true)}>Resign</button>
+              <button class="btn quiet" type="button" onclick={() => (confirmResign = true)}>{resignWords.open}</button>
             {/if}
           </div>
         {/if}
@@ -679,7 +710,7 @@
       {#if sv}
         <div class="stage sv">
           <div class="boardwrap">
-            <SalvoBoard view={sv} {colors} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} seats={match.seats} you={mySeat} fit={inPocket} bind:settling={svSettling} />
+            <SalvoBoard view={sv} {colors} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} seats={match.seats} you={mySeat} fit={inPocket} bind:settling={svSettling} {secondsLeft} toMove={match.toMove} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
           </div>
         </div>
@@ -710,14 +741,14 @@
 
       {#snippet tableActions()}
         {#if error}<p class="error" role="alert">{error}</p>{/if}
-        {#if mySeat && !iAmOut && (match.status === 'live' || match.status === 'countdown')}
+        {#if canResign}
           <div class="actions">
             {#if confirmResign}
-              <span>Resign this match?</span>
-              <button class="btn" type="button" onclick={resign}>Yes, resign</button>
-              <button class="btn quiet" type="button" onclick={() => (confirmResign = false)}>Keep playing</button>
+              <span>{resignWords.ask}</span>
+              <button class="btn" type="button" onclick={resign}>{resignWords.yes}</button>
+              <button class="btn quiet" type="button" onclick={() => (confirmResign = false)}>{resignWords.no}</button>
             {:else}
-              <button class="btn quiet" type="button" onclick={() => (confirmResign = true)}>Resign</button>
+              <button class="btn quiet" type="button" onclick={() => (confirmResign = true)}>{resignWords.open}</button>
             {/if}
           </div>
         {/if}

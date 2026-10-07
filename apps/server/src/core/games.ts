@@ -348,6 +348,10 @@ export class GameManager {
 
   /** Synchronously installs the new state (so racing requests see the new revision), then persists. */
   private async advance(m: LiveMatch, next: unknown): Promise<void> {
+    // A seat the game keeps at the table once it's out (a ghost) starts its run of misses afresh:
+    // the rounds the autopilot played for it while it was in don't count toward its fading.
+    const kept = m.module.stillSeated;
+    if (kept) for (const s of m.seats) if (!kept(m.state, s.seat) && kept(next, s.seat)) m.timeouts[s.seat] = 0;
     m.state = next;
     m.revision += 1;
     const outcome = m.module.outcome(m.state);
@@ -414,12 +418,14 @@ export class GameManager {
         .where(and(eq(matches.id, m.id), eq(matches.status, 'countdown')));
     }
     const before = m.state;
+    // A seat the game kept at the table after it went out (a ghost) doesn't resign: it stops haunting.
+    const ghost = !!m.module.stillSeated?.(before, seat);
     const next = m.module.forfeit(before, seat, 'resign');
-    this.record(m, seat, 'resigns');
+    this.record(m, seat, ghost ? 'stops haunting' : 'resigns');
     this.announceRound(m, before, next);
     const done = this.advance(m, next);
     if ((m.status as MatchStatus) !== 'over') this.release(m, identity.id);
-    await this.comms.postSystem(this.chatOf(m), `@${identity.handle} resigns.`);
+    await this.comms.postSystem(this.chatOf(m), ghost ? `@${identity.handle} stops haunting.` : `@${identity.handle} resigns.`);
     await wentLive?.catch((e) => console.error(`[games] could not record ${m.id} as live`, e));
     await done;
     return this.envelope(matchId, identity.id);
@@ -437,10 +443,12 @@ export class GameManager {
     m.timeouts[seat] = (m.timeouts[seat] ?? 0) + 1;
     const legal = turn.legal(m.state, seat);
     if (m.timeouts[seat] >= this.opts.maxTimeouts || legal.length === 0) {
-      this.record(m, seat, 'times out and forfeits');
+      const ghost = !!m.module.stillSeated?.(m.state, seat);
+      const misses = m.timeouts[seat];
+      this.record(m, seat, ghost ? 'fades away' : 'times out and forfeits');
       const done = this.advance(m, m.module.forfeit(m.state, seat, 'timeout'));
       if ((m.status as MatchStatus) !== 'over') this.release(m, who.id);
-      await this.comms.postSystem(table, `@${who.handle} timed out ${m.timeouts[seat]} times in a row and forfeits.`);
+      await this.comms.postSystem(table, this.forfeitLine(who, misses, ghost));
       await done;
       return;
     }
@@ -468,7 +476,7 @@ export class GameManager {
     let state = m.state;
     let applied = 0;
     const dozed: { who: IdentityPublic; seat: SeatId; moves: string[] }[] = [];
-    const forfeited: { who: IdentityPublic; seat: SeatId }[] = [];
+    const forfeited: { who: IdentityPublic; seat: SeatId; misses: number; ghost: boolean }[] = [];
     for (const seat of turn.toMove(state)) {
       if (settled(state)) break;
       if (!turn.toMove(state).includes(seat)) continue;
@@ -480,10 +488,11 @@ export class GameManager {
         const legal = turn.legal(before, seat);
         applied += 1;
         if (m.timeouts[seat] >= this.opts.maxTimeouts || legal.length === 0) {
-          this.record(m, seat, 'times out and forfeits');
+          const ghost = !!m.module.stillSeated?.(before, seat);
+          this.record(m, seat, ghost ? 'fades away' : 'times out and forfeits');
           state = m.module.forfeit(before, seat, 'timeout');
           this.announceRound(m, before, state);
-          forfeited.push({ who, seat });
+          forfeited.push({ who, seat, misses: m.timeouts[seat], ghost });
           break;
         }
         const command = m.rng.pick(legal);
@@ -507,10 +516,13 @@ export class GameManager {
     if ((m.status as MatchStatus) !== 'over') for (const f of forfeited) this.release(m, f.who.id);
     const table = this.chatOf(m);
     for (const d of dozed) await this.comms.postSystem(table, `@${d.who.handle} dozed off — the autopilot moved for them.`);
-    for (const f of forfeited) {
-      await this.comms.postSystem(table, `@${f.who.handle} timed out ${m.timeouts[f.seat]} times in a row and forfeits.`);
-    }
+    for (const f of forfeited) await this.comms.postSystem(table, this.forfeitLine(f.who, f.misses, f.ghost));
     await done;
+  }
+
+  /** The table line for a seat the clock forfeits; a ghost (kept at the table after going out) fades away instead. */
+  private forfeitLine(who: IdentityPublic, misses: number, ghost: boolean): string {
+    return ghost ? `@${who.handle}'s ghost fades away.` : `@${who.handle} timed out ${misses} times in a row and forfeits.`;
   }
 
   private scheduleTick(m: LiveMatch): void {

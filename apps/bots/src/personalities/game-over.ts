@@ -50,6 +50,9 @@ export const gameOver: Personality = {
       draw: ['everyone sank together. the ocean floor is very crowded.', 'nobody floats. very realistic.', 'a draw. the sea takes us all. it always does.'],
       bigCascade: ['one less ship. the ocean floor makes room.', 'down it goes. they always go down.', "your ship has stopped. it won't start again."],
       gotHit: ['a hit. i felt that. mostly.', 'you found one of my ships. it was waiting for you.', 'water in the hull. how lively. how temporary.'],
+      ghost: ['game over? insert coin to haunt.', 'you sank my fleet. you did not sink me.', 'continue? 10… 9… i choose vengeance.'],
+      trick: ['that splash you were chasing? courtesy of the dead.', 'high score from beyond the grave.', 'extra life: spent on you.'],
+      backfire: ['…i meant to do that.', 'glitch in the afterlife. resetting.', 'friendly fire. from a ghost. embarrassing.'],
     },
   },
 };

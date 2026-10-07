@@ -150,13 +150,14 @@ function chases(t: TargetView, shells: Fire[], straight: boolean): Fire[] {
   return shells.filter((s) => near.has(s.cell));
 }
 
-/** Seats that put a shell into my fleet in the last volley (shell hits, sinkings and blasts). */
+/** Seats that put a shell into my fleet in the last volley (shell hits, sinkings and blasts), and ghosts whose mine came back on it. */
 export function whoHitMe(view: SalvoView): string[] {
   const v = view.lastVolley;
   if (!v || !view.you) return [];
   const out = new Set<string>();
   for (const s of v.shells) if (s.sea === view.you && s.result !== 'miss') out.add(s.from);
   for (const b of v.blasts) if (b.sea === view.you && b.hits.length > 0) b.by.forEach((x) => out.add(x));
+  for (const t of v.tricks ?? []) if (t.kind === 'mine' && t.result === 'boomerang' && t.hits.some((h) => h.sea === view.you)) out.add(t.ghost);
   return [...out];
 }
 
@@ -276,6 +277,64 @@ function hard(view: SalvoView, seas: Map<string, Fire[]>, buoys: Map<string, Buo
   return pick(best, rng).s;
 }
 
+type Mine = Extract<SalvoCommand, { trick: 'mine' }>;
+type Splash = Extract<SalvoCommand, { trick: 'splash' }>;
+const isMine = (c: SalvoCommand): c is Mine => 'trick' in c && c.trick === 'mine';
+const isSplash = (c: SalvoCommand): c is Splash => 'trick' in c && c.trick === 'splash';
+/** With mines on offer, a ghost at medium or hard plays a false splash instead in about this share of rounds. */
+const SPLASH_SHARE = 0.35;
+
+/**
+ * Where a ghost's mine pays: on cells the living will shoot next but where no ship lies (a mine on a
+ * ship backfires, sinking it for the shooter). Score = chance the cell is shot next round × (1 − chance
+ * of a ship). The chase reaches every cell in line with an open hit (all of them likely shot); elsewhere a
+ * cell is shot in proportion to its chance of a ship against the best cell on any sea, since the living
+ * fire at the likeliest cells wherever they are. `odds` are each sea's chances.
+ */
+function mineScores(view: SalvoView, odds: Map<string, Map<string, number>>): (m: Mine) => number {
+  const top = Math.max(1e-9, ...[...odds.values()].flatMap((p) => [...p.values()]));
+  const chased = new Map(
+    view.targets.map((t) => [t.sea, new Set(openHits(t).flatMap((h) => neighbours(h).filter((n) => n[0] === h[0] || rowOf(n) === rowOf(h))))]),
+  );
+  return (m) => {
+    const x = odds.get(m.at)?.get(m.cell) ?? 0;
+    const shot = chased.get(m.at)?.has(m.cell) ? 1 : x / top;
+    return shot * (1 - x);
+  };
+}
+
+/**
+ * A ghost's one trick a round, from what it knows (public marks, its own past shots and sonar). Easy
+ * plays any trick. Medium and hard mine where the living will shoot but a ship is unlikely (see
+ * mineScores): hard the best cell, medium one of its best few. Now and then (always, once its mines are
+ * all down) they play a false splash instead: on the living seat with the most cells afloat, at the
+ * sea that seat fired at most in the last volley, in the coldest cell there, to waste its shots.
+ */
+export function chooseGhostTrick(view: SalvoView, legal: SalvoCommand[], opts: SalvoStrategyOptions): SalvoCommand {
+  const mines = legal.filter(isMine);
+  const splashes = legal.filter(isSplash);
+  if (mines.length + splashes.length === 0) return pick(legal, opts.rng);
+  if (opts.strength === 'easy') return pick([...mines, ...splashes], opts.rng);
+  const seas = [...new Set([...mines, ...splashes].map((x) => x.at))];
+  const odds = new Map(view.targets.filter((t) => seas.includes(t.sea)).map((t) => [t.sea, chances(t)]));
+  if (splashes.length > 0 && (mines.length === 0 || opts.rng() < SPLASH_SHARE)) {
+    const afloat = (sea: string) => view.targets.find((t) => t.sea === sea)?.afloat ?? 0;
+    const fools = [...new Set(splashes.map((x) => x.fool))];
+    const fool = fools.reduce((a, b) => (afloat(b) > afloat(a) ? b : a));
+    const fired = (sea: string) => (view.lastVolley?.shells ?? []).filter((x) => x.from === fool && x.sea === sea).length;
+    const options = splashes.filter((x) => x.fool === fool);
+    const sea = [...new Set(options.map((x) => x.at))].reduce((a, b) => (fired(b) > fired(a) ? b : a));
+    const p = odds.get(sea);
+    const there = options.filter((x) => x.at === sea);
+    return there.reduce((a, b) => ((p?.get(b.cell) ?? 0) < (p?.get(a.cell) ?? 0) ? b : a));
+  }
+  const score = mineScores(view, odds);
+  const scored = mines.map((m) => ({ m, s: score(m) })).sort((a, b) => b.s - a.s);
+  if (opts.strength === 'hard') return scored[0].m;
+  const good = scored.filter((x) => x.s >= scored[0].s * MEDIUM_SPREAD).slice(0, MEDIUM_CHOICES);
+  return pick(good, opts.rng).m;
+}
+
 /**
  * Picks one entry of `legal`, from the view alone: one shot of this round's salvo (it is asked once
  * per gun; `view.myOrders` says what is already in). Deployment is always at random.
@@ -284,6 +343,8 @@ export function chooseSalvoMove(view: SalvoView, legal: SalvoCommand[], opts: Sa
   if (legal.length === 0) throw new Error('No legal moves.');
   const random = legal.find((c) => 'place' in c && c.place === 'random');
   if (random) return random;
+  // A sunk fleet stays at the table as a ghost: its legal is tricks.
+  if (legal.some((c) => 'trick' in c)) return chooseGhostTrick(view, legal, opts);
   const seas = bySea(legal, isShell);
   if (seas.size === 0) return pick(legal, opts.rng);
   const buoys = bySea(legal, isBuoy);
@@ -306,11 +367,19 @@ export function chooseSalvoMove(view: SalvoView, legal: SalvoCommand[], opts: Sa
   return legal.find((c) => 'fire' in c && c.fire === choice.fire && c.at === choice.at && c.cell === choice.cell) ?? pick(legal, opts.rng);
 }
 
-/** What the last volley means to me at the table: I sank someone's ship, or someone hit mine. */
-export function volleyMoment(view: SalvoView): 'bigCascade' | 'gotHit' | null {
+/**
+ * What the last volley means to me at the table, the strongest first: my own fleet just sank and I
+ * stay on as a ghost; my mine backfired (sank a ship for the shooter); my trick landed (a mine that
+ * came back as a hit, or my false splash being told); I sank someone's ship; someone hit mine.
+ */
+export function volleyMoment(view: SalvoView): 'ghost' | 'backfire' | 'trick' | 'bigCascade' | 'gotHit' | null {
   const v = view.lastVolley;
   if (!v || !view.you) return null;
   const me = view.you;
+  const tricks = v.tricks ?? [];
+  if (v.eliminated.includes(me) && view.phase !== 'over') return 'ghost';
+  if (tricks.some((t) => t.kind === 'mine' && t.ghost === me && t.result === 'backfire')) return 'backfire';
+  if (tricks.some((t) => t.ghost === me && (t.kind === 'splash' || (t.result === 'boomerang' && t.hits.length > 0)))) return 'trick';
   if (v.sunk.some((x) => x.by.includes(me) && x.sea !== me)) return 'bigCascade';
   if (whoHitMe(view).length > 0) return 'gotHit';
   return null;

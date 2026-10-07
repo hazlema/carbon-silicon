@@ -26,6 +26,10 @@ export interface Personality {
     draw: string[];
     bigCascade: string[];
     gotHit: string[];
+    /** Salvo: going down as a ghost / a ghost's trick landing / a ghost's mine helping someone. */
+    ghost?: string[];
+    trick?: string[];
+    backfire?: string[];
     mentioned: string[];
     /** Unprompted lobby chatter; only bots with a voice ever use it. May be empty. */
     ambient: string[];

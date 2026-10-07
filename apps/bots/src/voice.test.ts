@@ -143,6 +143,16 @@ describe('LlmVoice request', () => {
     expect(users[1]).toContain('A shell just hit your fleet in the last volley.');
     for (const u of users) expect(u).not.toContain('chain reaction');
   });
+
+  test('Salvo ghost moments: rising from the deep, a trick landing, a mine backfiring', async () => {
+    const captured: Captured[] = [];
+    const { voice } = voiceWith(fakeFetch('NOTED.', captured));
+    for (const kind of ['ghost', 'trick', 'backfire'] as const) await voice.say(moment({ kind, channel: 'table:t1', opponent: 'frosty', gameId: 'salvo' }));
+    const users = captured.map((c) => c.body.messages[1].content);
+    expect(users[0]).toContain('Your fleet was just sunk, but you stay at the table as a ghost who plays dirty tricks on the living (mines, false splashes). Rise from the deep: vow revenge from beyond, dramatically. One line.');
+    expect(users[1]).toContain('Your dirty trick as a ghost just landed on the living. Gloat from beyond the grave. One line.');
+    expect(users[2]).toContain('Your ghost mine just backfired: it sank a ship for the very player you meant to hurt. Save face, in character. One line.');
+  });
 });
 
 describe('LlmVoice sanitizing', () => {
