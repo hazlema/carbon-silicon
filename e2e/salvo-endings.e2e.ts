@@ -116,7 +116,7 @@ test('Salvo: a sunk fleet is stamped DEFEATED, your own sinking opens the ghost 
     .poll(async () => (await read(page.request)).view.myTricks?.pending, { timeout: 10_000 })
     .toEqual({ trick: 'mine', at: living, cell });
 
-  // One living machine's shell lands on the mine; the rest finish their salvos; scripted ghosts only play false splashes.
+  // One living machine's shell lands on the mine; the rest finish their salvos; scripted ghosts play a splash or a mine elsewhere.
   let aimed = false;
   let over = false;
   const drive = async (a: { handle: string; headers: Record<string, string> }) => {
@@ -134,7 +134,9 @@ test('Salvo: a sunk fleet is stamped DEFEATED, your own sinking opens the ghost 
       } else if (shells.length) {
         command = pick(elsewhere.length ? elsewhere : shells);
       } else {
-        command = env.legal.find((l) => l.trick === 'splash');
+        // A ghost owes a trick: a false splash if one is legal, else a mine, never on the human's planted cell.
+        const mines = env.legal.filter((l) => l.trick === 'mine' && !(l.at === living && l.cell === cell));
+        command = env.legal.find((l) => l.trick === 'splash') ?? (mines.length ? pick(mines) : undefined);
       }
       if (env.match.status === 'live' && command) {
         const res = await page.request.post(`/api/matches/${matchId}/move`, { headers: a.headers, data: { revision: env.match.revision, command } });
@@ -147,7 +149,7 @@ test('Salvo: a sunk fleet is stamped DEFEATED, your own sinking opens the ghost 
   const drivers = agents.map(drive);
   // The banner names the human's own mine, not a scripted ghost's.
   await expect
-    .poll(async () => (await page.getByTestId('banner').allTextContents()).some((t) => /^(Dirty trick!|Backfire!)/.test(t) && t.includes(`${myHandle}'s mine`)), { timeout: 60_000, intervals: [100] })
+    .poll(async () => (await page.getByTestId('banner').allTextContents()).some((t) => /^(Dirty trick!|Backfire!)/.test(t) && t.includes(`${myHandle}'s mine`)), { timeout: 20_000, intervals: [100] })
     .toBe(true);
   const told = (await read(page.request)).view.lastVolley?.tricks ?? [];
   expect(told.some((t) => t.kind === 'mine' && t.ghost === me && t.sea === living && t.cell === cell), `the public record tells the planted mine: ${JSON.stringify(told)}`).toBe(true);
