@@ -5,11 +5,11 @@ type Legal = { fire?: string; trick?: string; at?: string; cell?: string; place?
 type Envelope = {
   you: string | null;
   match: { status: string; revision: number; endReason: string | null; seats: { seat: string; identity: { handle: string } }[] };
-  view: { phase: string; round: number; eliminated: string[]; targets: { sea: string }[]; myTricks?: { pending: { trick: string; at: string; cell: string } | null } | null };
+  view: { phase: string; round: number; eliminated: string[]; targets: { sea: string }[]; myTricks?: { pending: { trick: string; at: string; cell: string } | null } | null; lastVolley?: { tricks?: { kind: string; ghost: string; sea: string; cell: string }[] } | null };
   legal: Legal[];
 };
 
-test('Salvo: a fleet sunk mid-match stays on view stamped DEFEATED, and your own sinking is told', async ({ browser }) => {
+test('Salvo: a sunk fleet is stamped DEFEATED, your own sinking opens the ghost card, and a mine you plant reaches the server and is told', async ({ browser }) => {
   const page = await newPlayer(browser);
   await page.setViewportSize({ width: 1400, height: 900 });
   await enter(page, `sv${randomTag()}`);
@@ -93,12 +93,22 @@ test('Salvo: a fleet sunk mid-match stays on view stamped DEFEATED, and your own
 
   // Plant a mine through the board on a living sea; the server holds that very trick.
   const now = await read(page.request);
-  const living = now.match.seats.map((x) => x.seat).find((x) => x !== me && !now.view.eliminated.includes(x))!;
-  expect(living).toBeTruthy();
-  await page.locator(`button.chip:not(.gone)[data-seat="${living}"]`).click();
-  await expect(sea).toHaveAttribute('data-sea', living);
-  await page.getByTestId('trick-mine').click();
-  const cellEl = page.locator('[data-main] button[data-legal="true"]').first();
+  const myHandle = now.match.seats.find((x) => x.seat === me)!.identity.handle;
+  const livingSeats = now.match.seats.map((x) => x.seat).filter((x) => x !== me && !now.view.eliminated.includes(x));
+  // A living sea with a legal mine cell on the board (an unshot cell).
+  const mineCells = page.locator('[data-main] button[data-legal="true"]');
+  let living = '';
+  for (const seat of livingSeats) {
+    await page.locator(`button.chip:not(.gone)[data-seat="${seat}"]`).click();
+    await expect(sea).toHaveAttribute('data-sea', seat);
+    await page.getByTestId('trick-mine').click();
+    if ((await mineCells.count()) > 0) {
+      living = seat;
+      break;
+    }
+  }
+  expect(living, `no living sea offers a legal mine cell (living: ${livingSeats})`).not.toBe('');
+  const cellEl = mineCells.first();
   const cell = (await cellEl.getAttribute('data-cell'))!;
   await cellEl.click();
   await page.getByTestId('play-trick').click();
@@ -106,33 +116,41 @@ test('Salvo: a fleet sunk mid-match stays on view stamped DEFEATED, and your own
     .poll(async () => (await read(page.request)).view.myTricks?.pending, { timeout: 10_000 })
     .toEqual({ trick: 'mine', at: living, cell });
 
-  // One living machine's shell lands on it; the rest finish their salvos; ghosts play a trick.
-  // The reveal tells the trick: a Dirty trick! (open water) or a Backfire! (a ship was under it).
+  // One living machine's shell lands on the mine; the rest finish their salvos; scripted ghosts only play false splashes.
   let aimed = false;
   let over = false;
   const drive = async (a: { handle: string; headers: Record<string, string> }) => {
     while (!over) {
       const env = await read(page.request, a.headers);
       if (env.match.status === 'over') return;
-      const mine = env.legal.find((l) => l.fire === 'shell' && l.at === living && l.cell === cell);
       const shells = env.legal.filter((l) => l.fire === 'shell');
-      const tricks = env.legal.filter((l) => l.trick);
+      const onMine = shells.find((l) => l.at === living && l.cell === cell);
+      const elsewhere = shells.filter((l) => l !== onMine);
       let command: Legal | undefined;
-      if (mine && !aimed) {
-        aimed = true;
-        command = mine;
-      } else command = shells.length ? pick(shells.filter((l) => !(l.at === living && l.cell === cell)).concat(shells.length === 1 ? shells : [])) : tricks.find((l) => l.trick === 'splash') ?? tricks[0];
+      let isAim = false;
+      if (onMine && !aimed) {
+        command = onMine;
+        isAim = true;
+      } else if (shells.length) {
+        command = pick(elsewhere.length ? elsewhere : shells);
+      } else {
+        command = env.legal.find((l) => l.trick === 'splash');
+      }
       if (env.match.status === 'live' && command) {
-        await page.request.post(`/api/matches/${matchId}/move`, { headers: a.headers, data: { revision: env.match.revision, command } });
+        const res = await page.request.post(`/api/matches/${matchId}/move`, { headers: a.headers, data: { revision: env.match.revision, command } });
+        if (isAim && res.ok()) aimed = true;
       } else {
         await page.request.get(`/api/matches/${matchId}?since=${env.match.revision}&waitMs=1000`, { headers: a.headers });
       }
     }
   };
   const drivers = agents.map(drive);
+  // The banner names the human's own mine, not a scripted ghost's.
   await expect
-    .poll(async () => (await page.getByTestId('banner').allTextContents()).some((t) => /^(Dirty trick!|Backfire!)/.test(t)), { timeout: 40_000, intervals: [100] })
+    .poll(async () => (await page.getByTestId('banner').allTextContents()).some((t) => /^(Dirty trick!|Backfire!)/.test(t) && t.includes(`${myHandle}'s mine`)), { timeout: 60_000, intervals: [100] })
     .toBe(true);
+  const told = (await read(page.request)).view.lastVolley?.tricks ?? [];
+  expect(told.some((t) => t.kind === 'mine' && t.ghost === me && t.sea === living && t.cell === cell), `the public record tells the planted mine: ${JSON.stringify(told)}`).toBe(true);
   over = true;
   await Promise.all(drivers);
 });
