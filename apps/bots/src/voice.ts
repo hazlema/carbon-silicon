@@ -242,6 +242,8 @@ class VoiceFailure extends Error {
 /** A voice backed by any OpenAI-compatible chat completions endpoint (LM Studio, llama.cpp, vLLM…). */
 export class LlmVoice implements Voice {
   private readonly failing = new Set<string>();
+  /** Models that answered 400 to "don't think first": asked without the flag. */
+  private readonly mustThink = new Set<string>();
 
   constructor(private readonly opts: LlmVoiceOptions) {}
 
@@ -315,9 +317,16 @@ export class LlmVoice implements Voice {
   private async request(conn: LlmConnection, moment: Moment, signal: AbortSignal): Promise<unknown> {
     const fetchImpl = this.opts.fetchImpl ?? fetch;
     const url = `${conn.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-    let res: Response;
-    try {
-      res = await fetchImpl(url, {
+    const messages = [
+      { role: 'system', content: buildSystemPrompt(await textOf(this.opts.persona), await textOf(this.opts.houseRules)) },
+      { role: 'user', content: buildUserPrompt(moment) },
+    ];
+    // A chat line needs no thinking: it costs seconds and most of the token budget (Haiku 5.5: 1.3 s
+    // and ~60 tokens without, 3.4 s and ~500 with). Models that can't stop thinking answer 400;
+    // they're asked again without the flag and remembered.
+    const askNoThinking = !this.mustThink.has(conn.model);
+    const post = (noThinking: boolean) =>
+      fetchImpl(url, {
         method: 'POST',
         signal,
         headers: { 'content-type': 'application/json', ...(conn.apiKey ? { authorization: `Bearer ${conn.apiKey}` } : {}) },
@@ -325,12 +334,18 @@ export class LlmVoice implements Voice {
           model: conn.model,
           temperature: conn.temperature,
           max_tokens: 700,
-          messages: [
-            { role: 'system', content: buildSystemPrompt(await textOf(this.opts.persona), await textOf(this.opts.houseRules)) },
-            { role: 'user', content: buildUserPrompt(moment) },
-          ],
+          ...(noThinking ? { reasoning: { enabled: false } } : {}),
+          messages,
         }),
       });
+    let res: Response;
+    try {
+      res = await post(askNoThinking);
+      if (askNoThinking && res.status === 400) {
+        this.mustThink.add(conn.model);
+        this.log(`${conn.model} won't skip thinking; asking without the flag from now on`);
+        res = await post(false);
+      }
     } catch (e) {
       throw new VoiceFailure('network', `cannot reach ${url}: ${(e as Error)?.message ?? String(e)}`);
     }

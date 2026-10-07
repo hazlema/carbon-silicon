@@ -8,7 +8,7 @@ const HOUSE_RULES = await Bun.file(instructionsPath('house-rules.md')).text();
 
 interface Captured {
   url: string;
-  body: { model: string; max_tokens: number; temperature: number; messages: { role: string; content: string }[] };
+  body: { model: string; max_tokens: number; temperature: number; reasoning?: unknown; messages: { role: string; content: string }[] };
 }
 
 /** A fetch stand-in: records the request and answers with `content` in an OpenAI-shaped body. */
@@ -43,6 +43,33 @@ function voiceWith(fetchImpl: typeof fetch, extra: Partial<ConstructorParameters
 async function sanitized(content: unknown, extra: Partial<ConstructorParameters<typeof LlmVoice>[0]> = {}) {
   return voiceWith(fakeFetch(content), extra).voice.say(moment());
 }
+
+describe('LlmVoice thinking', () => {
+  test('asks the model not to think first: a chat line needs no reasoning, and thinking costs seconds and tokens', async () => {
+    const captured: Captured[] = [];
+    const { voice } = voiceWith(fakeFetch('GG EZ.', captured));
+    await voice.say(moment());
+    expect(captured[0].body.reasoning).toEqual({ enabled: false });
+  });
+
+  test('a model that refuses to stop thinking (HTTP 400) is asked again without the flag, and remembered', async () => {
+    const captured: Captured[] = [];
+    const answer = fakeFetch('GG EZ.', captured);
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.reasoning) {
+        captured.push({ url: String(url), body });
+        return new Response('{"error":{"message":"Reasoning is mandatory for this endpoint"}}', { status: 400 });
+      }
+      return answer(url, init);
+    }) as unknown as typeof fetch;
+    const { voice } = voiceWith(fetchImpl);
+    expect(await voice.say(moment())).toBe('GG EZ.');
+    expect(await voice.say(moment())).toBe('GG EZ.');
+    // Flag, then without; the second line goes straight out without it.
+    expect(captured.map((c) => c.body.reasoning ?? null)).toEqual([{ enabled: false }, null, null]);
+  });
+});
 
 describe('LlmVoice request', () => {
   test('posts an OpenAI-style chat completion with the persona, the house rules and a quoted transcript', async () => {
