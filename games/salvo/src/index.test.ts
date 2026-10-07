@@ -1317,6 +1317,25 @@ describe('tricks in the volley', () => {
     expect(s.splashes).toEqual([]);
   });
 
+  test('a false splash whose cell a backfire hull or a boomerang lands on is told at once', () => {
+    // Backfire: east's cruiser a1–d1 goes up with north's shell, c1 (the splash) with it.
+    let s = withGhost();
+    s.splashes = [{ ghost: 'west', fool: 'south', sea: 'east', cell: 'c1', round: s.round, as: 'north' }];
+    s = trick(s, 'west', { trick: 'mine', at: 'east', cell: 'a1' });
+    s = volley(s, { north: ['east', 'a1'] });
+    expect(s.shots.east.c1).toEqual({ result: 'hit', by: ['north'] });
+    expect(tricksIn(s)).toContainEqual({ kind: 'splash', ghost: 'west', fool: 'south', sea: 'east', cell: 'c1' });
+    expect(s.splashes).toEqual([]);
+    // Boomerang: north's shell on east's e2 comes back on north's d1, the splash's cell.
+    let t = withGhost();
+    t.splashes = [{ ghost: 'west', fool: 'south', sea: 'north', cell: 'd1', round: t.round, as: 'east' }];
+    t = trick(t, 'west', { trick: 'mine', at: 'east', cell: 'e2' });
+    t = volley(t, { north: ['east', 'e2'] });
+    expect(t.shots.north.d1).toEqual({ result: 'hit', by: ['west'] });
+    expect(tricksIn(t)).toContainEqual({ kind: 'splash', ghost: 'west', fool: 'south', sea: 'north', cell: 'd1' });
+    expect(t.splashes).toEqual([]);
+  });
+
   test('a trick on a seat that left before the volley is dropped', () => {
     let s = withGhost();
     s = trick(s, 'west', { trick: 'mine', at: 'east', cell: 'h1' });

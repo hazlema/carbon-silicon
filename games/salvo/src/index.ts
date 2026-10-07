@@ -560,11 +560,13 @@ function resolve(s: SalvoState): void {
     return { ...shell, result: sankIt ? 'sunk' : ship ? 'hit' : 'miss', ship: sankIt ? ship.id : null, blast };
   });
 
-  // A false splash shows for one volley; at the next (or as soon as a shell lands on it) it's told.
+  // A false splash shows for one volley; at the next (or as soon as its cell is spent: a shell, a blast's
+  // spill, a boomerang or a backfire hull) it's told.
+  const spent = (x: { sea: SeatId; cell: string }) => !!s.shots[x.sea][x.cell];
   for (const x of s.splashes) {
-    if (x.round < s.round || cover.has(`${x.sea} ${x.cell}`)) tricks.push({ kind: 'splash', ghost: x.ghost, fool: x.fool, sea: x.sea, cell: x.cell });
+    if (x.round < s.round || spent(x)) tricks.push({ kind: 'splash', ghost: x.ghost, fool: x.fool, sea: x.sea, cell: x.cell });
   }
-  s.splashes = s.splashes.filter((x) => x.round === s.round && !cover.has(`${x.sea} ${x.cell}`));
+  s.splashes = s.splashes.filter((x) => x.round === s.round && !spent(x));
 
   // Eliminations: every living fleet now fully sunk. Half its scrap (counted before anyone is paid) goes to each sinker of its last ships.
   const out = living(s).filter((x) => s.fleets[x].length > 0 && s.fleets[x].every(isSunk));
