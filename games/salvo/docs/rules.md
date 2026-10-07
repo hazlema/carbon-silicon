@@ -194,7 +194,8 @@ rest of your salvo for you, at random (shells, and now and then a buoy) and the
 table hears that the autopilot moved for you, never where. Every absent seat is
 fired for at the same deadline, and the round resolves. **Three missed rounds in
 a row forfeit the match.** Any round where you send your whole salvo yourself
-resets the count.
+resets the count. A [ghost](#ghosts) that misses three rounds in a row just
+fades away; its placement stays.
 
 ### What a shell can do
 
@@ -751,7 +752,7 @@ north, scrap 22, 10 ship cells afloat        north, scrap 22, 11 ship cells aflo
 
 East's count of north's ship cells afloat drops to 10 with the fake hit and
 goes back to 11 once it's taken back; the row 8 fog count never moved.
-North's shells in east's copy of the round 5 volley. South has 4 guns, and
+The shells that landed on north's sea, in east's copy of the round 5 volley. South has 4 guns, and
 here it fires 5:
 
 ```json
@@ -808,9 +809,9 @@ your splash on show are marked on their seas.
 **You're out** when every one of your ships is sunk (you stay at the table as a
 [ghost](#ghosts), but your race is run). You're also out if you
 resign, leave, or miss three rounds in a row. A player who forfeits that way
-is out at once: their sea disappears from every view until the match is over,
-when every sea is revealed. It is no longer a target, but shells already in the
-air at it that round still land and still score.
+is out at once: their sea stays on view, marked out, but it is no longer a
+target. Shells already in the air at it that round still land and still score.
+Every fleet is revealed when the match is over.
 
 **The last fleet afloat wins**, and there is always **exactly one winner**.
 
@@ -1280,12 +1281,16 @@ fog starts, an `Out:` line once anyone is out, then your own sea with your
 ships, then each target sea (a lifted row ends with its count, and your sonar
 readings follow the sea they're on), then a legend. During a round the status
 line is followed by everyone's shots this round and, for you, how much of your
-salvo you've sent. A ghost's drawing adds a line saying so, with its live mines
-counted and, once sent, its trick for the round; its mines are drawn `M` on
-their seas, in its drawing only, and a legend line explains the `M`. Once the
-match is over, every live mine left on open water shows as `M` on its sea, for
-everyone (one on a ship shows the ship's letter; `TargetView.mines` lists them all). Row 8 is at the top, `a1`
-bottom left. North's whole view at the start of round 6:
+salvo you've sent. Row 8 is at the top, `a1` bottom left.
+
+A ghost's drawing adds a line saying it's a ghost, with its live mines counted
+and, once sent, its trick for the round. Its mines are drawn `M` on their seas,
+in its drawing only, and a legend line explains the `M`. Once the match is
+over, every live mine left on open water shows as `M` on its sea, for everyone.
+A mine on a ship shows the ship's letter instead; `TargetView.mines` lists them
+all.
+
+North's whole view at the start of round 6:
 
 ```
 Round 6. Ready: nobody yet.
