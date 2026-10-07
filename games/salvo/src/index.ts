@@ -79,6 +79,11 @@ export interface Blast {
   cells: string[];
   hits: string[];
 }
+/** A trick revealed in a volley (public once it is). A boomerang's sinkings are in the volley's `sunk`, credited to the ghost. */
+export type Trick =
+  | { kind: 'mine'; ghost: SeatId; sea: SeatId; cell: string; shooters: SeatId[]; result: 'boomerang'; hits: { sea: SeatId; cell: string }[] }
+  | { kind: 'mine'; ghost: SeatId; sea: SeatId; cell: string; shooters: SeatId[]; result: 'backfire'; ship: ShipId }
+  | { kind: 'splash'; ghost: SeatId; fool: SeatId; sea: SeatId; cell: string };
 export interface Volley {
   round: number;
   shells: ShellResult[];
@@ -88,6 +93,8 @@ export interface Volley {
   sunk: { sea: SeatId; ship: ShipId; by: SeatId[] }[];
   /** Seats whose last ship went down in this volley, in seat order (a tiebreak winner included). */
   eliminated: SeatId[];
+  /** Tricks revealed in this volley: mines that went off, false splashes withdrawn. [] when none. */
+  tricks: Trick[];
 }
 
 export interface SalvoState {
@@ -156,6 +163,8 @@ export interface TargetView {
   out: boolean;
   /** Every ship, once the match is over. */
   revealed?: Ship[];
+  /** Every live mine on this sea, once the match is over. */
+  mines?: { ghost: SeatId; cell: string }[];
 }
 export interface SalvoView {
   you: SeatId | null;
@@ -399,6 +408,23 @@ function finish(s: SalvoState, winner: SeatId, reason: string): void {
   s.eliminated = s.eliminated.filter((x) => x.seat !== winner);
 }
 
+const colOf = (cell: string) => cellIndex(cell)! % SIZE;
+const rowIx = (cell: string) => Math.floor(cellIndex(cell)! / SIZE);
+
+/** Where a mine's blast comes back on `shooter`: the same cell when an unhit ship cell is there, else the nearest (Manhattan, ties in board order). */
+function boomerangCell(s: SalvoState, shooter: SeatId, cell: string, hitNow: (sea: SeatId, c: string) => boolean): string | null {
+  const open = s.fleets[shooter].flatMap((x) => x.cells.filter((c) => !x.hits.includes(c) && !hitNow(shooter, c)));
+  if (open.includes(cell)) return cell;
+  const dist = (c: string) => Math.abs(colOf(c) - colOf(cell)) + Math.abs(rowIx(c) - rowIx(cell));
+  return open.sort((a, b) => dist(a) - dist(b) || cellIndex(a)! - cellIndex(b)!)[0] ?? null;
+}
+
+/** Who a fake shell is dressed as: a living seat other than the fool and the sea, one that fired at the sea this volley if any. */
+function dressAs(s: SalvoState, fool: SeatId, sea: SeatId, shells: Shell[]): SeatId | null {
+  const can = living(s).filter((x) => x !== fool && x !== sea);
+  return can.find((x) => shells.some((sh) => sh.from === x && sh.sea === sea)) ?? can[0] ?? null;
+}
+
 /**
  * All shells land together. Grouped by sea and cell in seat order (never commit order): a cell two or
  * more seats hit is a Time on Target and takes its 3×3 with it (a seat never aims two shells at one cell). Every ship cell covered this volley and
@@ -410,6 +436,20 @@ function resolve(s: SalvoState): void {
   // A buoy listens once the shells have landed; what it hears is worked out live, in the view.
   const buoys: Buoy[] = orders.filter((x) => x.kind === 'buoy').map(({ from, sea, cell }) => ({ from, sea, cell }));
   for (const b of buoys) s.sonar[b.from].push({ sea: b.sea, cell: b.cell, round: s.round });
+  // Tricks: a mine is live before the shells land (a ghost who calls the shot catches it this volley);
+  // a false splash shows from this volley to its fool. A trick whose sea or fool has left since it was
+  // played is dropped, and so is a splash once fewer than three fleets are afloat.
+  const alive = living(s);
+  for (const g of s.seats) {
+    const t = s.pendingTrick[g];
+    if (!t || !alive.includes(t.sea)) continue;
+    if (t.kind === 'mine') s.mines.push({ ghost: g, sea: t.sea, cell: t.cell, round: s.round });
+    else if (alive.length >= 3 && alive.includes(t.fool!)) {
+      const as = dressAs(s, t.fool!, t.sea, shells);
+      if (as) s.splashes.push({ ghost: g, fool: t.fool!, sea: t.sea, cell: t.cell, round: s.round, as });
+    }
+  }
+
   const groups = new Map<string, Shell[]>();
   for (const shell of shells) {
     const key = `${shell.sea} ${shell.cell}`;
@@ -447,6 +487,46 @@ function resolve(s: SalvoState): void {
     s.shots[sea][cell] = { result: ship ? 'hit' : 'miss', by: prior ? bySeatOrder(s, [...prior.by, ...by]) : by };
     if (ship && !ship.hits.includes(cell)) newHits.set(key, by);
   }
+
+  const tricks: Trick[] = [];
+  const credit = (key: string, by: SeatId[]) => newHits.set(key, bySeatOrder(s, [...(newHits.get(key) ?? []), ...by]));
+  const hitNow = (sea: SeatId, c: string) => newHits.has(`${sea} ${c}`);
+  const mark = (sea: SeatId, c: string, by: SeatId[]) => {
+    s.shots[sea][c] = { result: 'hit', by: bySeatOrder(s, [...(s.shots[sea][c]?.by ?? []), ...by]) };
+  };
+  // Mines go off after every shell has landed: seas in seat order, then board order, then the ghosts' seat order. They never chain.
+  const order = (m: Mine) => [s.seats.indexOf(m.sea), cellIndex(m.cell)!, s.seats.indexOf(m.ghost)];
+  const fired = s.mines
+    .filter((m) => groups.has(`${m.sea} ${m.cell}`))
+    .sort((a, b) => {
+      const [x, y] = [order(a), order(b)];
+      return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+    });
+  for (const m of fired) {
+    const shooters = bySeatOrder(s, groups.get(`${m.sea} ${m.cell}`)!.map((x) => x.from));
+    const ship = shipAt(s, m.sea, m.cell);
+    if (ship) {
+      // Backfire: the hull goes up with the shot, every cell of it credited to the shooters.
+      for (const c of ship.cells) {
+        if (ship.hits.includes(c)) continue;
+        mark(m.sea, c, shooters);
+        credit(`${m.sea} ${c}`, shooters);
+      }
+      tricks.push({ kind: 'mine', ghost: m.ghost, sea: m.sea, cell: m.cell, shooters, result: 'backfire', ship: ship.id });
+    } else {
+      // Dirty trick: each shooter's own fleet takes a hit, credited to the ghost.
+      const hits: { sea: SeatId; cell: string }[] = [];
+      for (const x of shooters) {
+        const c = boomerangCell(s, x, m.cell, hitNow);
+        if (!c) continue;
+        mark(x, c, [m.ghost]);
+        credit(`${x} ${c}`, [m.ghost]);
+        hits.push({ sea: x, cell: c });
+      }
+      tricks.push({ kind: 'mine', ghost: m.ghost, sea: m.sea, cell: m.cell, shooters, result: 'boomerang', hits });
+    }
+  }
+  s.mines = s.mines.filter((m) => !groups.has(`${m.sea} ${m.cell}`));
   const sunkBefore = new Set(s.seats.flatMap((sea) => s.fleets[sea].filter(isSunk).map((x) => `${sea} ${x.id}`)));
   for (const [key, by] of newHits) {
     const [sea, cell] = key.split(' ');
@@ -476,6 +556,12 @@ function resolve(s: SalvoState): void {
     return { ...shell, result: sankIt ? 'sunk' : ship ? 'hit' : 'miss', ship: sankIt ? ship.id : null, blast };
   });
 
+  // A false splash shows for one volley; at the next (or as soon as a shell lands on it) it's told.
+  for (const x of s.splashes) {
+    if (x.round < s.round || cover.has(`${x.sea} ${x.cell}`)) tricks.push({ kind: 'splash', ghost: x.ghost, fool: x.fool, sea: x.sea, cell: x.cell });
+  }
+  s.splashes = s.splashes.filter((x) => x.round === s.round && !cover.has(`${x.sea} ${x.cell}`));
+
   // Eliminations: every living fleet now fully sunk. Half its scrap (counted before anyone is paid) goes to each sinker of its last ships.
   const out = living(s).filter((x) => s.fleets[x].length > 0 && s.fleets[x].every(isSunk));
   const snapshot = { ...s.scrap };
@@ -484,16 +570,19 @@ function resolve(s: SalvoState): void {
     const sinkers = bySeatOrder(s, sunk.filter((x) => x.sea === victim).flatMap((x) => x.by));
     for (const x of sinkers) s.scrap[x] += Math.floor(snapshot[victim] / 2);
   }
+  // A mine or a false splash dies with its sea.
+  s.mines = s.mines.filter((m) => !isEliminated(s, m.sea));
+  s.splashes = s.splashes.filter((x) => !isEliminated(s, x.sea));
 
-  s.lastVolley = { round: s.round, shells: results, buoys, blasts, sunk, eliminated: out };
+  s.lastVolley = { round: s.round, shells: results, buoys, blasts, sunk, eliminated: out, tricks };
   for (const x of s.seats) s.pending[x] = [];
   for (const x of s.seats) s.pendingTrick[x] = null;
   s.ready = [];
 
-  const alive = living(s);
-  if (alive.length === 1) finish(s, alive[0], 'last-afloat');
-  else if (alive.length === 0) finish(s, tiebreak(s, out).winner, 'tiebreak');
-  else if (s.round >= ROUND_CAP) finish(s, tiebreak(s, best(alive, (x) => unhitCells(s, x))).winner, 'round-cap');
+  const left = living(s);
+  if (left.length === 1) finish(s, left[0], 'last-afloat');
+  else if (left.length === 0) finish(s, tiebreak(s, out).winner, 'tiebreak');
+  else if (s.round >= ROUND_CAP) finish(s, tiebreak(s, best(left, (x) => unhitCells(s, x))).winner, 'round-cap');
   else s.round += 1;
 }
 
@@ -591,12 +680,14 @@ function forfeit(state: SalvoState, seat: SeatId, reason: string): SalvoState {
 const afloatIn = (s: SalvoState, sea: SeatId, where: (cell: string) => boolean) =>
   s.fleets[sea].reduce((n, x) => n + x.cells.filter((c) => where(c) && !x.hits.includes(c)).length, 0);
 
-function targetView(s: SalvoState, sea: SeatId, you: SeatId | null): TargetView {
+function targetView(s: SalvoState, sea: SeatId, you: SeatId | null, fakes: Splash[]): TargetView {
   const shots = Object.entries(s.shots[sea]);
   const byBoard = (a: string, b: string) => cellIndex(a)! - cellIndex(b)!;
   const sunkShips = s.fleets[sea].filter(isSunk);
   const sunkCells = new Set(sunkShips.flatMap((x) => x.cells));
-  const hits = shots.filter(([, x]) => x.result === 'hit').map(([c]) => c).sort(byBoard);
+  const real = shots.filter(([, x]) => x.result === 'hit').map(([c]) => c);
+  // A fool sees the false splashes played on them as hits like any other.
+  const hits = [...new Set([...real, ...fakes.filter((x) => x.sea === sea).map((x) => x.cell)])].sort(byBoard);
   const t: TargetView = {
     sea,
     mine: you
@@ -617,14 +708,33 @@ function targetView(s: SalvoState, sea: SeatId, you: SeatId | null): TargetView 
     afloat: FLEET_CELLS - hits.length,
     out: isEliminated(s, sea),
   };
-  if (s.phase === 'over') t.revealed = copy(s.fleets[sea]);
+  if (s.phase === 'over') {
+    t.revealed = copy(s.fleets[sea]);
+    t.mines = s.mines.filter((m) => m.sea === sea).map(({ ghost, cell }) => ({ ghost, cell }));
+  }
   return t;
+}
+
+/** The last volley as a seat sees it: a fool's copy carries each false splash of that volley as one more shell from its dressed-up shooter. */
+function volleyView(s: SalvoState, fakes: Splash[]): Volley | null {
+  if (!s.lastVolley) return null;
+  const v = copy(s.lastVolley);
+  for (const x of fakes) {
+    if (x.round !== v.round) continue;
+    const fake: ShellResult = { from: x.as, sea: x.sea, cell: x.cell, result: 'hit', ship: null, blast: false };
+    // After the last shell from its shooter, else where seat order puts it.
+    const last = v.shells.map((sh) => sh.from).lastIndexOf(x.as);
+    const at = last >= 0 ? last + 1 : v.shells.findIndex((sh) => s.seats.indexOf(sh.from) > s.seats.indexOf(x.as));
+    v.shells.splice(at >= 0 ? at : v.shells.length, 0, fake);
+  }
+  return v;
 }
 
 function view(s: SalvoState, seat: SeatId | null): SalvoView {
   const you = seat !== null && s.seats.includes(seat) ? seat : null;
   const over = s.phase === 'over';
   const seas = s.seats.filter((x) => x !== you);
+  const fakes = you ? s.splashes.filter((x) => x.fool === you) : [];
   const mySea: SalvoView['mySea'] = you
     ? {
         ships: SHIPS.map((x) => {
@@ -653,8 +763,8 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
           }
         : null,
     mySea,
-    targets: seas.map((x) => targetView(s, x, you)),
-    lastVolley: s.lastVolley && copy(s.lastVolley),
+    targets: seas.map((x) => targetView(s, x, you, fakes)),
+    lastVolley: volleyView(s, fakes),
     scrap: { ...s.scrap },
     eliminated: s.eliminated.map((x) => x.seat),
     liftedRows: liftedRows(s.round),
@@ -688,6 +798,17 @@ const who = (seats: SeatId[]) => {
 };
 const COUNT = ['No', 'One', 'Both', 'Three', 'Four'];
 
+/** One revealed trick, told. A boomerang names the cell it struck, never the ship (unless the volley's sinkings do). */
+function trickLine(t: Trick): string {
+  if (t.kind === 'splash') return `Dirty trick! The hit {${t.fool}} saw on {${t.sea}} ${t.cell} was {${t.ghost}}'s false splash.`;
+  const shell = `${who(t.shooters)}'s ${t.shooters.length === 1 ? 'shell' : 'shells'}`;
+  if (t.result === 'backfire') {
+    return `Backfire! {${t.ghost}}'s mine was sitting on {${t.sea}}'s ${t.ship}. ${shell} ${t.shooters.length === 1 ? 'sends' : 'send'} it to the bottom. Thanks for the help, {${t.ghost}}.`;
+  }
+  const back = t.hits.length === 0 ? 'but there was nothing left to hit' : t.hits.map((h) => `it comes back on {${h.sea}}'s own sea at ${h.cell}, a hit`).join('; ');
+  return `Dirty trick! {${t.ghost}}'s mine at {${t.sea}} ${t.cell} goes off under ${shell} — ${back}.`;
+}
+
 /** The round's story, told once it has landed, credited to no seat. Seats are written {seat}. */
 export function roundSummary(before: SalvoState, after: SalvoState): string[] {
   if (before.phase === 'deploy' && after.phase === 'fire') return ['All fleets are down. Round 1 begins.'];
@@ -719,7 +840,12 @@ export function roundSummary(before: SalvoState, after: SalvoState): string[] {
       const told = v.shells.some((sh) => !sh.blast && sh.result === 'sunk' && sh.sea === x.sea && sh.ship === x.ship);
       if (!told) lines.push(`${who(x.by)} ${x.by.length === 1 ? 'sinks' : 'sink'} {${x.sea}}'s ${x.ship}.`);
     }
-    for (const x of v.eliminated) if (!tied.includes(x)) lines.push(`{${x}} is out.`);
+    for (const t of v.tricks ?? []) lines.push(trickLine(t));
+    for (const x of v.eliminated) {
+      if (tied.includes(x)) continue;
+      const sunk = after.eliminated.some((e) => e.seat === x && e.reason === 'sunk');
+      lines.push(`{${x}} is out${sunk && !ended ? ', and comes back as a ghost' : ''}.`);
+    }
   }
   if (!ended) {
     const lifted = liftedRows(after.round).filter((r) => !liftedRows(before.round).includes(r));

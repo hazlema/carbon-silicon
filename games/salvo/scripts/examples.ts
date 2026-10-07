@@ -42,9 +42,14 @@ function round(s: SalvoState, shots: Round, story: Set<string>): SalvoState {
       s = G.turn.apply(s, seat, water[0]);
     }
   }
-  // Ghosts owe a trick before the round can resolve: the first one on offer (Task 7 stages the real ones).
+  // Ghosts owe a trick before the round can resolve (Task 7 stages the real ones): a harmless one, a mine
+  // on open water no story shot uses, so it never goes off and changes the story. Living seats are never
+  // filled in here, so a round that forgets one fails visibly.
   for (const seat of s.seats) {
-    if (s.round === start && s.phase === 'fire' && G.turn.toMove(s).includes(seat)) s = G.turn.apply(s, seat, (G.turn.legal(s, seat) as unknown[])[0]);
+    if (s.round !== start || s.phase !== 'fire' || !G.stillSeated!(s, seat) || !G.turn.toMove(s).includes(seat)) continue;
+    const legal = G.turn.legal(s, seat) as { trick: string; at: string; cell: string }[];
+    const quiet = legal.find((c) => c.trick === 'mine' && !story.has(`${c.at} ${c.cell}`) && !s.fleets[c.at].some((x) => x.cells.includes(c.cell)));
+    s = G.turn.apply(s, seat, quiet ?? legal[0]);
   }
   return s;
 }

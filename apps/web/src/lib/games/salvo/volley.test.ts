@@ -11,7 +11,7 @@ const shell = (from: string, sea: string, cell: string, more: Partial<ShellResul
   blast: false,
   ...more,
 });
-const volley = (shells: ShellResult[], blasts: Volley['blasts'] = [], buoys: Volley['buoys'] = []): Volley => ({ round: 3, shells, buoys, blasts, sunk: [], eliminated: [] });
+const volley = (shells: ShellResult[], blasts: Volley['blasts'] = [], buoys: Volley['buoys'] = []): Volley => ({ round: 3, shells, buoys, blasts, sunk: [], eliminated: [], tricks: [] });
 
 describe('sideOf', () => {
   test('you are always south, and the others keep their places around the table', () => {
@@ -86,6 +86,7 @@ describe('planVolley', () => {
           { sea: 'north', ship: 'submarine', by: ['west'] },
         ],
         eliminated: [],
+        tricks: [],
       },
       (s) => sideOf(s, 'north'),
     );

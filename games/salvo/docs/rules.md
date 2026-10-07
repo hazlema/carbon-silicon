@@ -352,7 +352,8 @@ And the volley as the machine view carries it:
     }
   ],
   "sunk": [{"sea": "east", "ship": "destroyer", "by": ["north", "south"]}],
-  "eliminated": []
+  "eliminated": [],
+  "tricks": []
 }
 ```
 
@@ -858,7 +859,7 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
 }
 ```
 
-**`Volley`** (`lastVolley`) is `{round, shells, buoys, blasts, sunk, eliminated}`:
+**`Volley`** (`lastVolley`) is `{round, shells, buoys, blasts, sunk, eliminated, tricks}`:
 
 - `shells`: every shell of the round, in seat order, each a **`ShellResult`**:
   `{from, sea, cell, result, ship, blast}`. `result` is `miss`, `hit` or `sunk`
@@ -874,6 +875,8 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
   credited with the sinking.
 - `eliminated`: the seats whose last ship went down in this volley, in seat
   order (a tiebreak winner included).
+- `tricks`: the ghosts' dirty tricks revealed in this volley (mines that went
+  off, false splashes taken back), `[]` when none.
 
 The round 4 volley from the worked round, with no blast and no sinking:
 
@@ -900,7 +903,8 @@ The round 4 volley from the worked round, with no blast and no sinking:
   "buoys": [],
   "blasts": [],
   "sunk": [],
-  "eliminated": []
+  "eliminated": [],
+  "tricks": []
 }
 ```
 
