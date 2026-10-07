@@ -300,6 +300,8 @@
   });
   const ck = $derived(env?.match.gameId === 'checkers' ? (env.view as CheckersView) : undefined);
   const sv = $derived(env?.match.gameId === 'salvo' ? (env.view as SalvoView) : undefined);
+  /** Salvo's board is still playing a volley: the verdict waits for the last shell. */
+  let svSettling = $state(false);
   /** The full table is on screen: only then does the site's chrome step aside (the ✕ is there to get out). */
   const fullTable = $derived(!gone && !!(table && table.matchId && env && match && (view || ll || ck || sv)));
   $effect(() => {
@@ -392,6 +394,8 @@
   const status = $derived.by((): { lead: string; detail?: string; secs?: number } => {
     if (!match) return { lead: '' };
     if (match.status === 'countdown') return { lead: 'Starting…' };
+    // Salvo's last volley lands before the verdict is told.
+    if (match.status === 'over' && svSettling) return { lead: 'The last volley is landing…' };
     if (match.status === 'over' || match.status === 'abandoned') return { lead: verdict || 'This match was abandoned.' };
     if (ll) {
       const human = !!mySeat && match.seats.find((s) => s.seat === mySeat)?.identity.kind === 'human';
@@ -433,7 +437,7 @@
   const regathering = $derived(table?.status === 'forming' && !!live.me && table.seated.some((p) => p.id === live.me!.id));
 
   $effect(() => {
-    if (match?.status === 'over' && !focusedOver) {
+    if (match?.status === 'over' && !svSettling && !focusedOver) {
       focusedOver = true;
       tick().then(() => verdictHeading?.focus());
     }
@@ -673,7 +677,7 @@
       {#if sv}
         <div class="stage sv">
           <div class="boardwrap">
-            <SalvoBoard view={sv} {colors} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} seats={match.seats} you={mySeat} fit={inPocket} />
+            <SalvoBoard view={sv} {colors} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} seats={match.seats} you={mySeat} fit={inPocket} bind:settling={svSettling} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
           </div>
         </div>
@@ -749,7 +753,7 @@
     {/if}
   </div>
 
-  {#if match.status === 'over'}
+  {#if match.status === 'over' && !svSettling}
     <div class="verdict panel" class:pocket={inPocket} role="dialog" aria-labelledby="verdict-title">
       <h2 id="verdict-title" bind:this={verdictHeading} tabindex="-1">{verdict}</h2>
       <p>{REASONS[match.endReason ?? ''] ?? match.endReason}</p>

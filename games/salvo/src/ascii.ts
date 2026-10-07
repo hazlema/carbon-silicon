@@ -69,7 +69,7 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
     lines.push(...grid(wholeFleet(view.mySea.ships, view.mySea.shots)));
   }
   for (const t of view.targets) {
-    lines.push('', `${t.sea}, scrap ${view.scrap[t.sea] ?? 0}, ${t.afloat} ship cells afloat`);
+    lines.push('', `${t.sea}${t.out ? ' (out)' : ''}, scrap ${view.scrap[t.sea] ?? 0}, ${t.afloat} ship cells afloat`);
     if (t.revealed) {
       const shots: Record<string, 'miss' | 'hit'> = {};
       for (const c of t.misses) shots[c] = 'miss';

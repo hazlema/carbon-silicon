@@ -783,7 +783,7 @@ anyone else's shell that hasn't landed yet (your own this round are in
 | `guns` | During a round, how many shots each living seat fires this round: its ships afloat |
 | `myOrders` | During a round, the shots you've already sent this round, each `{fire, at, cell}`, in order. Yours alone: `[]` for everyone else and for spectators |
 | `mySea` | Your own sea (below); `null` for a spectator |
-| `targets` | One `TargetView` per opponent's sea still in the game (spectators: every living sea); once the match is over, every other sea |
+| `targets` | One `TargetView` per opponent's sea (spectators: every sea), fleets that are out included and marked `out` |
 | `lastVolley` | The last resolved round, a `Volley`, or `null` before round 1 lands |
 | `scrap` | Everyone's scrap, by seat |
 | `eliminated` | The seats that are out, in the order they went |
@@ -822,6 +822,7 @@ lists the ships not yet placed; `shots` maps every cell shot at your sea to
 | `lifted` | For each lifted row, `{row, afloat}`: how many ship cells in that row are still unhit. A count, never which cells |
 | `sonar` | Your sonar buoys on that sea, oldest first, each `{cell, round, cells, afloat}`: its centre, the round you dropped it, the nine cells it listens to, and how many ship cells among them are still unhit (live). Yours alone: every other viewer gets `[]` |
 | `afloat` | Ship cells still unhit: 12 minus the hits |
+| `out` | `true` once that fleet is out (sunk, or its player forfeited): still on view, no longer a target |
 | `revealed` | Only once the match is over: every ship, `{id, cells, hits}` |
 
 East's sea from north's view after round 4 (the [worked round](#a-worked-round)):
@@ -852,7 +853,8 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
   "sunk": [{"ship": "submarine", "cells": ["g4", "h4"]}],
   "lifted": [],
   "sonar": [],
-  "afloat": 7
+  "afloat": 7,
+  "out": false
 }
 ```
 

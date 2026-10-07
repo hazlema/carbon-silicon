@@ -117,6 +117,8 @@ export interface TargetView {
   sonar: { cell: string; round: number; cells: string[]; afloat: number }[];
   /** Ship cells still unhit (public: 12 − hits). */
   afloat: number;
+  /** This fleet is out (sunk, or its player forfeited): still on view, no longer a target. */
+  out: boolean;
   /** Every ship, once the match is over. */
   revealed?: Ship[];
 }
@@ -132,7 +134,7 @@ export interface SalvoView {
   myOrders: { fire: 'shell' | 'buoy'; at: SeatId; cell: string }[];
   /** Your fleet: every ship, its cells and hits; ships still in port are listed with `cells: []`. Null for spectators. */
   mySea: { ships: Ship[]; port: ShipId[]; shots: Record<string, 'miss' | 'hit'> } | null;
-  /** One per sea that is not yours and not eliminated (spectators: every living sea); every sea once over. */
+  /** One per sea that is not yours (spectators: every sea), fleets that are out included (`out`). */
   targets: TargetView[];
   lastVolley: Volley | null;
   scrap: Record<SeatId, number>;
@@ -499,6 +501,7 @@ function targetView(s: SalvoState, sea: SeatId, you: SeatId | null): TargetView 
           })
       : [],
     afloat: FLEET_CELLS - hits.length,
+    out: isEliminated(s, sea),
   };
   if (s.phase === 'over') t.revealed = copy(s.fleets[sea]);
   return t;
@@ -507,7 +510,7 @@ function targetView(s: SalvoState, sea: SeatId, you: SeatId | null): TargetView 
 function view(s: SalvoState, seat: SeatId | null): SalvoView {
   const you = seat !== null && s.seats.includes(seat) ? seat : null;
   const over = s.phase === 'over';
-  const seas = s.seats.filter((x) => x !== you && (over || !isEliminated(s, x)));
+  const seas = s.seats.filter((x) => x !== you);
   const mySea: SalvoView['mySea'] = you
     ? {
         ships: SHIPS.map((x) => {

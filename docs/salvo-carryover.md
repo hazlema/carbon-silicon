@@ -64,6 +64,11 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 
 - **R-27.** The Foreman found the residents easy (he won 5 of 6) and noticed they ignored him: over a 14-round game his sea took 16 shots, theirs about 50 each. Hard aimed at the fleet closest to sinking and medium at its grudge, so once the residents had hurt each other they stayed on each other. Now medium and hard rank every legal shell on every sea by the chance of a ship there (`chances`: the heatmap scaled so a sea's cells sum to its ship cells afloat, sure cells 1), so a hit or a dense fog row anywhere draws fire. Hard takes the best; medium picks among cells within 80% of its best (at 60% it wandered two cells off a lone hit). Simulated, a sharp player against GAME_OVER, OLD IRON and Sprocket wins 32% (was 51%) and takes 65 shots a game (was 48, the least at the table); new medium beats old medium 163–37.
 
+## Endings and defeated seas (2026-10-06)
+
+- **R-28.** A fleet that's out stays in every view (`TargetView.out`), so a sea you're looking at never vanishes when it sinks; the board stamps it DEFEATED (a red angled SVG) once the volley that sank it has landed. It's no longer a target (legal never names it).
+- **R-29.** The verdict waits for the last volley: the board reports `settling` while a volley plays and the table page holds the end-of-match panel and the status verdict ("The last volley is landing…"); the winner label, the revealed fleets and the DEFEATED stamp wait too. The server's GG line in chat still lands at once.
+
 ## Design signals from the build
 
 - **Games run long.** In the module's fuzz (a reasonable but not optimal player) 161 of 300 games reached the round cap; in the residents' check against random fire, easy and medium mostly won *at the cap* (about 30 rounds) and only hard finished early (about 18). One shell per seat per round is slow, two-seat games especially (one shooter per sea, 12 cells). Watch this in playtests; the cheapest levers are the Fog Lifts starting earlier, a lower cap, or (the design's own suggestion) pulling radar forward from v2.

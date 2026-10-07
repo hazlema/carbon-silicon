@@ -56,7 +56,7 @@ function choose(v: SalvoView, legal: SalvoCommand[], rng: Rng): SalvoCommand {
     for (const c of shots) if (c.at === t.sea && cells.has(c.cell) && !known.has(c.cell)) hot.push(c);
   }
   if (hot.length > 0) return rng.pick(hot);
-  const weakest = [...v.targets].sort((a, b) => a.afloat - b.afloat)[0]?.sea;
+  const weakest = v.targets.filter((t) => !t.out).sort((a, b) => a.afloat - b.afloat)[0]?.sea;
   const known = new Set(v.targets.flatMap((t) => [...t.hits, ...t.misses].map((c) => `${t.sea} ${c}`)));
   const hunt = shots.filter(
     (c) => c.at === weakest && !known.has(`${c.at} ${c.cell}`) && (cellIndex(c.cell)! + Math.floor(cellIndex(c.cell)! / 8)) % 2 === 0,
@@ -123,7 +123,7 @@ function assertNoLeaks(s: SalvoState, step: number): void {
       check(t.sea !== seat, `${where}: my own sea is a target`);
       if (over) continue;
       check(t.revealed === undefined, `${where}: ${t.sea} revealed while live`);
-      check(!isOut(s, t.sea), `${where}: ${t.sea} is out but still a target`);
+      check(t.out === isOut(s, t.sea), `${where}: ${t.sea}'s out flag is wrong`);
       const hidden = hiddenCells(s, t.sea);
       // A buoy's cells are its 3×3, not ship positions; they are checked on their own below.
       for (const str of strings({ ...t, sonar: [] })) check(!hidden.has(str), `${where}: hidden ship cell ${t.sea} ${str}`);
@@ -199,11 +199,11 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
       turn.apply(s, seat, rng.pick(legal));
       const mine = viewOf(s, seat);
       if (s.phase === 'fire') {
-        const spent = mine.targets.flatMap((t) => t.mine.map((m) => ({ fire: 'shell', at: t.sea, cell: m.cell })));
+        const spent = mine.targets.filter((t) => !t.out).flatMap((t) => t.mine.map((m) => ({ fire: 'shell', at: t.sea, cell: m.cell })));
         if (spent.length > 0) check(codeOf(() => turn.apply(s, seat, rng.pick(spent))) === 'ALREADY_FIRED', `game ${g}: a spent cell was accepted`);
         // A cell already in this salvo, or a second buoy, is refused, and legal never offers either.
         // (Shots queued at a sea that has since gone out are tested against a living sea instead.)
-        const living = new Set(mine.targets.map((t) => t.sea));
+        const living = new Set(mine.targets.filter((t) => !t.out).map((t) => t.sea));
         const queued = mine.myOrders.filter((x) => x.fire === 'shell');
         const live = queued.filter((x) => living.has(x.at));
         if (live.length > 0) check(codeOf(() => turn.apply(s, seat, rng.pick(live))) === 'ALREADY_AIMED', `game ${g}: a cell aimed twice in a salvo`);
@@ -211,7 +211,7 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
         const buoyed = mine.myOrders.find((x) => x.fire === 'buoy');
         if (buoyed) {
           check(!legal.some((c) => 'fire' in c && c.fire === 'buoy'), `game ${g}: legal offers a second buoy`);
-          const again = { fire: 'buoy', at: mine.targets[0].sea, cell: buoyed.cell };
+          const again = { fire: 'buoy', at: [...living][0] ?? mine.targets[0].sea, cell: buoyed.cell };
           check(codeOf(() => turn.apply(s, seat, again)) === 'ONE_BUOY', `game ${g}: a second buoy was accepted`);
         }
         check(mine.myOrders.length < mine.guns[seat], `game ${g}: ${seat} owes a shot with its salvo full`);

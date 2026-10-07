@@ -15,6 +15,7 @@
     seats,
     you,
     fit = false,
+    settling = $bindable(false),
   }: {
     view: SalvoView;
     /** Kept for the table page's call; Salvo draws people in their identity colours (orange carbon, cyan silicon). */
@@ -28,6 +29,8 @@
     you: string | null;
     /** A phone's table: open in the Top view and fill the stage. */
     fit?: boolean;
+    /** True while a volley is still landing (the page holds the verdict until the last shell is down). */
+    settling?: boolean;
   } = $props();
 
   /** The resting isometric view, and the flat one. */
@@ -64,7 +67,8 @@
   // ── Which sea is big ──
   const deploying = $derived(view.phase === 'deploy' && !!view.mySea && !amOut);
   let picked = $state<string | null>(null);
-  const target = $derived(view.targets.find((t) => t.sea === picked) ?? view.targets[0] ?? null);
+  // The sea you picked stays on view even after its fleet goes out; left to us, a living one.
+  const target = $derived(view.targets.find((t) => t.sea === picked) ?? view.targets.find((t) => !t.out) ?? view.targets[0] ?? null);
   const targetSea = $derived(target?.sea ?? null);
   const fireCells = $derived(new Set(legal.filter(isFire).filter((l) => l.at === targetSea).map((l) => l.cell)));
   /** The centres a sonar buoy may still go on the shown sea (b2..g7, once each). */
@@ -260,7 +264,8 @@
 
   function targetModel(t: TargetView): Map<string, CellModel> {
     const cells = new Map<string, CellModel>();
-    for (const s of t.revealed ?? []) {
+    // The hidden fleets come up once the last volley has landed, not while it flies.
+    for (const s of settling ? [] : (t.revealed ?? [])) {
       const joins = joinsOf(s.cells);
       for (const c of s.cells) cells.set(c, { mark: 'ship', ship: s.id, hull: { joins: joins.get(c) ?? '', wreck: false, faint: true } });
     }
@@ -343,9 +348,16 @@
         );
       }
       openRound(Math.max(p.total, warnFor) + 400);
+      settling = true;
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => (settling = false), Math.max(p.total, warnFor) + 400);
     });
   });
-  $effect(() => () => clearTimeout(clearFx));
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => () => {
+    clearTimeout(clearFx);
+    clearTimeout(settleTimer);
+  });
 
   // ── Banners: the warning before a volley, and the call to fire when a round opens ──
   type Banner = { tone: 'hot' | 'calm' | 'go'; text: string };
@@ -565,7 +577,7 @@
     return live && living.length > 1 && owing.length === 1 ? owing[0] : null;
   });
   const stateOf = (seat: string) =>
-    out(seat) ? 'out' : view.winner === seat ? 'winner' : !live ? '' : view.ready.includes(seat) ? (view.phase === 'deploy' ? 'deployed' : 'locked') : view.phase === 'deploy' ? 'deploying' : 'aiming';
+    out(seat) ? 'out' : view.winner === seat && !settling ? 'winner' : !live ? '' : view.ready.includes(seat) ? (view.phase === 'deploy' ? 'deployed' : 'locked') : view.phase === 'deploy' ? 'deploying' : 'aiming';
   const STATE_TEXT: Record<string, string> = { locked: 'locked in', out: 'sunk' };
   const mainSea = $derived(deploying ? me : targetSea);
 </script>
@@ -766,7 +778,17 @@
     {#if deploying && ownCells && me}
       {@render sea(me, ownCells, mainCell, true, 'deploy', true)}
     {:else if target && targetCells}
-      {@render sea(target.sea, targetCells, mainCell, true, live && !amOut && !!me ? 'fire' : 'view', false)}
+      {@render sea(target.sea, targetCells, mainCell, true, live && !amOut && !!me && !target.out ? 'fire' : 'view', false)}
+      {#if target.out && view.winner !== target.sea && !settling}
+        <!-- A fleet that's out stays on view, stamped once the volley that sank it has landed. -->
+        <svg class="defeated" viewBox="0 0 320 96" role="img" aria-label="{handleOf(target.sea)}'s fleet is defeated" data-testid="defeated">
+          <g transform="rotate(-12 160 48)">
+            <rect x="14" y="14" width="292" height="68" rx="8" />
+            <rect x="22" y="22" width="276" height="52" rx="4" class="inner" />
+            <text x="160" y="61" text-anchor="middle">DEFEATED</text>
+          </g>
+        </svg>
+      {/if}
     {/if}
     <div class="pill" role="toolbar" aria-label="Board view">
       <button type="button" class="turn" aria-label="Turn left" onclick={() => turn(-90)}>⟲ 90°</button>
@@ -806,6 +828,7 @@
               type="button"
               class="chip"
               class:holdout={holdout === seat}
+              class:gone={out(seat)}
               class:on
               data-seat={seat}
               data-ready={view.ready.includes(seat)}
@@ -896,7 +919,7 @@
       {:else if live && amOut}
         <p class="slot">Your fleet is down. The others play on.</p>
       {:else if !live}
-        <p class="slot">Every fleet is shown.</p>
+        <p class="slot">{settling ? 'The last volley is landing…' : 'Every fleet is shown.'}</p>
       {/if}
     </div>
   </aside>
@@ -1022,6 +1045,34 @@
     .pill .turn {
       display: none;
     }
+  }
+
+  /* A defeated fleet's sea: a red rubber stamp across the stage, over everything, taking no clicks. */
+  .defeated {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: min(60%, 26rem);
+    translate: -50% -50%;
+    pointer-events: none;
+    z-index: 4;
+    filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.55));
+    animation: sv-stamp 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+  }
+  .defeated rect {
+    fill: rgba(40, 6, 12, 0.55);
+    stroke: #ff3b4f;
+    stroke-width: 5;
+  }
+  .defeated rect.inner {
+    fill: none;
+    stroke-width: 2;
+    opacity: 0.8;
+  }
+  .defeated text {
+    fill: #ff3b4f;
+    font: 800 48px var(--font-ui);
+    letter-spacing: 0.14em;
   }
 
   /* ── Banners: over the stage, never in the way of a click ── */

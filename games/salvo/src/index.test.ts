@@ -951,7 +951,9 @@ describe('views', () => {
     let s = deployed(3);
     preHit(s, 'east', SHIP_CELLS.filter((c) => c !== 'd1'));
     s = volley(s, { north: ['east', 'd1'], east: ['north', 'a1'], south: ['north', 'h8'] });
-    expect(viewOf(s, null).targets.map((t) => t.sea)).toEqual(['north', 'south']);
+    // East is out but stays on view, marked; it's no longer a target (nobody's legal names it).
+    expect(viewOf(s, null).targets.map((t) => [t.sea, t.out])).toEqual([['north', false], ['east', true], ['south', false]]);
+    expect((turn.legal(s, 'north') as SalvoCommand[]).some((c) => 'at' in c && c.at === 'east')).toBe(false);
     s = G.forfeit(s, 'south', 'resign');
     const spectator = viewOf(s, null);
     expect(spectator.targets.map((t) => t.sea)).toEqual(['north', 'east', 'south']);
