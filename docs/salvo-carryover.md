@@ -82,6 +82,11 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-38.** The boomerang names the cell, never the ship.
 - **R-39.** The ghost card replaces R-31's banner and opens after the volley's trick banners.
 - **R-40.** Resident ghosts mine where the living will shoot but ships are unlikely (sim: median 12 rounds, 0% at the cap).
+- **R-41.** A ghost is still in the match for leaving: the table offers Stop haunting where Resign lives (asked first: "Stop haunting? Your ghost leaves the table; your place stands."; it posts the ordinary resign, which releases the seat at once), and the phone's ✕ asks before it goes: "Leave the table? The round waits for your trick: the autopilot plays it, and after 3 missed rounds your ghost fades away."
+- **R-42.** A ghost's leaving is told as a ghost's (engine-generic: any seat the game keeps at the table via `stillSeated`): a resign is "stops haunting" ("@x stops haunting."), three missed rounds "fades away" ("@x's ghost fades away."). The living keep "resigns" and "times out and forfeits".
+- **R-43.** A seat's run of missed rounds starts afresh when it becomes a ghost (the engine resets its timeout count when `stillSeated` turns true), so autopiloted rounds while afloat don't hurry its fade.
+- **R-44.** A false splash is told as soon as its cell is spent by anything (a shell, a blast's spill, a boomerang or a backfire hull), not only by shells.
+- **R-45.** The board's "Waiting on …" and holdout follow the match's own `toMove`, so a ghost sitting out (R-37) isn't shown as owed. That makes a ghost sitting out visible in `toMove`, which publicly shows it has 3 live mines while fewer than 3 fleets are afloat: spec-sanctioned (no ship information).
 
 ## Design signals from the build
 
