@@ -349,4 +349,86 @@ describe('Salvo on the engine', () => {
     expect(ctx.games.summary(ctx.id).outcome!.winners).toHaveLength(1);
     expect(recent(ctx).some((r) => r.seat === null && r.text.includes('takes it'))).toBe(true);
   });
+
+  type SalvoView = { round: number; ghosts: string[]; mySea: { ships: { cells: string[] }[] } | null };
+  const view = (ctx: Ctx, who: IdentityPublic | null = null) => ctx.games.envelope(ctx.id, who?.id ?? null).view as SalvoView;
+  const fire = async (ctx: Ctx, who: IdentityPublic, at: string, cells: string[]) => {
+    for (const cell of cells) await ctx.games.move(ctx.id, who, ctx.games.summary(ctx.id).revision, { fire: 'shell', at, cell });
+  };
+  /** Every fleet deploys; west's ship cells, and twelve cells of open water on west's sea. */
+  const deployed = async (ctx: Ctx) => {
+    for (const who of [ctx.north, ctx.east, ctx.south, ctx.west]) await ctx.games.move(ctx.id, who, ctx.games.summary(ctx.id).revision, { place: 'random' });
+    const ships = view(ctx, ctx.west).mySea!.ships.flatMap((x) => x.cells);
+    const water = Array.from({ length: 64 }, (_, i) => `${'abcdefgh'[i % 8]}${Math.floor(i / 8) + 1}`).filter((c) => !ships.includes(c));
+    expect(ships).toHaveLength(12);
+    return { ships, water: water.slice(0, 12) };
+  };
+  /** north, east and south each fire their four shells at west's sea, on these twelve cells. */
+  const atWest = async (ctx: Ctx, cells: string[]) => {
+    await fire(ctx, ctx.north, 'west', cells.slice(0, 4));
+    await fire(ctx, ctx.east, 'west', cells.slice(4, 8));
+    await fire(ctx, ctx.south, 'west', cells.slice(8, 12));
+  };
+  /** north, east and south fire every shell they owe at the next of the three of them. */
+  const skirmish = async (ctx: Ctx) => {
+    for (const [who, at] of [[ctx.north, 'east'], [ctx.east, 'south'], [ctx.south, 'north']] as const) {
+      while (ctx.games.summary(ctx.id).toMove.includes(ctx.games.envelope(ctx.id, who.id).you!)) {
+        const legal = ctx.games.envelope(ctx.id, who.id).legal as { fire?: string; at?: string }[];
+        await ctx.games.move(ctx.id, who, ctx.games.summary(ctx.id).revision, legal.find((c) => c.fire === 'shell' && c.at === at)!);
+      }
+    }
+  };
+
+  test("a ghost that idles is autopiloted with a trick, its misses counted afresh from its sinking, and fades after three; placement unchanged", async () => {
+    const ctx = await salvo();
+    const { ships, water } = await deployed(ctx);
+    // Rounds 1 and 2 west sleeps through afloat: two misses. Round 2's volley sinks it.
+    await atWest(ctx, water);
+    ctx.clock.advance(SECONDS);
+    await atWest(ctx, ships);
+    ctx.clock.advance(SECONDS);
+    expect(view(ctx)).toMatchObject({ round: 3, ghosts: ['west'] });
+    // Becoming a ghost wiped the slate: the next three rounds it owes a trick, and only the third miss fades it.
+    for (const misses of [1, 2]) {
+      expect(ctx.games.summary(ctx.id).toMove).toContain('west');
+      await skirmish(ctx);
+      expect(ctx.games.summary(ctx.id).toMove).toEqual(['west']);
+      ctx.clock.advance(SECONDS);
+      const auto = (await ctx.comms.poll(ctx.west.id, 0, 0)).events.filter((e) => e.type === 'match.autopilot');
+      expect(auto.at(-1)).toMatchObject({ move: 'plays a dirty trick', misses });
+      expect(ctx.games.activeMatchOf(ctx.west.id)).toBe(ctx.id);
+      expect(view(ctx).ghosts).toEqual(['west']);
+    }
+    await skirmish(ctx);
+    ctx.clock.advance(SECONDS);
+    expect(recent(ctx)).toContainEqual({ seat: 'west', text: 'fades away' });
+    expect(recent(ctx).some((r) => r.text === 'times out and forfeits')).toBe(false);
+    expect(view(ctx).ghosts).toEqual([]);
+    expect(ctx.games.summary(ctx.id).status).toBe('live');
+    expect(ctx.games.activeMatchOf(ctx.west.id)).toBeNull();
+    await waitFor(async () => (await table(ctx)).includes(`@${ctx.west.handle}'s ghost fades away.`));
+    expect((await table(ctx)).some((t) => t.includes(`@${ctx.west.handle} timed out`))).toBe(false);
+    // Its placement stands: sunk in round 2, it still finishes last.
+    await ctx.games.resign(ctx.id, ctx.east);
+    await ctx.games.resign(ctx.id, ctx.south);
+    expect(ctx.games.summary(ctx.id).outcome!.placement).toEqual([['north'], ['east', 'south'], ['west']]);
+  });
+
+  test('a ghost that resigns stops haunting: released at once, the table told so', async () => {
+    const ctx = await salvo();
+    const { ships } = await deployed(ctx);
+    await atWest(ctx, ships);
+    while (ctx.games.summary(ctx.id).toMove.includes('west')) {
+      await ctx.games.move(ctx.id, ctx.west, ctx.games.summary(ctx.id).revision, (ctx.games.envelope(ctx.id, ctx.west.id).legal as unknown[])[0]);
+    }
+    expect(view(ctx).ghosts).toEqual(['west']);
+    expect(ctx.games.activeMatchOf(ctx.west.id)).toBe(ctx.id);
+    await ctx.games.resign(ctx.id, ctx.west);
+    expect(ctx.games.activeMatchOf(ctx.west.id)).toBeNull();
+    expect(view(ctx).ghosts).toEqual([]);
+    expect(recent(ctx)).toContainEqual({ seat: 'west', text: 'stops haunting' });
+    expect(recent(ctx).some((r) => r.seat === 'west' && r.text === 'resigns')).toBe(false);
+    await waitFor(async () => (await table(ctx)).includes(`@${ctx.west.handle} stops haunting.`));
+    expect(ctx.games.summary(ctx.id).status).toBe('live');
+  });
 });
