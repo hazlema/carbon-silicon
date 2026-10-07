@@ -19,7 +19,7 @@ The first player out of a four-seat Salvo leaves minutes in, and the table talk 
 
 ### Becoming a ghost
 
-When your last ship sinks you stay at the table as a ghost (👻). Your placement is fixed at that moment and never moves again. Each round, while living players fire, you owe exactly one trick. A ghost's card says "👻 @x is up to something…" once it has committed, never what.
+When your last ship sinks you stay at the table as a ghost (👻). Your placement is fixed at that moment and never moves again. Each round, while living players fire, you owe exactly one trick. A ghost with no trick to play (3 live mines and fewer than three fleets afloat for a splash) sits the round out. A ghost's card says "👻 @x is up to something…" once it has committed, never what.
 
 Three missed rounds in a row and the ghost is gone: released from the table, its live mines and pending splashes cleared silently, placement unchanged. A seat forfeited while still afloat (resign, timeouts) is out and released as today; it never becomes a ghost. Only a sinking makes a ghost.
 
@@ -51,13 +51,13 @@ Three missed rounds in a row and the ghost is gone: released from the table, its
 
 `lastVolley.tricks` (public) lists every trick revealed in this volley:
 
-- `{ kind: 'mine', ghost, sea, cell, shooters, result: 'boomerang', hits: [{ sea, cell, ship }], sunk: [...] }`
+- `{ kind: 'mine', ghost, sea, cell, shooters, result: 'boomerang', hits: [{ sea, cell }] }` (sinkings it caused are in the volley's `sunk`, credited to the ghost)
 - `{ kind: 'mine', ghost, sea, cell, shooters, result: 'backfire', ship }`
 - `{ kind: 'splash', ghost, fool, sea, cell }`
 
 The round summary tells each one:
 
-- "**Dirty trick!** {ghost}'s mine at {east} e5 goes off under {north}'s shell — {north}'s cruiser takes the hit at e5."
+- "**Dirty trick!** {ghost}'s mine at {east} e5 goes off under {north}'s shell — it comes back on {north}'s own sea at e5, a hit." (The ship isn't named: a hit never says which ship it struck, unless it sinks it.)
 - "**Backfire!** {ghost}'s mine was sitting on {east}'s cruiser. {north}'s shell sends it to the bottom. Thanks for the help, {ghost}."
 - "**Dirty trick!** The hit {south} saw on {east} e5 was {ghost}'s false splash."
 
@@ -65,12 +65,12 @@ A ghost's commit narrates as "is up to something…"; `describe` of a trick is "
 
 ## The module (`games/salvo/src/index.ts`)
 
-- **State:** `mines: { ghost, sea, cell, round }[]`, `splashes: { ghost, fool, sea, cell, round, as: SeatId }[]`, `ghostsGone: SeatId[]`, `pending` gains `kind: 'mine' | 'splash'` orders.
+- **State:** `mines: { ghost, sea, cell, round }[]`, `splashes: { ghost, fool, sea, cell, round, as: SeatId }[]`, `ghostsGone: SeatId[]`, `pendingTrick: Record<SeatId, { kind, sea, cell, fool? } | null>` (a ghost's commit for the round, kept apart from shell orders).
 - `ghosts(s)`: eliminated with reason `sunk`, not in `ghostsGone`, match not over.
 - `toMove` (fire): living seats not ready, then ghosts not ready.
 - `stillSeated(s, seat)`: `ghosts(s).includes(seat)`. `isOut` unchanged.
 - `forfeit` of a ghost: add to `ghostsGone`, drop its mines and splashes, resolve the round if it was the last owing. Never touches `eliminated`.
-- `legal` for a ghost: mines (cap 3) and splashes; for the living, unchanged.
+- `legal` for a ghost: mines (cap 3) and splashes; for the living, unchanged. A four-seat ghost's legal runs to about 960 entries early on (192 mines, 768 splashes); accepted.
 - `apply`: `{trick}` accepted from ghosts only (`NOT_A_GHOST` otherwise); one trick and the ghost is ready. Error codes: `BAD_CELL`, `ALREADY_SHOT`, `YOUR_MINE`, `MINE_LIMIT`, `BAD_FOOL`, `TOO_FEW`.
 - `resolve`: lay this round's mines and splashes → shells land as today → mines trigger → expired splashes withdrawn → sinkings, eliminations (mines included), scrap → `lastVolley.tricks`.
 - **Views:** `ghosts: SeatId[]` (public); `myTricks` for a ghost (its live mines, its live splashes, this round's pending trick); the fool's fake in its own `targets` and `lastVolley`; `guns` 0 for ghosts. At game end every live mine is shown on its sea.
