@@ -66,6 +66,9 @@ export const sprocket: Personality = {
       draw: ['We all went down together! Teamwork!', 'A tie at sea! Everybody gets a soggy medal.', 'Nobody floats, nobody gloats. Perfect.'],
       bigCascade: ["Down she goes! I'd say sorry, but I'm mostly saying yay.", 'A ship sunk! I knew that rulebook would pay off.', 'Sploosh! Was that skill? Calling it skill.'],
       gotHit: ['Hey! I just painted that ship.', 'Ow! Rebooting my optimism… done!', "That's fine. That ship was a decoy. (It was not a decoy.)"],
+      ghost: ["Sunk! But I'm still here — as a friendly little ghost! Boo!", "My boats are napping on the seabed. I'm going to play pranks!", 'Ghost mode activated! Wheee!'],
+      trick: ['Hee hee! Got you!', 'Surprise! A ghostly prank!', 'Boo! Did I scare you?'],
+      backfire: ['Oops! I helped! Sorry!', 'Well, that went the wrong way!', 'Whoopsie — that one was a gift!'],
     },
   },
 };

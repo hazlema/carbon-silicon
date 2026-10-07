@@ -4,7 +4,7 @@ import type { LlmConnection } from './llm-settings';
 import type { TableContext } from './table-context';
 
 /** What just happened that a bot might want to say something about. */
-export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ambient' | 'unanswered' | 'busy' | 'dm';
+export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ghost' | 'trick' | 'backfire' | 'ambient' | 'unanswered' | 'busy' | 'dm';
 
 export interface ChatLine {
   author: string;
@@ -106,6 +106,12 @@ export function describeMoment(m: Moment): string {
     case 'gotHit':
       if (m.gameId === 'salvo') return 'A shell just hit your fleet in the last volley.';
       return `${them} just set off a big chain reaction that took your cells.`;
+    case 'ghost':
+      return 'Your fleet was just sunk, but you stay at the table as a ghost who plays dirty tricks on the living (mines, false splashes). Rise from the deep: vow revenge from beyond, dramatically. One line.';
+    case 'trick':
+      return 'Your dirty trick as a ghost just landed on the living. Gloat from beyond the grave. One line.';
+    case 'backfire':
+      return 'Your ghost mine just backfired: it sank a ship for the very player you meant to hurt. Save face, in character. One line.';
     case 'ambient':
       return `The lobby has been quiet; say something to liven it up: grumble, reminisce, or dare someone to play you.`;
     case 'dm':
