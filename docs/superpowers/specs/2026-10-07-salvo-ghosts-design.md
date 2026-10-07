@@ -13,6 +13,7 @@ The first player out of a four-seat Salvo leaves minutes in, and the table talk 
 - **Ghosts owe a trick every round.** The round waits for them on the same clock; the autopilot plays a random trick on the deadline; three missed rounds and the ghost is gone.
 - **A mine on a ship backfires.** The ghost plants blind; if a ship is under the mine, the shot that sets it off sinks that whole ship for the shooter. (Refusing mines on ship cells was ruled out: `legal` would map every fleet.)
 - **Ghosts talk.** A resident going down and every trick of theirs gets dramatic lines.
+- **A player always knows they're a ghost and what that means:** a card naming who sank them, the mission (mischief) and the two tricks, until dismissed.
 
 ## The rules
 
@@ -89,7 +90,16 @@ A ghost's commit narrates as "is up to something…"; `describe` of a trick is "
 - Ghost cards get a 👻 badge and "up to something…" once committed; the status line says "You're a ghost: one dirty trick a round."
 - The volley plays mines after the shells: a triggered mine flashes on the mined sea, then lands like an incoming shell on the shooter's own sea (warned on your sea: "⚠ A mine under your shell at east e5!"). Backfire plays as a sinking.
 - Banners: "Dirty trick! …" (hot) and "Backfire! …" (go), in the reveal.
-- The "Your fleet is sunk" banner (R-31) gains a second line: "You're a ghost now: haunt them."
+- **Becoming a ghost is announced, not hinted (the Foreman, 2026-10-07).** Once the volley that sank you has landed, a card over the stage replaces R-31's 6 s banner and stays until you press **Haunt them**:
+
+  > 👻 **You were sunk by @Fable.** (or "by @Fable and @Bob"; "by @ghost's mine" when a mine finished you)
+  > Your fleet is gone, but your spirit stays at the table. You're a ghost now. **Your mission: mischief.**
+  > Each round, play one dirty trick:
+  > 💀 **Mine:** hide it on a cell. Whoever shoots there gets hit on their own sea… unless a ship is under it, then you've just sunk that ship for them.
+  > 💦 **False splash:** show one player a fake hit, to waste their shots.
+  > You can't win now, but you can decide who does. Idle three rounds and your ghost fades away.
+
+  The round clock keeps running behind it, and the card says so ("Round 9: 38 s to play your first trick"). Dismissed, the same mission sits in short form at the top of the ghost controls ("👻 You're a ghost. One dirty trick a round."), and a ghost's own card on the roster wears the 👻. A reload while you're a ghost shows the short form, not the card. "Who sank you" comes from the last volley: the shooters credited with your last sinking(s), or the ghost whose mine did it.
 
 ## The rules guide (`games/salvo/docs/rules.md`)
 
@@ -101,7 +111,7 @@ A **Ghosts** section: becoming a ghost, Mine (with Backfire), False splash, how 
 - **Leak fuzz:** extended with ghosts playing random tricks: a live mine appears in no view but its ghost's, in no `recent`, no `describe`, no summary until it fires; a fake splash appears only in the fool's and the ghost's views; nothing in a ghost's `legal` depends on hidden ships.
 - **`legal` × `apply` fuzz** with ghosts; **"ghost forfeits keep placement"**.
 - **Residents:** the ghost planner returns legal tricks; hard prefers likely-shot, unlikely-ship cells; four-resident tables still finish (cap rate checked by sim).
-- **e2e:** extend `e2e/salvo-endings.e2e.ts`: once sunk, the human plants a mine through the board and the server receives that command; a scripted shooter sets it off and the "Dirty trick!" banner shows.
+- **e2e:** extend `e2e/salvo-endings.e2e.ts`: once sunk, the ghost card names the sinker and is dismissed with Haunt them, then the human plants a mine through the board and the server receives that command; a scripted shooter sets it off and the "Dirty trick!" banner shows.
 
 ## Out of scope
 
