@@ -781,11 +781,12 @@
       {@render sea(target.sea, targetCells, mainCell, true, live && !amOut && !!me && !target.out ? 'fire' : 'view', false)}
       {#if target.out && view.winner !== target.sea && !settling}
         <!-- A fleet that's out stays on view, stamped once the volley that sank it has landed. -->
-        <svg class="defeated" viewBox="0 0 320 96" role="img" aria-label="{handleOf(target.sea)}'s fleet is defeated" data-testid="defeated">
-          <g transform="rotate(-12 160 48)">
-            <rect x="14" y="14" width="292" height="68" rx="8" />
-            <rect x="22" y="22" width="276" height="52" rx="4" class="inner" />
-            <text x="160" y="61" text-anchor="middle">DEFEATED</text>
+        <!-- The canvas is tall enough for the box once it's tilted (292 × 68 at 12° stands about 127 high). -->
+        <svg class="defeated" viewBox="0 0 340 150" role="img" aria-label="{handleOf(target.sea)}'s fleet is defeated" data-testid="defeated">
+          <g transform="rotate(-12 170 75)">
+            <rect x="24" y="41" width="292" height="68" rx="8" />
+            <rect x="32" y="49" width="276" height="52" rx="4" class="inner" />
+            <text x="170" y="89" text-anchor="middle" textLength="250" lengthAdjust="spacingAndGlyphs">DEFEATED</text>
           </g>
         </svg>
       {/if}
@@ -1052,7 +1053,8 @@
     position: absolute;
     left: 50%;
     top: 50%;
-    width: min(60%, 26rem);
+    width: min(64%, 28rem);
+    overflow: visible;
     translate: -50% -50%;
     pointer-events: none;
     z-index: 4;
@@ -1071,8 +1073,8 @@
   }
   .defeated text {
     fill: #ff3b4f;
-    font: 800 48px var(--font-ui);
-    letter-spacing: 0.14em;
+    font: 800 40px var(--font-ui);
+    letter-spacing: 0.1em;
   }
 
   /* ── Banners: over the stage, never in the way of a click ── */
