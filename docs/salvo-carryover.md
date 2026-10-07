@@ -71,6 +71,18 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-30.** (2026-10-07) The sea on view counts as picked even when the board chose it, so a fleet that sinks while you watch it stays the big sea for its stamp (before, the default slid to the next living sea and the stamp never showed mid-match). You leave it by picking another card; while it's on view the fire control says "That fleet is sunk: pick a living sea".
 - **R-31.** (2026-10-07) Your own sinking is told once its volley has landed: a hot banner ("Your fleet is sunk — you're out. The others play on.", 6 s, in place of the next round's call), a red SUNK stamp on your fleet with its count reading "sunk", and the status line "Your fleet is sunk." with who the round waits on. Covered by e2e/salvo-endings.e2e.ts (four seats, scripted agents).
 
+## Ghosts (2026-10-07)
+
+- **R-32.** Only a sinking makes a ghost.
+- **R-33.** Mines are blind: one may sit on a ship (the reveal says Backfire!), and two ghosts may share a cell.
+- **R-34.** A mine on a cell that was spent without a direct shot fizzles untold.
+- **R-35.** Splashes on show at a match's end are told in the final volley; a forfeit ending clears them.
+- **R-36.** A false splash doesn't change the fog or sonar counts (a detectable bluff).
+- **R-37.** A ghost with no legal trick sits out.
+- **R-38.** The boomerang names the cell, never the ship.
+- **R-39.** The ghost card replaces R-31's banner and opens after the volley's trick banners.
+- **R-40.** Resident ghosts mine where the living will shoot but ships are unlikely (sim: median 12 rounds, 0% at the cap).
+
 ## Design signals from the build
 
 - **Games run long.** In the module's fuzz (a reasonable but not optimal player) 161 of 300 games reached the round cap; in the residents' check against random fire, easy and medium mostly won *at the cap* (about 30 rounds) and only hard finished early (about 18). One shell per seat per round is slow, two-seat games especially (one shooter per sea, 12 cells). Watch this in playtests; the cheapest levers are the Fog Lifts starting earlier, a lower cap, or (the design's own suggestion) pulling radar forward from v2.

@@ -5,7 +5,7 @@ type Legal = { fire?: string; trick?: string; at?: string; cell?: string; place?
 type Envelope = {
   you: string | null;
   match: { status: string; revision: number; endReason: string | null; seats: { seat: string; identity: { handle: string } }[] };
-  view: { phase: string; round: number; eliminated: string[]; targets: { sea: string }[] };
+  view: { phase: string; round: number; eliminated: string[]; targets: { sea: string }[]; myTricks?: { pending: { trick: string; at: string; cell: string } | null } | null };
   legal: Legal[];
 };
 
@@ -90,4 +90,49 @@ test('Salvo: a fleet sunk mid-match stays on view stamped DEFEATED, and your own
   await expect(page.getByText("👻 You're a ghost.", { exact: true })).toBeVisible();
   done = true;
   await Promise.all(loops);
+
+  // Plant a mine through the board on a living sea; the server holds that very trick.
+  const now = await read(page.request);
+  const living = now.match.seats.map((x) => x.seat).find((x) => x !== me && !now.view.eliminated.includes(x))!;
+  expect(living).toBeTruthy();
+  await page.locator(`button.chip:not(.gone)[data-seat="${living}"]`).click();
+  await expect(sea).toHaveAttribute('data-sea', living);
+  await page.getByTestId('trick-mine').click();
+  const cellEl = page.locator('[data-main] button[data-legal="true"]').first();
+  const cell = (await cellEl.getAttribute('data-cell'))!;
+  await cellEl.click();
+  await page.getByTestId('play-trick').click();
+  await expect
+    .poll(async () => (await read(page.request)).view.myTricks?.pending, { timeout: 10_000 })
+    .toEqual({ trick: 'mine', at: living, cell });
+
+  // One living machine's shell lands on it; the rest finish their salvos; ghosts play a trick.
+  // The reveal tells the trick: a Dirty trick! (open water) or a Backfire! (a ship was under it).
+  let aimed = false;
+  let over = false;
+  const drive = async (a: { handle: string; headers: Record<string, string> }) => {
+    while (!over) {
+      const env = await read(page.request, a.headers);
+      if (env.match.status === 'over') return;
+      const mine = env.legal.find((l) => l.fire === 'shell' && l.at === living && l.cell === cell);
+      const shells = env.legal.filter((l) => l.fire === 'shell');
+      const tricks = env.legal.filter((l) => l.trick);
+      let command: Legal | undefined;
+      if (mine && !aimed) {
+        aimed = true;
+        command = mine;
+      } else command = shells.length ? pick(shells.filter((l) => !(l.at === living && l.cell === cell)).concat(shells.length === 1 ? shells : [])) : tricks.find((l) => l.trick === 'splash') ?? tricks[0];
+      if (env.match.status === 'live' && command) {
+        await page.request.post(`/api/matches/${matchId}/move`, { headers: a.headers, data: { revision: env.match.revision, command } });
+      } else {
+        await page.request.get(`/api/matches/${matchId}?since=${env.match.revision}&waitMs=1000`, { headers: a.headers });
+      }
+    }
+  };
+  const drivers = agents.map(drive);
+  await expect
+    .poll(async () => (await page.getByTestId('banner').allTextContents()).some((t) => /^(Dirty trick!|Backfire!)/.test(t)), { timeout: 40_000, intervals: [100] })
+    .toBe(true);
+  over = true;
+  await Promise.all(drivers);
 });
