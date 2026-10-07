@@ -1,8 +1,8 @@
 import { GameRuleError, createRng, type GameModule, type Outcome, type SeatId, type TurnRules } from '@cs/game-api';
 import { renderAscii } from './ascii';
-import { SIZE, buoyCells, cellIndex, cellName, hullCells, isBuoyCentre, liftedRows, neighbours, rowOf, type Facing } from './board';
+import { MINE_LIMIT, SIZE, buoyCells, cellIndex, cellName, hullCells, isBuoyCentre, liftedRows, neighbours, rowOf, type Facing } from './board';
 
-export { FOG_FROM, SIZE, buoyCells, cellIndex, cellName, hullCells, isBuoyCentre, liftedRows, neighbours } from './board';
+export { FOG_FROM, MINE_LIMIT, SIZE, buoyCells, cellIndex, cellName, hullCells, isBuoyCentre, liftedRows, neighbours } from './board';
 export type { Facing } from './board';
 export { renderAscii } from './ascii';
 
@@ -64,7 +64,6 @@ export interface PendingTrick {
   cell: string;
   fool?: SeatId;
 }
-export const MINE_LIMIT = 3;
 /** What a shell did at its own cell. `ship` is named only when the shell sank it. */
 export interface ShellResult extends Shell {
   result: ShotResult;
@@ -406,6 +405,9 @@ function finish(s: SalvoState, winner: SeatId, reason: string): void {
   s.endReason = reason;
   s.phase = 'over';
   s.eliminated = s.eliminated.filter((x) => x.seat !== winner);
+  // Nothing is still being played: a false splash on show is over with the match (a volley that ends it tells it first).
+  s.splashes = [];
+  for (const x of s.seats) s.pendingTrick[x] = null;
 }
 
 const colOf = (cell: string) => cellIndex(cell)! % SIZE;
@@ -526,7 +528,9 @@ function resolve(s: SalvoState): void {
       tricks.push({ kind: 'mine', ghost: m.ghost, sea: m.sea, cell: m.cell, shooters, result: 'boomerang', hits });
     }
   }
-  s.mines = s.mines.filter((m) => !groups.has(`${m.sea} ${m.cell}`));
+  // Every mine whose cell is now spent is gone: the ones that went off, and any a blast's spill, a boomerang
+  // or a backfire hull landed on (those fizzle untold; a spent cell could never set them off).
+  s.mines = s.mines.filter((m) => !s.shots[m.sea][m.cell]);
   const sunkBefore = new Set(s.seats.flatMap((sea) => s.fleets[sea].filter(isSunk).map((x) => `${sea} ${x.id}`)));
   for (const [key, by] of newHits) {
     const [sea, cell] = key.split(' ');
@@ -570,9 +574,13 @@ function resolve(s: SalvoState): void {
     const sinkers = bySeatOrder(s, sunk.filter((x) => x.sea === victim).flatMap((x) => x.by));
     for (const x of sinkers) s.scrap[x] += Math.floor(snapshot[victim] / 2);
   }
-  // A mine or a false splash dies with its sea.
+  // A mine dies with its sea. A false splash on a sea that went out, or still on show as the match ends, is told now.
   s.mines = s.mines.filter((m) => !isEliminated(s, m.sea));
-  s.splashes = s.splashes.filter((x) => !isEliminated(s, x.sea));
+  const ends = living(s).length <= 1 || s.round >= ROUND_CAP;
+  for (const x of s.splashes) {
+    if (ends || isEliminated(s, x.sea)) tricks.push({ kind: 'splash', ghost: x.ghost, fool: x.fool, sea: x.sea, cell: x.cell });
+  }
+  s.splashes = ends ? [] : s.splashes.filter((x) => !isEliminated(s, x.sea));
 
   s.lastVolley = { round: s.round, shells: results, buoys, blasts, sunk, eliminated: out, tricks };
   for (const x of s.seats) s.pending[x] = [];
@@ -734,7 +742,7 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
   const you = seat !== null && s.seats.includes(seat) ? seat : null;
   const over = s.phase === 'over';
   const seas = s.seats.filter((x) => x !== you);
-  const fakes = you ? s.splashes.filter((x) => x.fool === you) : [];
+  const fakes = you && !over ? s.splashes.filter((x) => x.fool === you) : [];
   const mySea: SalvoView['mySea'] = you
     ? {
         ships: SHIPS.map((x) => {

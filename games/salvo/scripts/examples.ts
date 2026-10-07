@@ -51,6 +51,10 @@ function round(s: SalvoState, shots: Round, story: Set<string>): SalvoState {
     const quiet = legal.find((c) => c.trick === 'mine' && !story.has(`${c.at} ${c.cell}`) && !s.fleets[c.at].some((x) => x.cells.includes(c.cell)));
     s = G.turn.apply(s, seat, quiet ?? legal[0]);
   }
+  // No story here asks for a trick: one that went off would change the story without a word, so it fails loudly.
+  if (s.lastVolley?.round === start && s.lastVolley.tricks.length > 0) {
+    throw new Error(`round ${start} set off a trick no story asked for: ${JSON.stringify(s.lastVolley.tricks)}`);
+  }
   return s;
 }
 

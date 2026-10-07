@@ -1,5 +1,5 @@
-import { LETTERS, SIZE, cellName } from './board';
-import { MINE_LIMIT, type SalvoView, type Ship, type ShipId, type TargetView } from './index';
+import { LETTERS, MINE_LIMIT, SIZE, cellName } from './board';
+import type { SalvoView, Ship, ShipId, TargetView } from './index';
 
 /** Ship letters for cells you are allowed to see whole: your own fleet, and every fleet once it is over. */
 const LETTER: Record<ShipId, string> = { cruiser: 'C', destroyer: 'D', frigate: 'F', submarine: 'S' };
