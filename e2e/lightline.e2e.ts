@@ -63,12 +63,14 @@ test('a human can sit at an open Lightline table', async ({ browser, request }) 
   try {
     const page = await newPlayer(browser);
     await enter(page, `lls${randomTag()}`);
-    const row = page.getByRole('region', { name: 'Tables' }).getByRole('listitem').filter({ hasText: table.host.handle });
-    const sit = row.getByRole('button', { name: 'Sit' });
+    const row = page.getByRole('region', { name: 'Current games' }).getByRole('listitem').filter({ hasText: table.host.handle });
+    const sit = row.getByRole('button', { name: /^Sit at Lightline/ });
     await expect(sit).toBeEnabled();
+    await expect(sit).toContainText('house bots fill the rest at Start');
     await sit.click();
-    // Seated: the row leaves the open list and the Play panel shows the gathering, with Leave.
-    await expect(row).toHaveCount(0);
+    // Seated: the row becomes your table (nothing to click) and the Play panel shows the gathering, with Leave.
+    await expect(row).toContainText('your table');
+    await expect(row.getByRole('button')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Leave' })).toBeVisible();
   } finally {
     await request.delete(`/api/tables/${table.id}`, { headers: auth });

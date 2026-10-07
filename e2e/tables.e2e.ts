@@ -47,17 +47,26 @@ test('/invite from the lobby chat reaches someone on their profile page, and acc
   await guest.waitForURL(/\/t\/t_/, { timeout: 20_000 });
 });
 
-test('an open table shows in the lobby list, and a stranger can sit', async ({ browser }) => {
+test('Current games: always there, an opened table shows to its host as theirs, and a stranger clicks the row to sit', async ({ browser }) => {
   const host = await newPlayer(browser);
   const other = await newPlayer(browser);
-  await enter(host, `open${randomTag()}`);
+  const hostHandle = `open${randomTag()}`;
+  await enter(host, hostHandle);
   await enter(other, `sit${randomTag()}`);
+  // The panel is there before anyone opens a table, and says how to list one.
+  const mine = host.getByRole('region', { name: 'Current games' });
+  await expect(mine).toBeVisible();
   await pickGame(host);
   await host.getByRole('button', { name: 'Host a table' }).click();
   await host.getByLabel('Open to anyone').check();
-  const list = other.getByRole('region', { name: 'Tables' });
-  await expect(list).toBeVisible();
-  await list.getByRole('button', { name: 'Sit' }).first().click();
+  // The host sees their own open table, marked as theirs, with the seats still free (no button to sit at it).
+  const own = mine.getByRole('listitem').filter({ hasText: `@${hostHandle}` });
+  await expect(own).toContainText('your table');
+  await expect(own).toContainText('3 of 4 seats free');
+  await expect(own.getByRole('button')).toHaveCount(0);
+  // A stranger clicks the whole row.
+  const list = other.getByRole('region', { name: 'Current games' });
+  await list.getByRole('button', { name: new RegExp(`^Sit at Critical Mass with @${hostHandle}`) }).click();
   await expect(host.getByRole('button', { name: 'Start' })).toBeEnabled();
 });
 
