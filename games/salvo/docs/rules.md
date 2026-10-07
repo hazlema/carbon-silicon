@@ -716,6 +716,9 @@ The fine print:
   `cell` a cell of it no shell has landed on yet.
 - **Only while three or more fleets are afloat.** The fake needs a third
   player to wear as its shooter.
+- **Only on a sea with at least two ship cells afloat.** A fake hit on a sea's
+  last cell would read "0 afloat" while that fleet plays on, and give itself
+  away.
 - **At this round's volley, the fool alone sees a fake hit** on that cell: in
   their drawing, in their `TargetView.hits` (with `afloat` one lower), and as a
   shell in their copy of `lastVolley`. The fake shell is dressed as a real
@@ -725,8 +728,10 @@ The fine print:
 - **It lasts one round.** At the next volley it's taken back and told to
   everyone. If a shell lands on that cell first (even in the volley it was
   meant to show in), the real result goes up and the trick is told in that
-  volley. If its sea goes out, or the match ends while it's on show, it's told
-  in that last volley.
+  volley. If its sea goes out, or is down to its last ship cell after the
+  volley, or the match ends while it's on show, it's told in that volley.
+  A ghost's resident never splashes the same cell again while its splash there
+  is still on show.
 
 The fake never touches a fog count or a sonar reading, and the "shooter" has
 fired one shell more than its guns. A careful player can catch it. That's the
@@ -1056,7 +1061,8 @@ sea, in seat order, `a1` first, less the cells you've mined), then false
 splashes (each fool, then each sea, then each cell). With one ghost and three
 fleets afloat that's up to 576 entries (192 mines and 384 splashes),
 shrinking as cells are shot. At three live mines the mines drop out; with fewer
-than three fleets afloat the splashes do. It's empty once your trick is in, and
+than three fleets afloat the splashes do, and a sea down to its last ship cell
+offers no splashes. It's empty once your trick is in, and
 when nothing is left (three mines down and two fleets afloat) you sit the round
 out. Nothing in it depends on where a living ship is: a ship cell is offered
 like any other.
@@ -1105,6 +1111,7 @@ fetch the match and aim again).
 | `YOUR_MINE` | You already have a mine on that cell of that sea |
 | `MINE_LIMIT` | You already have 3 live mines: wait for one to go off, or play a false splash |
 | `TOO_FEW` | A false splash with fewer than three fleets afloat |
+| `LAST_CELL` | A false splash on a sea down to its last ship cell (its fake would read "0 afloat") |
 | `BAD_FOOL` | `fool` isn't a living seat, or is the owner of the sea the splash is on |
 | `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, your whole salvo (or your ghost's trick) is in, you're a ghost with nothing to play, or you're out. The engine itself can also answer `409 NOT_YOUR_TURN` when you owe nothing this round, for instance after your last shot is already in |
 | `MATCH_OVER` (409) | The match is over. The engine answers this before the game is asked, so it is the only code you will see for a move into a finished match |

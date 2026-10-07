@@ -308,11 +308,14 @@ function mineScores(view: SalvoView, odds: Map<string, Map<string, number>>): (m
  * plays any trick. Medium and hard mine where the living will shoot but a ship is unlikely (see
  * mineScores): hard the best cell, medium one of its best few. Now and then (always, once its mines are
  * all down) they play a false splash instead: on the living seat with the most cells afloat, at the
- * sea that seat fired at most in the last volley, in the coldest cell there, to waste its shots.
+ * sea that seat fired at most in the last volley, in the coldest cell there, to waste its shots (never a
+ * cell its own splash is still on show at).
  */
 export function chooseGhostTrick(view: SalvoView, legal: SalvoCommand[], opts: SalvoStrategyOptions): SalvoCommand {
   const mines = legal.filter(isMine);
-  const splashes = legal.filter(isSplash);
+  // Never the same cell twice while its splash there is still on show: the reveal would be told twice.
+  const shown = new Set((view.myTricks?.splashes ?? []).map((x) => `${x.sea} ${x.cell}`));
+  const splashes = legal.filter(isSplash).filter((x) => !shown.has(`${x.at} ${x.cell}`));
   if (mines.length + splashes.length === 0) return pick(legal, opts.rng);
   if (opts.strength === 'easy') return pick([...mines, ...splashes], opts.rng);
   const seas = [...new Set([...mines, ...splashes].map((x) => x.at))];

@@ -7,6 +7,8 @@ export type { Facing } from './board';
 export { renderAscii } from './ascii';
 
 export const SEATS = ['north', 'east', 'south', 'west'] as const;
+/** A false splash needs a sea with at least this many ship cells afloat, or its fake would read "0 afloat". */
+export const SPLASH_MIN_AFLOAT = 2;
 export const TURN_SECONDS = 45;
 export const ROUND_CAP = 30;
 export type ShipId = 'cruiser' | 'destroyer' | 'frigate' | 'submarine';
@@ -225,8 +227,10 @@ const minesOf = (s: SalvoState, ghost: SeatId) => s.mines.filter((x) => x.ghost 
 /**
  * A ghost's tricks: a mine on any unshot cell of a living sea (not on one of its own; another ghost's
  * mine is no bar, or refusing would tell it where that mine is), while it has fewer than MINE_LIMIT;
- * then, with three fleets afloat, a false splash: a living fool, another living sea, an unshot cell.
- * Ship cells are on offer like any other: nothing here may depend on where a ship is.
+ * then, with three fleets afloat, a false splash: a living fool, another living sea with at least
+ * SPLASH_MIN_AFLOAT ship cells afloat (public; a fake hit on a sea's last cell would read "0 afloat"
+ * and give itself away), an unshot cell. Ship cells are on offer like any other: nothing here may
+ * depend on where a ship is.
  */
 function trickLegal(s: SalvoState, ghost: SeatId): SalvoCommand[] {
   const out: SalvoCommand[] = [];
@@ -237,7 +241,8 @@ function trickLegal(s: SalvoState, ghost: SeatId): SalvoCommand[] {
     for (const sea of alive) for (const cell of unshot(sea)) if (!own.some((m) => m.sea === sea && m.cell === cell)) out.push({ trick: 'mine', at: sea, cell });
   }
   if (alive.length >= 3) {
-    for (const fool of alive) for (const sea of alive) if (sea !== fool) for (const cell of unshot(sea)) out.push({ trick: 'splash', fool, at: sea, cell });
+    const seas = alive.filter((x) => unhitCells(s, x) >= SPLASH_MIN_AFLOAT);
+    for (const fool of alive) for (const sea of seas) if (sea !== fool) for (const cell of unshot(sea)) out.push({ trick: 'splash', fool, at: sea, cell });
   }
   return out;
 }
@@ -345,6 +350,9 @@ function applyTrick(s: SalvoState, seat: SeatId, command: Record<string, unknown
     s.pendingTrick[seat] = { kind: 'mine', sea: at, cell: name };
   } else {
     if (alive.length < 3) throw new GameRuleError('TOO_FEW', 'A false splash needs three fleets afloat; plant a mine.');
+    if (unhitCells(s, at) < SPLASH_MIN_AFLOAT) {
+      throw new GameRuleError('LAST_CELL', `${at} is down to its last ship cell: a fake hit there would give itself away. Splash another sea, or plant a mine.`);
+    }
     if (typeof fool !== 'string' || !alive.includes(fool) || fool === at) {
       throw new GameRuleError('BAD_FOOL', `Fool a living player who fires at ${at}: ${alive.filter((x) => x !== at).join(', ')}.`);
     }
@@ -576,13 +584,14 @@ function resolve(s: SalvoState): void {
     const sinkers = bySeatOrder(s, sunk.filter((x) => x.sea === victim).flatMap((x) => x.by));
     for (const x of sinkers) s.scrap[x] += Math.floor(snapshot[victim] / 2);
   }
-  // A mine dies with its sea. A false splash on a sea that went out, or still on show as the match ends, is told now.
+  // A mine dies with its sea. A false splash on a sea that went out or is down to its last cell (its fake
+  // would read "0 afloat"), or still on show as the match ends, is told now.
   s.mines = s.mines.filter((m) => !isEliminated(s, m.sea));
   const ends = living(s).length <= 1 || s.round >= ROUND_CAP;
   for (const x of s.splashes) {
-    if (ends || isEliminated(s, x.sea)) tricks.push({ kind: 'splash', ghost: x.ghost, fool: x.fool, sea: x.sea, cell: x.cell });
+    if (ends || isEliminated(s, x.sea) || unhitCells(s, x.sea) < SPLASH_MIN_AFLOAT) tricks.push({ kind: 'splash', ghost: x.ghost, fool: x.fool, sea: x.sea, cell: x.cell });
   }
-  s.splashes = ends ? [] : s.splashes.filter((x) => !isEliminated(s, x.sea));
+  s.splashes = ends ? [] : s.splashes.filter((x) => !isEliminated(s, x.sea) && unhitCells(s, x.sea) >= SPLASH_MIN_AFLOAT);
 
   s.lastVolley = { round: s.round, shells: results, buoys, blasts, sunk, eliminated: out, tricks };
   for (const x of s.seats) s.pending[x] = [];

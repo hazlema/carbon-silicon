@@ -539,6 +539,25 @@ describe('ghost tricks', () => {
     expect(mined).toBeGreaterThanOrEqual(10);
   });
 
+  test("a ghost never splashes the same cell again while its splash there is still on show", () => {
+    // Same table as below: the coldest cell on south is the pick, unless the ghost's live splash already sits there.
+    let s = deployed();
+    preHit(s, 'west', SHIP_CELLS.filter((c) => c !== 'b7'));
+    preHit(s, 'east', ['a1', 'b1']);
+    preHit(s, 'south', ['a1', 'b1', 'c1']);
+    s = volleyOf(s, { north: [['west', 'b7'], ['south', 'h8'], ['south', 'h7'], ['south', 'h6']] });
+    s.mines = ['e2', 'f2', 'g2'].map((cell) => ({ ghost: 'west', sea: 'north', cell, round: 1 }));
+    const legal = legalOf(s, 'west');
+    const first = chooseGhostTrick(viewOf(s, 'west'), legal, { strength: 'hard', rng: createRng(1).next }) as SplashCmd;
+    s.splashes = [{ ghost: 'west', fool: first.fool, sea: first.at, cell: first.cell, round: s.round - 1, as: 'east' }];
+    for (const strength of ['medium', 'hard'] as const) {
+      for (let k = 0; k < 10; k++) {
+        const c = chooseGhostTrick(viewOf(s, 'west'), legal, { strength, rng: createRng(k).next }) as SplashCmd;
+        expect(c.trick === 'splash' && c.at === first.at && c.cell === first.cell).toBe(false);
+      }
+    }
+  });
+
   test('the splash fools the fleet with most cells afloat, on a sea it fires at, in cold water', () => {
     // East has lost two cells and south three, north none; in the volley that sank west, north fired three
     // shells at south and one at west. West's three mines are down, so splashes are all it has.

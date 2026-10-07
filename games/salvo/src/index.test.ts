@@ -1170,6 +1170,31 @@ function deployedEastward(seat: string): SalvoState {
 }
 const tricksIn = (s: SalvoState) => s.lastVolley!.tricks;
 
+describe('a false splash never gives itself away', () => {
+  test('no splash on a sea down to its last ship cell: a fake hit there would read "0 afloat"', () => {
+    let s = withGhost();
+    preHit(s, 'east', SHIP_CELLS.filter((c) => c !== 'b7'));
+    expect(viewOf(s, 'west').targets.find((t) => t.sea === 'east')!.afloat).toBe(1);
+    const splashes = tricksOf(s, 'west').filter((c) => c.trick === 'splash');
+    expect(splashes.some((c) => c.at === 'east')).toBe(false);
+    expect(splashes.some((c) => c.at === 'south')).toBe(true);
+    expect(codeOf(() => trick(s, 'west', { trick: 'splash', fool: 'north', at: 'east', cell: 'h4' }))).toBe('LAST_CELL');
+    // Mines there are fine.
+    expect(tricksOf(s, 'west').some((c) => c.trick === 'mine' && c.at === 'east')).toBe(true);
+  });
+
+  test('a splash whose sea is down to its last cell after the volley is told at once, never shown', () => {
+    let s = withGhost();
+    preHit(s, 'east', SHIP_CELLS.filter((c) => c !== 'b7' && c !== 'a7'));
+    s = trick(s, 'west', { trick: 'splash', fool: 'south', at: 'east', cell: 'h4' });
+    s = volley(s, { north: ['east', 'a7'] });
+    expect(viewOf(s, 'south').targets.find((t) => t.sea === 'east')!.hits).not.toContain('h4');
+    expect(viewOf(s, 'south').targets.find((t) => t.sea === 'east')!.afloat).toBe(1);
+    expect(s.lastVolley!.tricks).toEqual([{ kind: 'splash', ghost: 'west', fool: 'south', sea: 'east', cell: 'h4' }]);
+    expect(s.splashes).toEqual([]);
+  });
+});
+
 describe('tricks in the volley', () => {
   test('a mine on open water comes back on the shooter: same cell when a ship is there', () => {
     let s = deployedEastward('east');

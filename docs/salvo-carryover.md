@@ -87,6 +87,7 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-43.** A seat's run of missed rounds starts afresh when it becomes a ghost (the engine resets its timeout count when `stillSeated` turns true), so autopiloted rounds while afloat don't hurry its fade.
 - **R-44.** A false splash is told as soon as its cell is spent by anything (a shell, a blast's spill, a boomerang or a backfire hull), not only by shells.
 - **R-45.** The board's "Waiting on …" and holdout follow the match's own `toMove`, so a ghost sitting out (R-37) isn't shown as owed. That makes a ghost sitting out visible in `toMove`, which publicly shows it has 3 live mines while fewer than 3 fleets are afloat: spec-sanctioned (no ship information).
+- **R-46.** (2026-10-07, from the Foreman's first false splash: "that configuration is not possible") A false splash only goes on a sea with at least 2 ship cells afloat (`LAST_CELL` otherwise), and one whose sea drops to its last cell in the volley is told at once — a fake on the last cell read "0 afloat" while the fleet played on. Resident ghosts never re-splash a cell their live splash covers (it was told twice).
 
 ## Design signals from the build
 
