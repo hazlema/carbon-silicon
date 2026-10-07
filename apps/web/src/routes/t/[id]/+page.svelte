@@ -412,6 +412,16 @@
       if (sv.phase === 'deploy') return { lead: myTurn ? 'Place your fleet' : 'Waiting for the others to deploy…', secs };
       const owing = sv.seats.filter((s) => !sv.eliminated.includes(s) && !sv.ready.includes(s) && s !== mySeat).map(handleOf);
       const who = owing.length <= 1 ? owing.join('') : `${owing.slice(0, -1).join(', ')} and ${owing.at(-1)}`;
+      // A ghost: one dirty trick a round (once the volley that sank you has landed; until then, as before).
+      if (mySeat && sv.ghosts?.includes(mySeat)) {
+        if (svSettling && sv.lastVolley?.eliminated.includes(mySeat)) return { lead: `Round ${sv.round} — waiting on ${who}…` };
+        const others = match.toMove.filter((s) => s !== mySeat).map(handleOf);
+        const them = others.length <= 1 ? others.join('') : `${others.slice(0, -1).join(', ')} and ${others.at(-1)}`;
+        const detail = sv.myTricks?.pending
+          ? `Your trick is set.${others.length ? ` Waiting on ${them}…` : ''}`
+          : `One dirty trick a round. Round ${sv.round}${others.length ? ` — waiting on ${them}…` : '.'}`;
+        return { lead: "👻 You're a ghost.", detail, secs };
+      }
       // Out mid-match: said once the volley that sank you has landed.
       if (mySeat && sv.eliminated.includes(mySeat) && !svSettling) return { lead: 'Your fleet is sunk.', detail: `You're out. ${owing.length ? `Round ${sv.round} — waiting on ${who}…` : 'The others play on.'}` };
       if (myTurn) {

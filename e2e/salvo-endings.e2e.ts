@@ -1,7 +1,7 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { enter, newPlayer, randomTag } from './testing';
 
-type Legal = { fire?: string; at?: string; cell?: string; place?: string };
+type Legal = { fire?: string; trick?: string; at?: string; cell?: string; place?: string };
 type Envelope = {
   you: string | null;
   match: { status: string; revision: number; endReason: string | null; seats: { seat: string; identity: { handle: string } }[] };
@@ -52,7 +52,10 @@ test('Salvo: a fleet sunk mid-match stays on view stamped DEFEATED, and your own
       const shells = env.legal.filter((l) => l.fire === 'shell');
       const deploy = env.legal.find((l) => l.place === 'random');
       const aimed = shells.filter((l) => l.at === victim);
-      const command = deploy ?? (aimed.length ? pick(aimed) : shells.length ? pick(shells) : undefined);
+      // A sunk agent is a ghost and owes a trick a round: a false splash (harmless) keeps the rounds moving.
+      const tricks = env.legal.filter((l) => l.trick);
+      const trick = tricks.find((l) => l.trick === 'splash') ?? tricks.find((l) => l.at !== me) ?? tricks[0];
+      const command = deploy ?? (aimed.length ? pick(aimed) : shells.length ? pick(shells) : trick);
       if (env.match.status === 'live' && command) {
         await page.request.post(`/api/matches/${matchId}/move`, { headers, data: { revision: env.match.revision, command } });
       } else {
@@ -78,8 +81,9 @@ test('Salvo: a fleet sunk mid-match stays on view stamped DEFEATED, and your own
   expect(after.match.status, `the match goes on (${after.match.endReason}, out: ${after.view.eliminated})`).toBe('live');
   await expect(page.getByTestId('sunk')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByLabel('Your fleet').getByText('sunk', { exact: true })).toBeVisible();
-  await expect(page.getByTestId('banner')).toHaveText("Your fleet is sunk — you're out. The others play on.");
-  await expect(page.getByText('Your fleet is sunk.', { exact: true })).toBeVisible();
+  // A trick told in the same volley (a scripted ghost's false splash) goes first.
+  await expect(page.getByTestId('banner')).toHaveText("Your fleet is sunk — you're out. The others play on.", { timeout: 15_000 });
+  await expect(page.getByText("👻 You're a ghost.", { exact: true })).toBeVisible();
   done = true;
   await Promise.all(loops);
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ShellResult, Volley } from '@cs/salvo';
-import { BEAT_MS, FLIGHT_MS, incoming, LEAD_MS, MAX_TOTAL_MS, planVolley, sideOf } from './volley';
+import { BEAT_MS, FLIGHT_MS, IMPACT_MS, incoming, LEAD_MS, MAX_TOTAL_MS, planVolley, RETURN_MS, sideOf, type Side } from './volley';
 
 const shell = (from: string, sea: string, cell: string, more: Partial<ShellResult> = {}): ShellResult => ({
   from,
@@ -187,5 +187,51 @@ describe('planVolley: buoys', () => {
     const plan = planVolley(v, (s) => sideOf(s, 'north'), { reducedMotion: true });
     expect(plan.shells).toEqual([]);
     expect(plan.buoys).toEqual([{ from: 'west', sea: 'east', cell: 'c3', at: 0 }]);
+  });
+});
+
+describe('planVolley: mines', () => {
+  const boomerang = (): Volley => ({
+    round: 3,
+    shells: [shell('north', 'east', 'e2')],
+    buoys: [],
+    blasts: [],
+    sunk: [],
+    eliminated: [],
+    tricks: [{ kind: 'mine', ghost: 'west', sea: 'east', cell: 'e2', shooters: ['north'], result: 'boomerang', hits: [{ sea: 'north', cell: 'd1' }] }],
+  });
+  test('a mine goes off when its shell lands and comes back RETURN_MS later', () => {
+    const p = planVolley(boomerang(), (s) => s as Side, {});
+    const landed = p.shells[0].landAt;
+    expect(p.mines).toEqual([{ ghost: 'west', sea: 'east', cell: 'e2', at: landed, result: 'boomerang', returns: [{ sea: 'north', cell: 'd1', at: landed + RETURN_MS }] }]);
+    expect(p.total).toBe(landed + RETURN_MS + IMPACT_MS);
+  });
+  test('reduced motion: mines and returns land with everything else', () => {
+    const p = planVolley(boomerang(), (s) => s as Side, { reducedMotion: true });
+    expect(p.mines).toEqual([{ ghost: 'west', sea: 'east', cell: 'e2', at: 0, result: 'boomerang', returns: [{ sea: 'north', cell: 'd1', at: 0 }] }]);
+    expect(p.total).toBe(0);
+  });
+  test('a ship a boomerang sinks goes down when the return lands', () => {
+    const v = { ...boomerang(), sunk: [{ sea: 'north', ship: 'submarine' as const, by: ['west'] }] };
+    const p = planVolley(v, (s) => s as Side, {});
+    expect(p.sinkings).toEqual([{ sea: 'north', ship: 'submarine', at: p.mines[0].returns[0].at }]);
+  });
+  test('a backfire sinks its ship as the mine goes off, with no returns', () => {
+    const v: Volley = {
+      round: 3,
+      shells: [shell('north', 'west', 'b2'), shell('north', 'east', 'c4', { result: 'hit' })],
+      buoys: [],
+      blasts: [],
+      sunk: [{ sea: 'east', ship: 'cruiser', by: ['north'] }],
+      eliminated: [],
+      tricks: [{ kind: 'mine', ghost: 'south', sea: 'east', cell: 'c4', shooters: ['north'], result: 'backfire', ship: 'cruiser' }],
+    };
+    const p = planVolley(v, (s) => sideOf(s, 'north'));
+    expect(p.mines).toEqual([{ ghost: 'south', sea: 'east', cell: 'c4', at: p.shells[1].landAt, result: 'backfire', returns: [] }]);
+    expect(p.sinkings[0].at).toBe(p.shells[1].landAt);
+  });
+  test('a false splash plans no mine', () => {
+    const v: Volley = { ...volley([shell('north', 'east', 'a1')]), tricks: [{ kind: 'splash', ghost: 'west', fool: 'north', sea: 'east', cell: 'b2' }] };
+    expect(planVolley(v, (s) => sideOf(s, 'north')).mines).toEqual([]);
   });
 });

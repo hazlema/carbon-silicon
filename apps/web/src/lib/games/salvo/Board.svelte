@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { buoyCells, cellIndex, cellName, hullCells, SHIPS, SIZE, type Facing, type SalvoCommand, type SalvoView, type ShipId, type TargetView } from '@cs/salvo';
+  import { buoyCells, cellIndex, cellName, hullCells, MINE_LIMIT, SHIPS, SIZE, type Facing, type SalvoCommand, type SalvoView, type ShipId, type TargetView, type Trick } from '@cs/salvo';
   import type { TableColors } from '$lib/seats';
   import { clampTilt, DRAG_THRESHOLD, fitScale, nearestTurn } from '../critical-mass/iso';
   import { createSound } from '../critical-mass/sound';
@@ -54,6 +54,9 @@
   const out = (seat: string) => view.eliminated.includes(seat);
   const amOut = $derived(!!me && out(me));
   const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`);
+  /** Sunk fleets still at the table, playing tricks. */
+  const ghostOf = (seat: string) => (view.ghosts ?? []).includes(seat);
+  const amGhost = $derived(!!me && ghostOf(me));
 
   // ── What `legal` offers ──
   type FireCmd = Extract<SalvoCommand, { fire: 'shell' }>;
@@ -62,6 +65,11 @@
   const isFire = (l: unknown): l is FireCmd => typeof l === 'object' && l !== null && (l as FireCmd).fire === 'shell';
   const isBuoy = (l: unknown): l is BuoyCmd => typeof l === 'object' && l !== null && (l as BuoyCmd).fire === 'buoy';
   const isPlace = (l: unknown): l is PlaceCmd => typeof l === 'object' && l !== null && typeof (l as PlaceCmd).at === 'string' && 'place' in l;
+  type MineCmd = Extract<SalvoCommand, { trick: 'mine' }>;
+  type SplashCmd = Extract<SalvoCommand, { trick: 'splash' }>;
+  const isMine = (l: unknown): l is MineCmd => typeof l === 'object' && l !== null && (l as MineCmd).trick === 'mine';
+  const isSplash = (l: unknown): l is SplashCmd => typeof l === 'object' && l !== null && (l as SplashCmd).trick === 'splash';
+  const isTrick = (l: unknown): l is MineCmd | SplashCmd => isMine(l) || isSplash(l);
   const randomCmd = $derived(legal.find((l) => typeof l === 'object' && l !== null && (l as { place?: unknown }).place === 'random'));
 
   // ── Which sea is big ──
@@ -110,6 +118,8 @@
     void round;
     aims = [];
     kind = 'shell';
+    trickAim = null;
+    fool = null;
   });
   const aimable = (k: Kind, cell: string) => (k === 'buoy' ? buoyCentres.has(cell) : fireCells.has(cell));
   const aimAt = (sea: string | null, cell: string, k?: Kind) => aims.find((a) => a.at === sea && a.cell === cell && (!k || a.fire === k));
@@ -190,6 +200,94 @@
     const buoy = sent.some((o) => o.fire === 'buoy');
     return shells && buoy ? `${plural(shells, 'shell')} + buoy away` : buoy ? 'Buoy away' : `${plural(shells, 'shell')} away`;
   });
+
+  // ── A ghost's trick: one a round, a mine or a false splash. Click a cell (a splash then picks its fool); the button sends it ──
+  type TrickKind = 'mine' | 'splash';
+  let trickKind = $state<TrickKind>('mine');
+  /** The cell picked for this round's trick (a mine's, or a splash's before and after its fool). */
+  let trickAim = $state<{ at: string; cell: string } | null>(null);
+  /** Who a false splash fools. */
+  let fool = $state<string | null>(null);
+  let trickSending = $state(false);
+  const ghostTricks = $derived(legal.filter(isTrick));
+  const minesLegal = $derived(ghostTricks.some(isMine));
+  const splashLegal = $derived(ghostTricks.some(isSplash));
+  /** The trick the next click is for: the one you picked, unless only the other is on offer. */
+  const trickNow = $derived<TrickKind>(trickKind === 'splash' ? (splashLegal || !minesLegal ? 'splash' : 'mine') : minesLegal || !splashLegal ? 'mine' : 'splash');
+  const pendingTrick = $derived(view.myTricks?.pending ?? null);
+  /** The cells of the shown sea this trick may go on. */
+  const trickCells = $derived(new Set(ghostTricks.filter((l) => (trickNow === 'mine' ? isMine(l) : isSplash(l)) && l.at === targetSea).map((l) => l.cell)));
+  const trickAimAt = (sea: string | null, cell: string) => !!trickAim && trickAim.at === sea && trickAim.cell === cell;
+  /** The living seats a splash on the picked cell may fool (never the sea's owner). */
+  const fools = $derived.by(() => {
+    const a = trickAim;
+    if (!a || trickNow !== 'splash') return [];
+    return [...new Set(legal.filter(isSplash).filter((l) => l.at === a.at && l.cell === a.cell).map((l) => l.fool))];
+  });
+  /** The entry of `legal` the picked trick stands for, once it's whole. */
+  const trickCmd = $derived.by(() => {
+    const a = trickAim;
+    if (!a) return undefined;
+    if (trickNow === 'mine') return legal.find((l) => isMine(l) && l.at === a.at && l.cell === a.cell);
+    return fool ? legal.find((l) => isSplash(l) && l.at === a.at && l.cell === a.cell && l.fool === fool) : undefined;
+  });
+  function setTrickKind(k: TrickKind) {
+    trickKind = k;
+    trickAim = null;
+    fool = null;
+  }
+  /** Click a cell: take back the pick there, or pick it for the trick. */
+  function pickTrick(cell: string) {
+    if (!targetSea) return;
+    if (trickAimAt(targetSea, cell)) {
+      trickAim = null;
+      fool = null;
+    } else if (trickCells.has(cell)) {
+      trickAim = { at: targetSea, cell };
+      fool = null;
+    }
+  }
+  async function playTrick() {
+    const cmd = trickCmd;
+    if (!interactive || trickSending || !cmd) return;
+    trickSending = true;
+    sound?.clink();
+    try {
+      await onMove($state.snapshot(cmd));
+    } finally {
+      trickSending = false;
+    }
+    if (view.myTricks?.pending) {
+      trickAim = null;
+      fool = null;
+    }
+  }
+  /** Your trick this round, told: "mine at @east e5", "false splash for @south on @east e5". */
+  const pendingText = $derived.by(() => {
+    const t = pendingTrick;
+    if (!t) return '';
+    return t.trick === 'mine' ? `mine at @${handleOf(t.at)} ${t.cell}` : `false splash for @${handleOf(t.fool ?? '')} on @${handleOf(t.at)} ${t.cell}`;
+  });
+  /** The mines and false splashes to mark, by `sea cell`: your own live ones and this round's trick (a ghost), every mine left once it's over. */
+  const trickMarks = $derived.by(() => {
+    const at = new Map<string, { kind: TrickKind; pending: boolean }>();
+    const t = view.myTricks;
+    if (t?.pending) at.set(`${t.pending.at} ${t.pending.cell}`, { kind: t.pending.trick, pending: true });
+    for (const x of t?.splashes ?? []) at.set(`${x.sea} ${x.cell}`, { kind: 'splash', pending: false });
+    for (const x of t?.mines ?? []) at.set(`${x.sea} ${x.cell}`, { kind: 'mine', pending: false });
+    if (!settling) for (const tv of view.targets) for (const x of tv.mines ?? []) at.set(`${tv.sea} ${x.cell}`, { kind: 'mine', pending: false });
+    return at;
+  });
+  /** A revealed trick, told as the round summary tells it (handles for seats). */
+  function trickText(t: Trick): string {
+    if (t.kind === 'splash') return `Dirty trick! The hit ${handleOf(t.fool)} saw on ${handleOf(t.sea)} ${t.cell} was ${handleOf(t.ghost)}'s false splash.`;
+    const shell = `${names(t.shooters.map(handleOf))}'s ${t.shooters.length === 1 ? 'shell' : 'shells'}`;
+    if (t.result === 'backfire') {
+      return `Backfire! ${handleOf(t.ghost)}'s mine was sitting on ${handleOf(t.sea)}'s ${t.ship}. ${shell} ${t.shooters.length === 1 ? 'sends' : 'send'} it to the bottom. Thanks for the help, ${handleOf(t.ghost)}.`;
+    }
+    const back = t.hits.length === 0 ? 'but there was nothing left to hit' : t.hits.map((h) => `it comes back on ${handleOf(h.sea)}'s own sea at ${h.cell}, a hit`).join('; ');
+    return `Dirty trick! ${handleOf(t.ghost)}'s mine at ${handleOf(t.sea)} ${t.cell} goes off under ${shell} — ${back}.`;
+  }
 
   // ── Deploy: pick a ship, R rotates, click a cell; Random for the lot ──
   let shipPick = $state<ShipId | null>(null);
@@ -352,10 +450,30 @@
           warnFor,
         );
       }
+      // The tricks, told as they play out (after the warning, one at a time): a mine as it goes off, a false splash as the volley opens.
+      const tells: { b: Banner; at: number }[] = [];
+      for (const t of v.tricks ?? []) {
+        if (t.kind === 'splash') {
+          tells.push({ b: { tone: 'hot', text: trickText(t) }, at: p.lead });
+          continue;
+        }
+        const at = p.mines.find((m) => m.ghost === t.ghost && m.sea === t.sea && m.cell === t.cell)?.at ?? p.lead;
+        if (me && t.result === 'boomerang' && t.hits.some((h) => h.sea === me)) {
+          tells.push({ b: { tone: 'hot', text: `⚠ A mine under your shell at ${handleOf(t.sea)} ${t.cell} — it came back on your sea!` }, at });
+        }
+        tells.push({ b: { tone: t.result === 'backfire' ? 'go' : 'hot', text: trickText(t) }, at });
+      }
+      let told = warnFor;
+      for (const x of tells.sort((a, b) => a.at - b.at)) {
+        const at = Math.max(x.at, told);
+        announce(x.b, at, TRICK_MS);
+        told = at + TRICK_MS;
+      }
+      const after = Math.max(p.total, warnFor, tells.length ? told : 0) + 400;
       // Your last ship went down in this volley: say so once it has landed, in place of the next round's call.
       const sunkNow = atSea && !!me && v.eliminated.includes(me) && view.phase !== 'over';
-      if (sunkNow) announce({ tone: 'hot', text: "Your fleet is sunk — you're out. The others play on." }, Math.max(p.total, warnFor) + 400, 6000);
-      else openRound(Math.max(p.total, warnFor) + 400);
+      if (sunkNow) announce({ tone: 'hot', text: "Your fleet is sunk — you're out. The others play on." }, after, 6000);
+      else openRound(after);
       settling = true;
       clearTimeout(settleTimer);
       settleTimer = setTimeout(() => (settling = false), Math.max(p.total, warnFor) + 400);
@@ -369,6 +487,8 @@
 
   // ── Banners: the warning before a volley, and the call to fire when a round opens ──
   type Banner = { tone: 'hot' | 'calm' | 'go'; text: string };
+  /** How long a trick's banner stays up (they're long lines). */
+  const TRICK_MS = 3600;
   let banner = $state<Banner | null>(null);
   let bannerKey = $state(0);
   const bannerTimers: ReturnType<typeof setTimeout>[] = [];
@@ -419,6 +539,8 @@
     if (!plan) return at;
     for (const f of plan.flashes) for (const c of f.cells) at.set(`${f.sea} ${c}`, f.at);
     for (const s of plan.shells) if (!at.has(`${s.sea} ${s.cell}`)) at.set(`${s.sea} ${s.cell}`, s.landAt);
+    // A mine's boomerang lands on the shooter's own sea like one more shell.
+    for (const m of plan.mines) for (const r of m.returns) at.set(`${r.sea} ${r.cell}`, r.at);
     return at;
   });
   const sinkingAt = (sea: string, shipId: ShipId | null) => plan?.sinkings.find((x) => x.sea === sea && x.ship === shipId)?.at;
@@ -440,6 +562,11 @@
     }
     for (const k of p.sinkings) sound.thud(k.at / 1000 + 0.25);
     for (const b of p.buoys) sound.pop(9, b.at / 1000);
+    for (const m of p.mines) {
+      sound.thud(m.at / 1000 + 0.05);
+      sound.pop(-4, m.at / 1000 + 0.05);
+      for (const r of m.returns) sound.thud(r.at / 1000);
+    }
   }
 
   /** Where a shell starts, in cells from its target, by the side it comes from. */
@@ -556,21 +683,29 @@
     face?.querySelectorAll<HTMLElement>(':scope > button')[row * SIZE + col]?.focus();
   }
 
-  type Mode = 'fire' | 'deploy' | 'view';
+  type Mode = 'fire' | 'deploy' | 'view' | 'trick';
   /** A fire cell takes a click if it holds an aim (to take it back), or is legal and a gun is free (a buoy can always move). */
   const fireable = (cell: string) =>
     !sending && (!!aimAt(targetSea, cell) || (aimable(aimKind, cell) && (room > 0 || (aimKind === 'buoy' && buoyAimed))));
+  /** A trick cell takes a click if it holds the pick (to take it back), or the trick may go there; not once this round's is set. */
+  const trickable = (cell: string) => !trickSending && !pendingTrick && (trickAimAt(targetSea, cell) || trickCells.has(cell));
   const enabled = (mode: Mode, cell: string) =>
-    interactive && (mode === 'fire' ? fireable(cell) : mode === 'deploy' ? placeable.has(cell) : false);
+    interactive && (mode === 'fire' ? fireable(cell) : mode === 'deploy' ? placeable.has(cell) : mode === 'trick' ? trickable(cell) : false);
   function press(mode: Mode, cell: string) {
     if (suppress || !enabled(mode, cell)) return;
     if (mode === 'fire') toggle(cell);
+    else if (mode === 'trick') pickTrick(cell);
     else if (mode === 'deploy') place(cell);
   }
   function keydown(e: KeyboardEvent, mode: Mode, cell: string, k: number) {
     if (e.key === 'Enter' && mode === 'fire' && aimAt(targetSea, cell)) {
       e.preventDefault();
       void fire();
+      return;
+    }
+    if (e.key === 'Enter' && mode === 'trick' && trickAimAt(targetSea, cell) && trickCmd) {
+      e.preventDefault();
+      void playTrick();
       return;
     }
     step(e, k);
@@ -585,8 +720,10 @@
     return live && living.length > 1 && owing.length === 1 ? owing[0] : null;
   });
   const stateOf = (seat: string) =>
-    out(seat) ? 'out' : view.winner === seat && !settling ? 'winner' : !live ? '' : view.ready.includes(seat) ? (view.phase === 'deploy' ? 'deployed' : 'locked') : view.phase === 'deploy' ? 'deploying' : 'aiming';
-  const STATE_TEXT: Record<string, string> = { locked: 'locked in', out: 'sunk' };
+    out(seat) ? (live && ghostOf(seat) ? (view.ready.includes(seat) ? 'haunting' : 'ghost') : 'out') : view.winner === seat && !settling ? 'winner' : !live ? '' : view.ready.includes(seat) ? (view.phase === 'deploy' ? 'deployed' : 'locked') : view.phase === 'deploy' ? 'deploying' : 'aiming';
+  const STATE_TEXT: Record<string, string> = { locked: 'locked in', out: 'sunk', ghost: '👻 ghost', haunting: '👻 up to something…' };
+  /** You're a ghost with the board to haunt: not while the volley that sank you is still landing. */
+  const haunting = $derived(live && amGhost && !(settling && !!me && !!view.lastVolley?.eliminated.includes(me)));
   const mainSea = $derived(deploying ? me : targetSea);
 </script>
 
@@ -622,14 +759,16 @@
           {@const sinking = m.mark === 'sunk' ? sinkingAt(seat, m.ship) : undefined}
           {@const ghost = mode === 'deploy' && preview?.cells.has(cell)}
           {@const reading = intel ? sonarAt.get(cell) : undefined}
+          {@const tm = trickMarks.get(`${seat} ${cell}`)}
           {#if main && k % SIZE === 0}<span class="tag row" aria-hidden="true">{SIZE - Math.floor(k / SIZE)}</span>{/if}
           <button
             type="button"
             data-cell={cell}
             data-mark={m.mark}
-            aria-label={label(cell, m, own) + (reading ? `, sonar buoy: ${reading.afloat} afloat around it` : '')}
+            aria-label={label(cell, m, own) + (reading ? `, sonar buoy: ${reading.afloat} afloat around it` : '') + (tm ? (tm.kind === 'mine' ? ', mine' : ', false splash') : '')}
             aria-disabled={!ok}
-            aria-pressed={mode === 'fire' ? !!aimAt(seat, cell) : undefined}
+            aria-pressed={mode === 'fire' ? !!aimAt(seat, cell) : mode === 'trick' ? trickAimAt(seat, cell) : undefined}
+            data-legal={mode === 'trick' ? (trickCells.has(cell) ? 'true' : 'false') : undefined}
             onclick={() => press(mode, cell)}
             onkeydown={(e) => keydown(e, mode, cell, k)}
             onpointerenter={() => (mode === 'deploy' ? (hover = cell) : mode === 'fire' && (aimHover = cell))}
@@ -657,10 +796,12 @@
             {#if sinking !== undefined}
               <span class="bubbles" style:--d="{sinking}ms"><i></i><i></i><i></i></span>
             {/if}
-            {#if ghost}<span class="ghost" class:bad={!preview?.ok}></span>{/if}
+            {#if ghost}<span class="hull-preview" class:bad={!preview?.ok}></span>{/if}
             {#if mode === 'fire' && aimAt(seat, cell, 'shell')}<span class="reticle"></span>
             {:else if mode === 'fire' && aimAt(seat, cell, 'buoy')}<span class="reticle buoy"></span>
-            {:else if mode === 'fire' && sentAt(seat, cell)}<span class="reticle sent" data-testid="sent"></span>{/if}
+            {:else if mode === 'fire' && sentAt(seat, cell)}<span class="reticle sent" data-testid="sent"></span>
+            {:else if mode === 'trick' && trickAimAt(seat, cell)}<span class="reticle trick" data-testid="trick-aim"></span>{/if}
+            {#if tm}<span class="tmark m-{tm.kind}" class:pending={tm.pending} data-testid="mark-{tm.kind}">{tm.kind === 'mine' ? '💀' : '👻'}</span>{/if}
           </button>
         {/each}
         {#if main}
@@ -715,6 +856,15 @@
                 {@const c = centre(f.cell, size, g)}
                 <i class="flash" style:left="{c.x}px" style:top="{c.y}px" style:--d="{f.at}ms"></i>
               {/each}
+              <!-- A mine going off on its sea, and its boomerang landing on the shooter's own. -->
+              {#each plan.mines.filter((x) => x.sea === seat) as x, n (n)}
+                {@const c = centre(x.cell, size, g)}
+                <i class="flash mine" style:left="{c.x}px" style:top="{c.y}px" style:--d="{x.at}ms"></i>
+              {/each}
+              {#each plan.mines.flatMap((x) => x.returns).filter((r) => r.sea === seat) as r, n (n)}
+                {@const c = centre(r.cell, size, g)}
+                <i class="flash mine back" style:left="{c.x}px" style:top="{c.y}px" style:--d="{r.at}ms"></i>
+              {/each}
               {#each plan.shells.filter((s) => s.sea === seat) as s, n (n)}
                 {@const c = centre(s.cell, size, g)}
                 {@const [fx, fy] = FROM[s.side]}
@@ -751,6 +901,8 @@
         class="m-{m.mark}"
         class:m-aim={!!aimAt(t.sea, cell)}
         class:m-out={!!sent.find((o) => o.at === t.sea && o.cell === cell)}
+        class:m-mine={trickMarks.get(`${t.sea} ${cell}`)?.kind === 'mine' || trickAimAt(t.sea, cell)}
+        class:m-splash={trickMarks.get(`${t.sea} ${cell}`)?.kind === 'splash'}
         class:land={land !== undefined}
         style:--d="{land ?? 0}ms"
       ></i>
@@ -786,7 +938,7 @@
     {#if deploying && ownCells && me}
       {@render sea(me, ownCells, mainCell, true, 'deploy', true)}
     {:else if target && targetCells}
-      {@render sea(target.sea, targetCells, mainCell, true, live && !amOut && !!me && !target.out ? 'fire' : 'view', false)}
+      {@render sea(target.sea, targetCells, mainCell, true, !live || !me || target.out ? 'view' : haunting ? 'trick' : !amOut ? 'fire' : 'view', false)}
       {#if target.out && view.winner !== target.sea && !settling}
         <!-- A fleet that's out stays on view, stamped once the volley that sank it has landed. -->
         <!-- The canvas is tall enough for the box once it's tilted (292 × 68 at 12° stands about 127 high). -->
@@ -931,6 +1083,55 @@
           {:else}
             <button type="button" class="slot" data-testid="fire" disabled
               >{target?.out ? 'That fleet is sunk: pick a living sea' : aimKind === 'buoy' ? 'Pick a centre for the buoy' : sent.length ? `Pick ${plural(room, 'more cell')}` : `Pick ${plural(room, 'cell')} to fire`}</button
+            >
+          {/if}
+        {/if}
+      {:else if haunting}
+        <p class="ghost-head" data-testid="ghost-head">👻 You're a ghost. One dirty trick a round.</p>
+        {#if pendingTrick}
+          <p class="slot locked haunt" data-testid="waiting">Trick set — {pendingText}. {waitingFor.length ? `Waiting on ${names(waitingFor)}…` : ''}</p>
+        {:else if ghostTricks.length === 0}
+          <p class="slot">Nothing to haunt this round.</p>
+        {:else}
+          <div class="kind haunt" role="group" aria-label="Which trick">
+            <button
+              type="button"
+              aria-pressed={trickNow === 'mine'}
+              data-testid="trick-mine"
+              disabled={!minesLegal}
+              title={!minesLegal ? `${MINE_LIMIT} live mines: wait for one to go off` : undefined}
+              onclick={() => setTrickKind('mine')}>💀 Mine</button
+            >
+            <button
+              type="button"
+              aria-pressed={trickNow === 'splash'}
+              data-testid="trick-splash"
+              disabled={!splashLegal}
+              title={!splashLegal ? 'Needs three fleets afloat' : undefined}
+              onclick={() => setTrickKind('splash')}>👻 False splash</button
+            >
+          </div>
+          {#if trickNow === 'splash' && trickAim}
+            <p class="hint">Who do you fool?</p>
+            <div class="fools" role="group" aria-label="Who to fool">
+              {#each fools as f (f)}
+                <button type="button" class="fool" class:human={humanSeat(f)} data-testid="fool" data-seat={f} aria-pressed={fool === f} onclick={() => (fool = f)}>{handleOf(f)}</button>
+              {/each}
+            </div>
+          {/if}
+          {#if trickCmd}
+            <button type="button" class="firebtn haunt" data-testid="play-trick" disabled={!interactive || trickSending} onclick={() => void playTrick()}
+              >{trickSending ? 'Sending…' : trickNow === 'mine' ? 'Plant mine' : `Splash @${handleOf(fool ?? '')}`}</button
+            >
+          {:else}
+            <button type="button" class="slot" data-testid="play-trick" disabled
+              >{target?.out
+                ? 'That fleet is sunk: pick a living sea'
+                : trickNow === 'mine'
+                  ? 'Pick a cell for your mine'
+                  : trickAim
+                    ? 'Pick who to fool'
+                    : 'Pick a cell for the false splash'}</button
             >
           {/if}
         {/if}
@@ -1304,6 +1505,15 @@
     border-radius: 50%;
     background: var(--ready);
   }
+  /* A ghost on the roster: violet, and stamped once it has played its trick. */
+  .state.ghost,
+  .state.haunting {
+    color: #b06bff;
+  }
+  .state.haunting {
+    font-weight: 600;
+    animation: sv-stamp 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+  }
   .state.winner {
     color: var(--carbon);
     font-weight: 600;
@@ -1386,6 +1596,8 @@
   .mini .m-hit { background: var(--carbon); }
   .mini .m-sunk { background: #6b2a1f; box-shadow: inset 0 0 0 1px var(--carbon); }
   .mini .m-ship { background: rgba(226, 231, 245, 0.55); }
+  .mini .m-mine { background: #b06bff; }
+  .mini .m-splash { background: rgba(176, 107, 255, 0.5); box-shadow: inset 0 0 0 1px #b06bff; }
   .mini .land {
     animation: sv-ping 0.5s ease-out var(--d) both;
   }
@@ -1557,6 +1769,48 @@
     border-style: solid;
     border-color: color-mix(in oklab, var(--ready) 40%, transparent);
     color: var(--ready);
+  }
+  /* A ghost's controls: violet where the living's are orange. */
+  .ghost-head {
+    color: #cfa6ff;
+    font-weight: 600;
+  }
+  .kind.haunt button[aria-pressed='true'] {
+    background: color-mix(in oklab, #b06bff 26%, var(--panel-2));
+  }
+  .fools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .fool {
+    padding: 5px 10px;
+    border: 1px solid var(--lattice);
+    border-radius: var(--r-control);
+    background: var(--panel-2);
+    color: var(--silicon);
+    font: 600 13px var(--font-silicon);
+  }
+  .fool.human {
+    color: var(--carbon);
+    font-family: var(--font-carbon);
+    font-style: italic;
+  }
+  .fool[aria-pressed='true'] {
+    border-color: #b06bff;
+    box-shadow: 0 0 0 1px #b06bff;
+  }
+  .firebtn.haunt {
+    background: #b06bff;
+    color: #12051f;
+    box-shadow: 0 8px 24px rgba(176, 107, 255, 0.28);
+  }
+  .firebtn.haunt:hover {
+    background: #c896ff;
+  }
+  .slot.locked.haunt {
+    border-color: color-mix(in oklab, #b06bff 45%, transparent);
+    color: #cfa6ff;
   }
   .port {
     display: flex;
@@ -1827,14 +2081,14 @@
   .bubbles i:nth-child(1) { left: 22%; --k: 0ms; }
   .bubbles i:nth-child(2) { left: 48%; --k: 250ms; }
   .bubbles i:nth-child(3) { left: 66%; --k: 500ms; }
-  .ghost {
+  .hull-preview {
     position: absolute;
     inset: 10%;
     border-radius: 6px;
     background: color-mix(in oklab, var(--carbon) 40%, transparent);
     border: 1.5px solid var(--carbon);
   }
-  .ghost.bad {
+  .hull-preview.bad {
     background: color-mix(in oklab, var(--danger) 30%, transparent);
     border-color: var(--danger);
   }
@@ -1861,6 +2115,35 @@
     opacity: 0.45;
     border-style: dashed;
     box-shadow: none;
+  }
+  .reticle.trick {
+    border-color: #b06bff;
+    box-shadow: 0 0 16px rgba(176, 107, 255, 0.6), inset 0 0 12px rgba(176, 107, 255, 0.3);
+  }
+  .reticle.trick::before,
+  .reticle.trick::after {
+    background: rgba(176, 107, 255, 0.7);
+  }
+  /* A mine (a skull) or a false splash (a ghost) lying flat in its cell; this round's, not yet live, fainter. */
+  .tmark {
+    position: absolute;
+    inset: 16%;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(176, 107, 255, 0.55), rgba(176, 107, 255, 0.15) 70%);
+    box-shadow: 0 0 0 1.5px #b06bff, 0 0 calc(var(--cell) * 0.25) rgba(176, 107, 255, 0.7);
+    font-size: calc(var(--cell) * 0.38);
+    line-height: 1;
+  }
+  .own .tmark {
+    display: none;
+  }
+  /* This round's trick, not live until the volley: dashed and dimmer. */
+  .tmark.pending {
+    opacity: 0.7;
+    background: none;
+    box-shadow: 0 0 0 1.5px rgba(176, 107, 255, 0.8);
   }
   .reticle.buoy {
     border-color: var(--silicon);
@@ -2028,6 +2311,15 @@
     box-shadow: 0 0 16px rgba(79, 216, 238, 0.6), inset 0 0 16px rgba(79, 216, 238, 0.4);
     transform: translateZ(3px);
     animation: sv-sonar 1.2s ease-out var(--d) 2 both;
+  }
+  .flash.mine {
+    width: calc(var(--cell) * 2.2);
+    height: calc(var(--cell) * 2.2);
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.95), rgba(200, 150, 255, 0.85) 30%, rgba(176, 107, 255, 0.4) 55%, transparent 70%);
+  }
+  .flash.mine.back {
+    width: calc(var(--cell) * 1.6);
+    height: calc(var(--cell) * 1.6);
   }
   .flash {
     position: absolute;

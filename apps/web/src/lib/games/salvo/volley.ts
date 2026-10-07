@@ -42,6 +42,15 @@ export interface BuoyPlan {
   cell: string;
   at: number;
 }
+/** A ghost's mine going off when the shell over it lands (`at`); a boomerang's hits come back on the shooters' own seas RETURN_MS later. */
+export interface MinePlan {
+  ghost: string;
+  sea: string;
+  cell: string;
+  at: number;
+  result: 'boomerang' | 'backfire';
+  returns: { sea: string; cell: string; at: number }[];
+}
 export interface VolleyPlan {
   round: number;
   /** The warning before anything flies ("3 shells incoming"); every time below already includes it. */
@@ -50,6 +59,8 @@ export interface VolleyPlan {
   flashes: FlashPlan[];
   sinkings: SinkPlan[];
   buoys: BuoyPlan[];
+  /** Mines that went off this volley, each with its returns. */
+  mines: MinePlan[];
   /** When the last impact has played out. */
   total: number;
 }
@@ -67,6 +78,8 @@ export const MAX_TOTAL_MS = 5500;
 export const LEAD_MS = 1200;
 /** The held breath before the shells aimed at your own sea, which always come last. */
 export const BEAT_MS = 600;
+/** A mine's boomerang: the beat between the flash on the mined sea and the hit on the shooter's own. */
+export const RETURN_MS = 700;
 
 /** The shells coming at your sea this volley, who sent them (seat order, once each), and how many sonar buoys fell on it. */
 export function incoming(volley: Volley, you: string | null): { count: number; from: string[]; buoys: number } {
@@ -109,14 +122,35 @@ export function planVolley(volley: Volley, side: (seat: string) => Side, opts: {
     const at = shells.find((x) => x.blast && x.sea === b.sea && x.cell === b.cell)?.landAt ?? 0;
     return { sea: b.sea, cell: b.cell, cells: [...b.cells], at };
   });
-  const last = Math.max(0, ...shells.map((x) => x.landAt), ...flashes.map((x) => x.at));
-  // A ship goes down when the shell that sank it lands, or with the blast on its sea that took it.
+  // A mine goes off as the (last) shell over it lands; a boomerang's hits come back RETURN_MS later.
+  const mines: MinePlan[] = [];
+  /** `sea ship` → when a backfire blew that ship up. */
+  const backfires = new Map<string, number>();
+  for (const t of volley.tricks ?? []) {
+    if (t.kind !== 'mine') continue;
+    const at = Math.max(0, ...shells.filter((x) => x.sea === t.sea && x.cell === t.cell).map((x) => x.landAt));
+    const returns = t.result === 'boomerang' ? t.hits.map((h) => ({ sea: h.sea, cell: h.cell, at: still ? at : at + RETURN_MS })) : [];
+    mines.push({ ghost: t.ghost, sea: t.sea, cell: t.cell, at, result: t.result, returns });
+    if (t.result === 'backfire') backfires.set(`${t.sea} ${t.ship}`, at);
+  }
+  const last = Math.max(0, ...shells.map((x) => x.landAt), ...flashes.map((x) => x.at), ...mines.flatMap((m) => [m.at, ...m.returns.map((r) => r.at)]));
+  // A ship goes down when the shell that sank it lands, or with the blast on its sea that took it, the mine that
+  // blew it up (a backfire), or the boomerang that came back on it.
+  const returnAt = (sea: string) => {
+    const at = mines.flatMap((m) => m.returns.filter((r) => r.sea === sea).map((r) => r.at));
+    return at.length ? Math.max(...at) : undefined;
+  };
   const sinkings: SinkPlan[] = volley.sunk.map((x) => ({
     sea: x.sea,
     ship: x.ship,
-    at: shells.find((sh) => sh.sea === x.sea && sh.result === 'sunk' && sh.ship === x.ship)?.landAt ?? flashes.find((f) => f.sea === x.sea)?.at ?? last,
+    at:
+      shells.find((sh) => sh.sea === x.sea && sh.result === 'sunk' && sh.ship === x.ship)?.landAt ??
+      backfires.get(`${x.sea} ${x.ship}`) ??
+      returnAt(x.sea) ??
+      flashes.find((f) => f.sea === x.sea)?.at ??
+      last,
   }));
   // Buoys splash down as the volley opens, before the first shell lands.
   const buoys: BuoyPlan[] = (volley.buoys ?? []).map((b) => ({ from: b.from, sea: b.sea, cell: b.cell, at: lead }));
-  return { round: volley.round, lead, shells, flashes, sinkings, buoys, total: still || shells.length === 0 ? lead : last + IMPACT_MS };
+  return { round: volley.round, lead, shells, flashes, sinkings, buoys, mines, total: still || shells.length === 0 ? lead : last + IMPACT_MS };
 }
