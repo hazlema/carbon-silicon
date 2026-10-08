@@ -92,6 +92,20 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-48.** (2026-10-08) Residents stop mobbing one fleet. The Foreman was sunk in 3–5 rounds: three residents reading the same public hits poured every salvo into one sea. Now every resident weighs a sea down by the share of the others' last volley that went into it (0.9 × that share), and each has a style on top: OLD IRON a grudge (×1.6 on whoever hit it last), GAME_OVER a finisher (up to ×2 on the most damaged fleet), Sprocket a wanderer (a whim per round, ×0.6–1.4). Sim (300 four-seat games, a medium stand-in for the human): a fleet gone by round 5 in 13% of games (was 20%); the stand-in wins 40% (was 51%, when the herd wasted shells on itself). Spreading one resident's own salvo was tried and dropped: it stopped residents finishing ships they had found.
 - **R-49.** (2026-10-08) The round clock is 90 s (was 45): the Foreman's turn was autopiloted while he typed a taunt. Talking is half the game; the clock makes room for it.
 
+## Arsenal (2026-10-08)
+
+- **R-50.** Crates come only from sinkings: one per sinking per credited seat. No comeback crate: R-48 fixed the mobbing that would have called for one.
+- **R-51.** A crate is owed before you're ready: your salvo in and your crate picked or passed. No crate for a ghost, for revealing a decoy, or from the final volley.
+- **R-52.** An item costs one gun of the salvo, one item a round. It leaves your hand when queued, but the public `holding` count drops only at the volley.
+- **R-53.** A cluster is never a Time on Target and never sets off mines; you can't stack your own shell on its centre.
+- **R-54.** A torpedo runs away from the shooter and stops at the first unhit ship or live decoy, after the round's repairs and decoys land. It reveals the water it passes and never sets off mines.
+- **R-55.** Repairs and decoys land before the shells.
+- **R-56.** A repair's spark is public, because hits are public.
+- **R-57.** Revealing a decoy pays scrap but gives no crate and no sinking scrap. Sonar and fog don't see decoys.
+- **R-58.** A mine on a live decoy backfires it. Laying a decoy is told, but never where. A living fleet's afloat never reads below 1.
+- **R-59.** The turn clock is a ring of seconds by the salvo and on the crate card while you owe the round: calm, amber at 20, red and pulsing at 10, a tick for each of the last 5. It shows ✓ once you're locked in.
+- **R-60.** Residents pick crates in character and use all four items. Sim: median 10 rounds, 0% at the cap, early knockouts 8%, torpedoes rare. Covered end to end by e2e/salvo-arsenal.e2e.ts: sink, pick from the crate, fire the item through the board, the clock counts down.
+
 ## Design signals from the build
 
 - **Games run long.** In the module's fuzz (a reasonable but not optimal player) 161 of 300 games reached the round cap; in the residents' check against random fire, easy and medium mostly won *at the cap* (about 30 rounds) and only hard finished early (about 18). One shell per seat per round is slow, two-seat games especially (one shooter per sea, 12 cells). Watch this in playtests; the cheapest levers are the Fog Lifts starting earlier, a lower cap, or (the design's own suggestion) pulling radar forward from v2.
