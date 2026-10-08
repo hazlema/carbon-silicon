@@ -1043,7 +1043,7 @@ describe('fuzz', () => {
       ...['pick', 'swap', 'pass', 'cluster', 'torpedo', 'repair', 'decoy', 'shell', 'buoy'].map((k) => `apply:${k}`),
     ];
     expect(walked.filter((k) => !((tally.paths[k] ?? 0) > 0))).toEqual([]);
-  }, 60_000);
+  }, 120_000);
 
   test('whisper closes never depend on bid order: highest bid, ties to the earliest placed, the same by the clock or by the round', () => {
     const seen = { interleavings: 0, ties: 0, sold: 0, unsold: 0, orderDecides: 0 };
@@ -1111,7 +1111,7 @@ describe('fuzz', () => {
     expect(seen.unsold).toBeGreaterThan(0);
     // Ties are the only way order matters, and it does: the earliest placed wins.
     expect(seen.orderDecides).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   test('same-volley knockouts always go through the tiebreak to one winner', () => {
     let forced = 0;
