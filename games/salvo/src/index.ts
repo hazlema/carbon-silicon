@@ -368,7 +368,8 @@ function trickLegal(s: SalvoState, ghost: SeatId): SalvoCommand[] {
     const seas = alive.filter((x) => publicAfloat(s, x) >= SPLASH_MIN_AFLOAT);
     for (const fool of alive) for (const sea of seas) if (sea !== fool) for (const cell of unshot(sea)) out.push({ trick: 'splash', fool, at: sea, cell });
   }
-  if (!openAuctionOf(s, ghost)) {
+  // No listing in the last round: an auction opened then could never run (the match ends at the volley).
+  if (!openAuctionOf(s, ghost) && s.round < ROUND_CAP) {
     for (const sea of alive) for (let i = 0; i < SIZE * SIZE; i++) if (isBuoyCentre(cellName(i))) out.push({ trick: 'whisper', at: sea, cell: cellName(i) });
   }
   return out;
@@ -663,8 +664,10 @@ const justClosed = (s: SalvoState, a: Auction) => a.closedRound !== null && a.cl
  * A sealed bid on a ghost's open auction (`ghost` names it; it may be left out while only one is open). 1 up to
  * your scrap, replaceable until the close (the same amount again keeps its place in the tiebreak); 0 abstains
  * (and withdraws a bid). Only the living bid, the sea's owner included. Scrap moves only at the close.
+ * Returns false when nothing changed (that bid already stands, already abstained): apply() then hands back
+ * the input state, and the server skips the revision, so an agent looping on legal[0] can't spin the match.
  */
-function applyBid(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
+function applyBid(s: SalvoState, seat: SeatId, command: Record<string, unknown>): boolean {
   const { bid, ghost } = command;
   if (ghost !== undefined && typeof ghost !== 'string') throw new GameRuleError('BAD_COMMAND', 'Send {"bid":3,"ghost":"west"}: the ghost whose whisper you bid on.');
   if (typeof bid !== 'number' || !Number.isInteger(bid) || bid < 0) throw new GameRuleError('BAD_BID', 'Bid a whole number of scrap: {"bid":3}, or {"bid":0} to abstain.');
@@ -684,18 +687,21 @@ function applyBid(s: SalvoState, seat: SeatId, command: Record<string, unknown>)
   if (isEliminated(s, seat)) throw new GameRuleError('NO_AUCTION', 'Only the living bid on a whisper.');
   if (bid > s.scrap[seat]) throw new GameRuleError('BAD_BID', `You have ${s.scrap[seat]} scrap; bid at most that, or {"bid":0} to abstain.`);
   if (bid === 0) {
+    if (!target.bids[seat] && target.abstained.includes(seat)) return false;
     target.bids[seat] = null;
     if (!target.abstained.includes(seat)) target.abstained = bySeatOrder(s, [...target.abstained, seat]);
-    return;
+    return true;
   }
+  if (target.bids[seat]?.n === bid && !target.abstained.includes(seat)) return false;
   target.abstained = target.abstained.filter((x) => x !== seat);
-  if (target.bids[seat]?.n === bid) return;
+  if (target.bids[seat]?.n === bid) return true;
   s.bidSeq += 1;
   target.bids[seat] = { n: bid, at: s.bidSeq };
+  return true;
 }
 
-/** The number a ghost tells the winner of its open auction: 0–9, changeable until the close. */
-function applyTell(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
+/** The number a ghost tells the winner of its open auction: 0–9, changeable until the close (false: already told that). */
+function applyTell(s: SalvoState, seat: SeatId, command: Record<string, unknown>): boolean {
   const a = isGhost(s, seat) ? openAuctionOf(s, seat) : undefined;
   if (!a) {
     if (s.auctions.some((x) => x.ghost === seat && justClosed(s, x))) throw new GameRuleError('AUCTION_CLOSED', 'Your auction has closed.');
@@ -705,7 +711,9 @@ function applyTell(s: SalvoState, seat: SeatId, command: Record<string, unknown>
   if (typeof tell !== 'number' || !Number.isInteger(tell) || tell < 0 || tell > TELL_MAX) {
     throw new GameRuleError('BAD_TELL', `Tell a whole number of ship cells, 0 to ${TELL_MAX}: {"tell":3}.`);
   }
+  if (a.tell === tell) return false;
   a.tell = tell;
+  return true;
 }
 
 /** Is a seat a bidder (living, an auction open) or a ghost with its own auction open? */
@@ -1102,8 +1110,9 @@ function apply(state: SalvoState, seat: SeatId, command: unknown): SalvoState {
   const cmd = command as Record<string, unknown>;
   if (optional) {
     if (!s.seats.includes(seat)) throw new GameRuleError('NO_AUCTION', 'Only seats at the table bid.');
-    if ('bid' in cmd) applyBid(s, seat, cmd);
-    else applyTell(s, seat, cmd);
+    // A bid or tell that changes nothing hands back the input state itself: no new revision.
+    const changed = 'bid' in cmd ? applyBid(s, seat, cmd) : applyTell(s, seat, cmd);
+    if (!changed) return state;
   } else if (s.phase === 'deploy') {
     if (!('place' in cmd)) throw new GameRuleError('BAD_COMMAND', 'The fleets are deploying: send {"place":"random"} or a placement.');
     applyPlace(s, seat, cmd);

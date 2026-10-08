@@ -2304,6 +2304,15 @@ describe('whisper: the listing', () => {
     expect(whisperOf(s).truth).toBe(2);
   });
 
+  test('no whisper on offer in the last round (an auction listed then could never open)', () => {
+    const s = withGhost();
+    s.round = ROUND_CAP - 1;
+    expect(tricksOf(s, 'west').some((c) => (c.trick as string) === 'whisper')).toBe(true);
+    s.round = ROUND_CAP;
+    expect(tricksOf(s, 'west').some((c) => (c.trick as string) === 'whisper')).toBe(false);
+    expect(tricksOf(s, 'west').length).toBeGreaterThan(0); // mines and splashes still on offer
+  });
+
   test('one open auction a ghost: no whisper on offer while it runs, and a second is refused', () => {
     const s = listed();
     expect(tricksOf(s, 'west').some((c) => (c.trick as string) === 'whisper')).toBe(false);
@@ -2434,6 +2443,24 @@ describe('whisper: bids', () => {
     s = bid(s, 'south', 6); // back in: no longer abstaining
     expect(viewOf(s, null).auctions[0].bids.south).toBe('bid');
     expect(whisperOf(clockAt(s, T0 + 30_000))).toMatchObject({ winner: 'south', price: 6 });
+  });
+
+  test('a bid or tell that changes nothing hands back the very same state (no revision for a spinning agent)', () => {
+    let s = bidding();
+    s = bid(s, 'east', 3);
+    expect(bid(s, 'east', 3)).toBe(s); // that bid already stands
+    expect(bid(s, 'east', 4)).not.toBe(s);
+    s = bid(s, 'south', 0);
+    expect(bid(s, 'south', 0)).toBe(s); // already abstained
+    expect(bid(s, 'north', 0)).not.toBe(s); // first abstention is news
+    s = bid(s, 'east', 0); // withdrawn
+    expect(bid(s, 'east', 0)).toBe(s);
+    expect(bid(s, 'east', 3)).not.toBe(s); // back in at the same amount it withdrew
+    s = tell(s, 'west', 4);
+    expect(tell(s, 'west', 4)).toBe(s);
+    expect(tell(s, 'west', 5)).not.toBe(s);
+    // Errors still throw rather than no-op.
+    expect(codeOf(() => bid(s, 'east', 99))).toBe('BAD_BID');
   });
 
   test("the winner pays the ghost; only the winner hears the ghost's word (the truth unless it told otherwise)", () => {
