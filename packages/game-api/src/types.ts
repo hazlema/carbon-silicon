@@ -81,6 +81,20 @@ export interface TurnRules<S> {
   round?(state: S): number;
   /** Simultaneous only: the round's story once it has resolved (or the game has ended), credited to no seat. Seats are written {seat}. */
   roundSummary?(before: S, after: S): string[];
+  /**
+   * Optional: the game's own clock. Called with the current time after every accepted move (and the
+   * autopilot's) and at every wake-up asked for by wakeAt(); returns the new state, or the same
+   * object when nothing is due. Must be deterministic in nowMs. A change is told through
+   * roundSummary(before, after), which then decides what (if anything) the table hears.
+   */
+  clock?(state: S, nowMs: number): S;
+  /** Optional: when the game next wants clock() called (epoch ms), or null. Re-read after every change. */
+  wakeAt?(state: S): number | null;
+  /**
+   * Optional: a seat that owes nothing (not in toMove) may still send a command now, e.g. a bid after
+   * firing. Such a move never resets the seat's misses, moves the deadline or changes who owes.
+   */
+  mayAct?(state: S, seat: SeatId): boolean;
 }
 
 // ── Doctrine (standing orders for real-time games, rule 11). Validated and evaluated in doctrine.ts. ──

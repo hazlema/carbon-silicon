@@ -61,6 +61,8 @@ interface LiveMatch {
   outcome: Outcome | null;
   endReason: string | null;
   timer: unknown;
+  /** The game's next wake-up (TurnRules.wakeAt), apart from the round deadline in `timer`. */
+  wake: unknown;
   failures: number;
   waiters: Set<() => void>;
   rng: Rng;
@@ -220,6 +222,7 @@ export class GameManager {
       outcome: null,
       endReason: null,
       timer: null,
+      wake: null,
       failures: 0,
       waiters: new Set(),
       rng: createRng(seed ^ 0x5eed),
@@ -286,6 +289,7 @@ export class GameManager {
     for (const m of this.matches.values()) {
       this.clock.clearTimeout(m.timer);
       m.timer = null;
+      this.clearWake(m);
       for (const wake of [...m.waiters]) wake();
     }
   }
@@ -301,6 +305,7 @@ export class GameManager {
       this.scheduleTick(m);
     }
     this.startTurn(m);
+    this.scheduleWake(m);
     this.changed(m);
     await this.db
       .update(matches)
@@ -346,15 +351,24 @@ export class GameManager {
     }
   }
 
-  /** Synchronously installs the new state (so racing requests see the new revision), then persists. */
-  private async advance(m: LiveMatch, next: unknown): Promise<void> {
-    // A seat the game keeps at the table once it's out (a ghost) starts its run of misses afresh:
-    // the rounds the autopilot played for it while it was in don't count toward its fading.
-    const kept = m.module.stillSeated;
-    if (kept) for (const s of m.seats) if (!kept(m.state, s.seat) && kept(next, s.seat)) m.timeouts[s.seat] = 0;
-    m.state = next;
-    m.revision += 1;
-    const outcome = m.module.outcome(m.state);
+  /**
+   * Synchronously installs the new state (so racing requests see the new revision), then persists.
+   * A game with a clock() hears the time right after (its own revision); `clocked` says that's
+   * already been done. `keepTurn` (an optional move, a wake-up) leaves the deadline alone while
+   * the same seats owe.
+   */
+  private async advance(m: LiveMatch, next: unknown, opts: { keepTurn?: boolean; clocked?: boolean } = {}): Promise<void> {
+    const turn = m.module.turn;
+    const owedBefore = opts.keepTurn && turn ? turn.toMove(m.state) : null;
+    this.install(m, next);
+    let outcome = m.module.outcome(m.state);
+    if (!outcome && !opts.clocked && turn?.clock) {
+      const clocked = this.runClock(m);
+      if (clocked !== m.state) {
+        this.install(m, clocked);
+        outcome = m.module.outcome(m.state);
+      }
+    }
     if (outcome) {
       await this.finish(m, outcome);
       return;
@@ -362,8 +376,90 @@ export class GameManager {
     // A seat that's out (resigned, forfeited or eliminated) is free to go while the others play on,
     // unless the game keeps it at the table (stillSeated).
     for (const s of m.seats) if (this.isGone(m, s.seat)) this.release(m, s.identity.id);
-    this.startTurn(m);
+    const owedAfter = owedBefore ? turn!.toMove(m.state) : null;
+    const sameTurn = owedBefore && owedAfter && m.deadline !== null && owedBefore.length === owedAfter.length && owedBefore.every((x, i) => owedAfter[i] === x);
+    if (!sameTurn) this.startTurn(m);
+    this.scheduleWake(m);
     this.changed(m);
+  }
+
+  private install(m: LiveMatch, next: unknown): void {
+    // A seat the game keeps at the table once it's out (a ghost) starts its run of misses afresh:
+    // the rounds the autopilot played for it while it was in don't count toward its fading.
+    const kept = m.module.stillSeated;
+    if (kept) for (const s of m.seats) if (!kept(m.state, s.seat) && kept(next, s.seat)) m.timeouts[s.seat] = 0;
+    m.state = next;
+    m.revision += 1;
+  }
+
+  /**
+   * The game's clock() at the current time: the state it returns (the same one when nothing is due,
+   * or when the module throws), its change told through roundSummary(). Doesn't install it.
+   */
+  private runClock(m: LiveMatch): unknown {
+    const turn = m.module.turn;
+    const before = m.state;
+    if (!turn?.clock) return before;
+    let after: unknown;
+    try {
+      after = turn.clock(before, this.clock.now());
+    } catch (e) {
+      console.error(`[games] the clock of ${m.id} failed`, e);
+      return before;
+    }
+    if (after === before || after === undefined || after === null) return before;
+    let lines: string[] = [];
+    try {
+      lines = turn.roundSummary?.(before, after) ?? [];
+    } catch (e) {
+      console.error(`[games] the clock's summary of ${m.id} failed`, e);
+    }
+    for (const line of lines) if (typeof line === 'string' && line.trim()) this.record(m, null, line);
+    return after;
+  }
+
+  /** (Re)schedules the game's next wake-up, if it wants one: one per match, never past its end or close(). */
+  private scheduleWake(m: LiveMatch): void {
+    this.clearWake(m);
+    const turn = m.module.turn;
+    if (this.closed || m.status !== 'live' || !turn?.wakeAt) return;
+    let at: number | null;
+    try {
+      at = turn.wakeAt(m.state);
+    } catch (e) {
+      console.error(`[games] the wake-up of ${m.id} failed`, e);
+      return;
+    }
+    if (typeof at !== 'number' || !Number.isFinite(at)) return;
+    m.wake = this.clock.setTimeout(() => {
+      this.onWake(m.id).catch((e) => console.error('[games] wake-up failed', e));
+    }, Math.max(0, at - this.clock.now()));
+  }
+
+  private clearWake(m: LiveMatch): void {
+    this.clock.clearTimeout(m.wake);
+    m.wake = null;
+  }
+
+  private async onWake(id: string): Promise<void> {
+    const m = this.matches.get(id);
+    if (!m) return;
+    m.wake = null;
+    if (this.closed || m.status !== 'live') return;
+    const next = this.runClock(m);
+    // Nothing due after all: wait for the next change to ask again (never a busy loop).
+    if (next === m.state) return;
+    await this.advance(m, next, { keepTurn: true, clocked: true });
+  }
+
+  /** TurnRules.mayAct, never throwing. */
+  private mayAct(m: LiveMatch, seat: SeatId): boolean {
+    try {
+      return !!m.module.turn?.mayAct?.(m.state, seat);
+    } catch (e) {
+      console.error(`[games] mayAct in ${m.id} failed`, e);
+      return false;
+    }
   }
 
   async move(matchId: string, identity: IdentityPublic, revision: unknown, command: unknown): Promise<MatchEnvelope> {
@@ -383,7 +479,9 @@ export class GameManager {
       throw conflict('STALE_REVISION', `The match is at revision ${m.revision}; you sent ${JSON.stringify(revision)}. Fetch it and try again.`);
     }
     if (!turn) throw badRequest('NOT_TURN_BASED', 'This game uses doctrine, not moves.');
-    if (!turn.toMove(m.state).includes(seat)) {
+    // A seat that owes nothing may still send what the game allows it (mayAct), e.g. a bid.
+    const owes = turn.toMove(m.state).includes(seat);
+    if (!owes && !this.mayAct(m, seat)) {
       throw conflict('NOT_YOUR_TURN', turn.simultaneous ? `${seat} owes nothing more this round.` : `It is not ${seat}'s turn.`);
     }
     const before = m.state;
@@ -394,10 +492,17 @@ export class GameManager {
       if (e instanceof GameRuleError) throw new AppError(400, e.code, e.message);
       throw e;
     }
-    m.timeouts[seat] = 0;
     // Logged before advancing: the envelope advance publishes must already carry it.
-    this.logMove(m, before, next, seat, command, '');
-    await this.advance(m, next);
+    if (owes) {
+      m.timeouts[seat] = 0;
+      this.logMove(m, before, next, seat, command, '');
+    } else if (turn.simultaneous) {
+      // An optional move in a simultaneous round is as secret as any commit (and the seat is already ready).
+      this.announceRound(m, before, next);
+    } else {
+      this.logMove(m, before, next, seat, command, '');
+    }
+    await this.advance(m, next, owes ? {} : { keepTurn: true });
     return this.envelope(matchId, identity.id);
   }
 
@@ -701,6 +806,7 @@ export class GameManager {
 
   private async finish(m: LiveMatch, outcome: Outcome): Promise<void> {
     this.clock.clearTimeout(m.timer);
+    this.clearWake(m);
     m.status = 'over';
     m.outcome = outcome;
     m.endReason = outcome.reason;
@@ -740,6 +846,7 @@ export class GameManager {
    */
   private async abandon(m: LiveMatch, reason: string): Promise<void> {
     this.clock.clearTimeout(m.timer);
+    this.clearWake(m);
     m.status = 'abandoned';
     m.endReason = reason;
     m.deadline = null;

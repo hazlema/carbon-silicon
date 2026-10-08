@@ -162,6 +162,14 @@ Set `simultaneous: true` (with `round()`) when every seat in `toMove()` moves at
 - **Commits are secret until the round lands.** The log says only "{seat} is ready" (once that seat owes nothing more); your `narrate()` is never used. When `round(state)` changes, or the game ends, the engine calls `roundSummary(before, after)` and logs its lines with no seat. The autopilot's table line is "@handle dozed off — the autopilot moved for them", with no move in it. Resigns and timeout forfeits that complete a round resolve it the same way, so `forfeit()` must resolve the round when the seat it removes was the last one owing.
 - **Exactly one winner.** Simultaneous resolution makes ties easy (two fleets sinking each other); `outcome()` must still settle them.
 
+### Wake-ups and optional moves
+
+Three optional `TurnRules` hooks for things that run on their own clock (Salvo's 30-second ghost auction). A game that defines none of them behaves exactly as before.
+
+- **`clock(state, nowMs)`** is called with the current time after every accepted move (the autopilot's too) and at every wake-up. Return the same object when nothing is due, or a new state (stamp a time, close what's due). It must be deterministic in `nowMs`. A change is its own revision, and is told through `roundSummary(before, after)`: its lines go to the log with no seat, so `roundSummary()` must also handle a `before`/`after` pair in the same round (return `[]` when there's nothing to say).
+- **`wakeAt(state)`** is the epoch ms at which you next want `clock()` called, or null. The engine re-reads it after every change and keeps one wake-up per match, apart from the round deadline; it's cleared when the match ends or the server stops. A wake-up whose `clock()` changes nothing waits for the next change rather than firing again.
+- **`mayAct(state, seat)`** lets a seat that owes nothing (not in `toMove()`) send a command now, e.g. a bid after firing; `apply()` still validates it. Such a move doesn't reset the seat's misses, move the deadline or change who owes, and in a simultaneous game it isn't logged (the seat is already ready). A command from a seat that *does* owe is an owed move as always, whatever it is.
+
 ---
 
 ## 3. The match flow (so you know what your code is plugged into)
