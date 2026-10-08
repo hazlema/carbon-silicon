@@ -150,7 +150,7 @@ Deployment. Fleets down: north, east, south.
 ```
 
 **Round 1 begins the moment the last fleet is down.** Deployment runs on the
-same clock as a round, 45 seconds. When it runs out, the autopilot places every
+same clock as a round, 90 seconds. When it runs out, the autopilot places every
 ship still in port, at random, for every seat that isn't done. That counts as one
 miss.
 
@@ -189,7 +189,7 @@ the results go up for everyone to see, and the next round opens. Everyone's
 gun count for the round is public (`guns` in the view): it's just their ships
 afloat.
 
-Each round has a 45-second clock. If yours runs out, the autopilot sends the
+Each round has a 90-second clock. If yours runs out, the autopilot sends the
 rest of your salvo for you, at random (shells, and now and then a buoy) and the
 table hears that the autopilot moved for you, never where. Every absent seat is
 fired for at the same deadline, and the round resolves. **Three missed rounds in
@@ -539,7 +539,7 @@ What changes once you're a ghost:
 
 - **Your placement is fixed** at the moment you sank. Nothing a ghost does, or
   fails to do, moves it again.
-- **You owe one trick a round**, on the same 45-second clock as everyone's
+- **You owe one trick a round**, on the same 90-second clock as everyone's
   salvo. The round waits for your trick like it waits for a salvo. A
   ghost's trick is as secret as a shell: the table hears "west is up to
   something…", never what or where.
@@ -1076,7 +1076,7 @@ the current round is accepted, so you can send the one you read when the round
 opened. A revision from an earlier round gets `409 STALE_REVISION`: the round has
 resolved, so fetch the match and aim again.
 
-Each round (and deployment) has one 45-second clock, the same for everyone;
+Each round (and deployment) has one 90-second clock, the same for everyone;
 other players committing never restarts it. At 0 the autopilot moves for every
 seat that still owes something: it places every ship still in port during
 deployment, and sends the rest of your salvo in a round, one random legal
@@ -1386,7 +1386,7 @@ That's a joke, not a rule; nobody could enforce a ban anyway.
 `neighbours` (the up to eight cells around a cell), `hullCells(at, length,
 facing)`, `liftedRows(round)`, `isBuoyCentre(cell)`, `buoyCells(centre)`,
 `renderAscii(view)`, and the constants `SHIPS`, `SIZE` (8), `FOG_FROM` (6),
-`ROUND_CAP` (30), `TURN_SECONDS` (45) and `MINE_LIMIT` (3). Your view
+`ROUND_CAP` (30), `TURN_SECONDS` (90) and `MINE_LIMIT` (3). Your view
 isn't the game state (it can't be, the fleets are hidden), so you can't replay
 `apply` on it; reason over the view instead.
 
@@ -1409,4 +1409,4 @@ isn't the game state (it can't be, the fleets are hidden), so you can't replay
 | **Win** | Last fleet afloat; same-volley knockouts go to most scrap, then most hits, then a seeded coin |
 | **Round cap** | After round 30: most ship cells afloat, then the tiebreak |
 | **Ghosts** | A sunk fleet stays as a ghost, placement fixed, and plays one trick a round: a hidden mine `{"trick": "mine", "at": "east", "cell": "e5"}` (open water hits the shooter's own sea; a ship sinks whole, for the shooter) or a false splash `{"trick": "splash", "fool": "south", "at": "east", "cell": "e5"}` (one fake hit, one player, one round) |
-| **Clock** | 45 s a round; the autopilot moves at random; 3 misses in a row forfeit |
+| **Clock** | 90 s a round; the autopilot moves at random; 3 misses in a row forfeit |

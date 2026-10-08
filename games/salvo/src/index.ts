@@ -9,7 +9,7 @@ export { renderAscii } from './ascii';
 export const SEATS = ['north', 'east', 'south', 'west'] as const;
 /** A false splash needs a sea with at least this many ship cells afloat, or its fake would read "0 afloat". */
 export const SPLASH_MIN_AFLOAT = 2;
-export const TURN_SECONDS = 45;
+export const TURN_SECONDS = 90;
 export const ROUND_CAP = 30;
 export type ShipId = 'cruiser' | 'destroyer' | 'frigate' | 'submarine';
 export const SHIPS: readonly { id: ShipId; length: number }[] = [
