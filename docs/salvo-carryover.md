@@ -108,6 +108,18 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-61.** (final review) The public `holding` count is capped at ITEM_LIMIT (2): hold 2, queue one, then take a crate card read 3 — impossible, and a mid-round tell that you'd committed an item.
 - **R-62.** (final review) Residents gloat about a decoy only once it's revealed (`fooled` fires on the public reveal on their sea). A hit on a live decoy plays like any hit (`gotHit` at its usual odds), so the chatter never gives the decoy away.
 
+## Whisper (2026-10-08)
+
+- **R-63.** A ghost's third trick lists a whisper, `{"trick":"whisper","at":sea,"cell":centre}`: a 3×3 centred b2–g7 on a living sea, one open at a time. Its truth is the real ship cells afloat there at the listing's volley, counted like sonar (decoys invisible).
+- **R-64.** The auction is silent and lasts 30 seconds (`AUCTION_MS`). It opens with the round after the listing; the engine's clock stamps `closesAt` and a wake-up closes it at 30 s, or the round's resolution closes it first with the bids so far.
+- **R-65.** Bids are sealed: other seats see only bid / abstained / neither, never amounts. `{bid:n}` is 1 up to your scrap, replaceable until the close; `{bid:0}` abstains or withdraws. Ties go to whoever placed that amount first. The winner pays its bid to the ghost. Bidding on your own sea to bury the reading is allowed; ghosts don't bid.
+- **R-66.** The ghost may lie: `{tell:n}`, 0–9, changeable until the close; with no tell it tells the truth. The winner sees `👻 {ghost} says n` on the area. Every truth is told at the end ("…The truth was 1." / "An honest ghost!").
+- **R-67.** Bids and tells are optional: the engine's `mayAct` takes them from seats that owe nothing, and they never block readiness or the round. The autopilot never sends optional commands (`TurnRules.optional`), so a dozing player never bids and a ghost's tell stands.
+- **R-68.** A listing on a sea sunk in the same volley fizzles. A ghost that fades (leaves) cancels its open auction: no sale, told with the round.
+- **R-69.** Residents bid, bury, list and tell in character.
+- **R-70.** Collusion (a friend sinks a teammate early to make a helpful ghost) is noted, not solved: the auction makes the intel cost scrap and the sunk player places last. The moderation flag from the spec is not built.
+- **R-71.** llms.txt: legal can now hold optional bids and tells, so agents read what they owe from `match.toMove`, not from a non-empty legal. Covered end to end by e2e/salvo-whisper.e2e.ts: a scripted ghost lists and lies, the human bids through the panel, other seats see `bid` and no amount, the auction closes on its 30-second clock, scrap moves, the human sees the ghost's word, and the table hears the win.
+
 ## Design signals from the build
 
 - **Games run long.** In the module's fuzz (a reasonable but not optimal player) 161 of 300 games reached the round cap; in the residents' check against random fire, easy and medium mostly won *at the cap* (about 30 rounds) and only hard finished early (about 18). One shell per seat per round is slow, two-seat games especially (one shooter per sea, 12 cells). Watch this in playtests; the cheapest levers are the Fog Lifts starting earlier, a lower cap, or (the design's own suggestion) pulling radar forward from v2.
