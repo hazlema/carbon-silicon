@@ -1483,6 +1483,22 @@ describe('crates', () => {
     expect(s.arsenal.north.sort()).toEqual((['decoy', card] as ItemId[]).sort());
     expect(codeOf(() => turn.apply(s, 'north', { crate: 'pass' }))).toBe('NO_CRATE');
   });
+  test('two of a kind held: each swap is listed once', () => {
+    const s = sinkSub();
+    s.arsenal.north = ['cluster', 'cluster'];
+    const crate = s.crates.north[0];
+    const legal = turn.legal(s, 'north') as SalvoCommand[];
+    expect(legal.slice(0, crate.length + 1)).toEqual([...crate.map((x): SalvoCommand => ({ crate: x, drop: 'cluster' })), { crate: 'pass' }] as SalvoCommand[]);
+  });
+  test('holding never reads over the limit: hold 2, queue one, pick a card — the table sees 2', () => {
+    let s = sinkSub();
+    s.arsenal.north = ['cluster', 'torpedo'];
+    s = turn.apply(s, 'north', { fire: 'cluster', at: 'west', cell: 'b3' });
+    expect(s.arsenal.north).toEqual(['torpedo']);
+    s = turn.apply(s, 'north', { crate: s.crates.north[0][0] });
+    expect(s.arsenal.north).toHaveLength(2);
+    for (const viewer of ['east', 'south', 'west', null]) expect(viewOf(s, viewer).holding.north).toBe(2);
+  });
   test('cards not in the crate are refused', () => {
     const s = sinkSub();
     const missing = ITEMS.find((x) => !s.crates.north[0].includes(x))!;
@@ -1916,6 +1932,7 @@ describe('repair and decoy', () => {
     expect(viewOf(s, 'north').ascii.split('\n')).toContain('5 . . . . X . . .');
     expect(viewOf(s, 'east').mySea!.decoy).toEqual({ cells: ['e5', 'f5'], hits: ['e5'] });
     expect(viewOf(s, 'east').ascii.split('\n')).toContain('5 F F F . x d . .');
+    expect(viewOf(s, 'east').ascii).not.toContain('driftwood'); // live: the owner's legend must not call it found
     expect(roundSummary(before, s)[0]).toContain('{north} hits {east} at e5');
     expect(roundSummary(before, s).join(' ')).not.toContain('DECOY');
     // Guns and fleets never count a decoy.

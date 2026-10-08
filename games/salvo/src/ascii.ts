@@ -59,7 +59,10 @@ const fogNote = (t: TargetView) => (row: number) => {
 
 /** Is a hit on your own sea off your ships? Only a revealed decoy of yours can be one. */
 const ownDriftwood = (view: Omit<SalvoView, 'ascii'>) =>
-  !!view.mySea && Object.entries(view.mySea.shots).some(([c, r]) => r === 'hit' && !view.mySea!.ships.some((x) => x.cells.includes(c)));
+  !!view.mySea &&
+  Object.entries(view.mySea.shots).some(
+    ([c, r]) => r === 'hit' && !view.mySea!.ships.some((x) => x.cells.includes(c)) && !view.mySea!.decoy?.cells.includes(c),
+  );
 
 /** The whole table in text, for language models: every sea in view, yours first with its ships. */
 export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {

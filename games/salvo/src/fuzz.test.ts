@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createRng, type Rng } from '@cs/game-api';
 import {
   ITEMS,
+  ITEM_LIMIT,
   SEATS,
   cellIndex,
   cellName,
@@ -227,10 +228,12 @@ function assertNoLeaks(s: SalvoState, step: number, tally?: Tally): void {
       check(JSON.stringify(v.mySea!.decoy) === JSON.stringify(live ? { cells: live.cells, hits: live.hits } : null), `${where}: mySea.decoy is not my live decoy`);
       check(JSON.stringify(v.mySea!.repaired) === JSON.stringify(s.repairs[seat].map((x) => x.cell)), `${where}: mySea.repaired is not my sparks`);
     }
-    // holding: every living seat's items in hand plus any it has queued (they count until the volley lands);
+    // holding: every living seat's items in hand plus any it has queued (they count until the volley lands),
+    // capped at ITEM_LIMIT (a crate pick after queuing one must not read 3);
     // myArsenal: the viewer's own hand (a queued item already spent from it) and its open crate's cards.
-    const holding = Object.fromEntries(s.seats.filter((x) => !isOut(s, x)).map((x) => [x, s.arsenal[x].length + queuedItems(s, x)]));
-    check(JSON.stringify(v.holding) === JSON.stringify(holding), `${where}: holding is not hand + queued`);
+    const holding = Object.fromEntries(s.seats.filter((x) => !isOut(s, x)).map((x) => [x, Math.min(ITEM_LIMIT, s.arsenal[x].length + queuedItems(s, x))]));
+    check(JSON.stringify(v.holding) === JSON.stringify(holding), `${where}: holding is not hand + queued, capped`);
+    check(Object.values(v.holding).every((n) => n <= ITEM_LIMIT), `${where}: holding reads over ${ITEM_LIMIT}`);
     if (tally && s.seats.some((x) => queuedItems(s, x) > 0)) tally.paths.heldQueued = (tally.paths.heldQueued ?? 0) + 1;
     const arsenal = seat !== null && !isOut(s, seat) ? { items: s.arsenal[seat], crate: s.crates[seat][0] ?? null } : null;
     check(JSON.stringify(v.myArsenal) === JSON.stringify(arsenal), `${where}: myArsenal is not my own hand and crate`);

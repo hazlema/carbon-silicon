@@ -947,7 +947,7 @@ function legal(s: SalvoState, seat: SeatId): SalvoCommand[] {
   if (open) {
     const held = s.arsenal[seat];
     for (const card of open) {
-      if (held.length >= ITEM_LIMIT) for (const drop of held) out.push({ crate: card, drop });
+      if (held.length >= ITEM_LIMIT) for (const drop of new Set(held)) out.push({ crate: card, drop });
       else out.push({ crate: card });
     }
     out.push({ crate: 'pass' });
@@ -1141,7 +1141,8 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
           }
         : null,
     // A queued item still counts until the reveal: the table must not learn mid-round that someone committed one.
-    holding: Object.fromEntries(living(s).map((x) => [x, s.arsenal[x].length + s.pending[x].filter(isItemOrder).length])),
+    // Capped at the limit: hold 2, queue one, take a crate card → 3 would be impossible and a tell.
+    holding: Object.fromEntries(living(s).map((x) => [x, Math.min(ITEM_LIMIT, s.arsenal[x].length + s.pending[x].filter(isItemOrder).length)])),
     myArsenal: you && !isEliminated(s, you) ? { items: [...s.arsenal[you]], crate: s.crates[you][0] ? [...s.crates[you][0]] : null } : null,
     mySea,
     targets: seas.map((x) => targetView(s, x, you, fakes)),
