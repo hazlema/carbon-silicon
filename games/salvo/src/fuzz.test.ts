@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { createRng, type Rng } from '@cs/game-api';
 import {
+  ITEMS,
   SEATS,
   cellIndex,
   cellName,
   buoyCells,
   hullCells,
+  lanesFor,
   neighbours,
   renderAscii,
   roundSummary,
@@ -13,6 +15,7 @@ import {
   type SalvoCommand,
   type SalvoState,
   type SalvoView,
+  type ItemId,
 } from './index';
 
 const turn = G.turn;
@@ -36,20 +39,45 @@ const codeOf = (fn: () => unknown): string | null => {
   return null;
 };
 
+/** The kind of a salvo entry: 'shell', 'buoy', an item, or null (a crate choice, a placement, a trick). */
+const kindOf = (c: SalvoCommand): string | null => ('use' in c ? c.use : 'fire' in c ? c.fire : null);
+const isItemCmd = (c: SalvoCommand) => {
+  const k = kindOf(c);
+  return k !== null && k !== 'shell' && k !== 'buoy';
+};
+
 /**
- * A player that reads only its own view: mostly chases unsunk hits and its sonar readings, drops a
- * buoy now and then, and otherwise hunts the weakest fleet on a checkerboard, with a dash of pure
- * randomness so every path gets walked.
+ * A player that reads only its own view: opens its crate at random (a card, a swap when its hands are full, or a
+ * pass), uses a held item in about three rounds in ten (any kind it holds, any legal aim), mostly chases unsunk
+ * hits and its sonar readings, drops a buoy now and then, and otherwise hunts the weakest fleet on a
+ * checkerboard, with a dash of pure randomness so every path gets walked.
  */
 function choose(v: SalvoView, legal: SalvoCommand[], rng: Rng): SalvoCommand {
-  // A ghost plays random mischief, as the autopilot does.
-  if (legal.length > 0 && 'trick' in (legal[0] as object)) return rng.pick(legal);
-  // An open crate comes first in legal: open it at random, as the autopilot does (Task 4 plays it properly).
-  const crate = legal.filter((c) => 'crate' in c);
-  if (crate.length > 0) return rng.pick(crate);
+  // A ghost plays random mischief, as the autopilot does; half the time it mines beside an unsunk hit, where
+  // the living will shoot next (from its own view: a live decoy's hit looks like any other).
+  if (legal.length > 0 && 'trick' in (legal[0] as object)) {
+    const next = new Set(v.targets.flatMap((t) => {
+      const sunk = new Set(t.sunk.flatMap((x) => x.cells));
+      return t.hits.filter((c) => !sunk.has(c)).flatMap(neighbours).map((c) => `${t.sea} ${c}`);
+    }));
+    const lure = legal.filter((c) => 'trick' in c && c.trick === 'mine' && next.has(`${c.at} ${c.cell}`));
+    return rng.pick(lure.length > 0 && rng.next() < 0.5 ? lure : legal);
+  }
+  // An open crate comes first in legal: pass one time in five, else a card (a swap, when the hands are full).
+  const crate = legal.filter((c): c is Extract<SalvoCommand, { crate: string }> => 'crate' in c);
+  if (crate.length > 0) {
+    const cards = crate.filter((c) => c.crate !== 'pass');
+    return rng.next() < 0.2 || cards.length === 0 ? crate.find((c) => c.crate === 'pass')! : rng.pick(cards);
+  }
   if (v.phase === 'deploy') {
     const random = legal.find((c) => 'place' in c && c.place === 'random')!;
     return rng.next() < 0.5 ? random : rng.pick(legal);
+  }
+  // A held item, decided at the round's first shot: a kind it holds, then an aim of that kind.
+  const items = legal.filter(isItemCmd);
+  if (items.length > 0 && v.myOrders.length === 0 && rng.next() < 0.3) {
+    const kind = rng.pick([...new Set(items.map(kindOf))]);
+    return rng.pick(items.filter((c) => kindOf(c) === kind));
   }
   const fired = legal as { fire: 'shell' | 'buoy'; at: string; cell: string }[];
   if (rng.next() < 0.15) return rng.pick(fired);
@@ -121,6 +149,10 @@ function secretsStripped(s: SalvoState, seat: string | null): SalvoState {
     for (const o of t.pending[x]) if (o.kind !== 'shell' && o.kind !== 'buoy') t.arsenal[x].push(o.kind);
     // Another seat's live decoy is its secret: gone, as if never laid (its hits stay: they are public hits).
     t.decoys[x] = t.decoys[x].filter((d) => d.revealed);
+    // Which items another seat holds, and its crates' cards, are its secret: each swapped for another kind
+    // (the counts stay: holding is public, and so is a crate owed, by the summary and by `ready`).
+    t.arsenal[x] = t.arsenal[x].map(otherItem);
+    t.crates[x] = t.crates[x].map((c) => c.map(otherItem));
     t.pending[x] = [];
     t.pendingTrick[x] = null;
   }
@@ -131,8 +163,21 @@ function secretsStripped(s: SalvoState, seat: string | null): SalvoState {
   return t;
 }
 
+/** A different item for each item (a bijection, so a crate's three stay three different cards). */
+const otherItem = (x: ItemId): ItemId => ITEMS[(ITEMS.indexOf(x) + 1) % ITEMS.length];
+const ITEM_WORD = /cluster|torpedo|repair|decoy/i;
+/** Count of queued items per seat: they leave the hand at commit, and the table counts them until the reveal. */
+const queuedItems = (s: SalvoState, seat: string) => s.pending[seat].filter((o) => o.kind !== 'shell' && o.kind !== 'buoy').length;
+/** The table's afloat count for a sea: 12 less every public hit (a live decoy's hits count, a revealed decoy's don't). */
+const publicAfloatOf = (s: SalvoState, sea: string) => {
+  const drift = driftwoodOf(s, sea);
+  return 12 - Object.entries(s.shots[sea]).filter(([c, x]) => x.result === 'hit' && !drift.has(c)).length;
+};
+/** Unhit cells of a sea's live decoy. */
+const liveDecoyCells = (s: SalvoState, sea: string) => s.decoys[sea].filter((d) => !d.revealed).flatMap((d) => d.cells.filter((c) => !d.hits.includes(c)));
+
 /** Review Focus 1: no unrevealed ship cell, nobody else's pending aim, and no ghost's secret reaches any view. */
-function assertNoLeaks(s: SalvoState, step: number): void {
+function assertNoLeaks(s: SalvoState, step: number, tally?: Tally): void {
   const over = s.phase === 'over';
   const viewers = [null, ...s.seats];
   // One viewer per step (rotating) is compared against the same state with every secret it may not know removed.
@@ -176,7 +221,19 @@ function assertNoLeaks(s: SalvoState, step: number): void {
     const guns = s.phase === 'fire' ? Object.fromEntries(s.seats.filter((x) => !isOut(s, x)).map((x) => [x, s.fleets[x].filter((y) => y.hits.length < y.cells.length).length])) : {};
     check(JSON.stringify(v.guns) === JSON.stringify(guns), `${where}: guns miscounted`);
     if (seat === null) check(v.mySea === null, `${where}: a spectator has a sea`);
-    else check(JSON.stringify(v.mySea!.ships.filter((x) => x.cells.length > 0)) === JSON.stringify(s.fleets[seat]), `${where}: mySea is not my fleet`);
+    else {
+      check(JSON.stringify(v.mySea!.ships.filter((x) => x.cells.length > 0)) === JSON.stringify(s.fleets[seat]), `${where}: mySea is not my fleet`);
+      const live = s.decoys[seat].find((d) => !d.revealed);
+      check(JSON.stringify(v.mySea!.decoy) === JSON.stringify(live ? { cells: live.cells, hits: live.hits } : null), `${where}: mySea.decoy is not my live decoy`);
+      check(JSON.stringify(v.mySea!.repaired) === JSON.stringify(s.repairs[seat].map((x) => x.cell)), `${where}: mySea.repaired is not my sparks`);
+    }
+    // holding: every living seat's items in hand plus any it has queued (they count until the volley lands);
+    // myArsenal: the viewer's own hand (a queued item already spent from it) and its open crate's cards.
+    const holding = Object.fromEntries(s.seats.filter((x) => !isOut(s, x)).map((x) => [x, s.arsenal[x].length + queuedItems(s, x)]));
+    check(JSON.stringify(v.holding) === JSON.stringify(holding), `${where}: holding is not hand + queued`);
+    if (tally && s.seats.some((x) => queuedItems(s, x) > 0)) tally.paths.heldQueued = (tally.paths.heldQueued ?? 0) + 1;
+    const arsenal = seat !== null && !isOut(s, seat) ? { items: s.arsenal[seat], crate: s.crates[seat][0] ?? null } : null;
+    check(JSON.stringify(v.myArsenal) === JSON.stringify(arsenal), `${where}: myArsenal is not my own hand and crate`);
     for (const t of v.targets) {
       check(t.sea !== seat, `${where}: my own sea is a target`);
       // Hits and misses are the real ones (a live decoy's hits among them, a revealed decoy's not), plus (for a fool)
@@ -196,6 +253,8 @@ function assertNoLeaks(s: SalvoState, step: number): void {
       for (const x of s.splashes.filter((y) => y.sea === t.sea && y.fool !== seat)) {
         check(!t.hits.includes(x.cell) || s.shots[t.sea][x.cell]?.result === 'hit', `${where}: someone else's false splash on ${t.sea}`);
       }
+      // The table's afloat: never below 1 while the fleet lives (a live decoy's hits could push it past), 0 once out.
+      check(t.afloat === (isOut(s, t.sea) ? 0 : Math.max(1, 12 - t.hits.length)), `${where}: ${t.sea}'s afloat reads ${t.afloat}`);
       if (over) continue;
       check(t.mines === undefined, `${where}: ${t.sea}'s mines shown while live`);
       check(t.revealed === undefined, `${where}: ${t.sea} revealed while live`);
@@ -208,13 +267,19 @@ function assertNoLeaks(s: SalvoState, step: number): void {
       check(JSON.stringify(t.repaired) === JSON.stringify(sparks), `${where}: ${t.sea}'s sparks are not the live ones`);
       for (const str of strings({ ...t, sonar: [], repaired: [] })) check(!hidden.has(str) || faked.has(`${t.sea} ${str}`), `${where}: hidden ship cell ${t.sea} ${str}`);
       // The fog's counts are true counts (a fake splash does not change them: the accepted bluff).
-      for (const x of t.lifted) check(x.afloat === afloatAmong(s, t.sea, (c) => Number(c.slice(1)) === x.row), `${where}: row ${x.row} miscounted`);
+      // Fog and sonar count real ship cells only: a live decoy under them is invisible.
+      const decoyed = liveDecoyCells(s, t.sea);
+      for (const x of t.lifted) {
+        check(x.afloat === afloatAmong(s, t.sea, (c) => Number(c.slice(1)) === x.row), `${where}: row ${x.row} miscounted`);
+        if (tally && decoyed.some((c) => Number(c.slice(1)) === x.row)) tally.paths.decoyUnderFog = (tally.paths.decoyUnderFog ?? 0) + 1;
+      }
       // A sonar reading reaches its dropper alone, and says what is really there.
       const own = seat === null ? [] : s.sonar[seat].filter((x) => x.sea === t.sea);
       check(t.sonar.length === own.length, `${where}: ${t.sea} shows sonar that is not the viewer's`);
       t.sonar.forEach((x, k) => {
         check(x.cell === own[k].cell && JSON.stringify(x.cells) === JSON.stringify(buoyCells(x.cell)), `${where}: a reading's 3×3`);
         check(x.afloat === afloatAmong(s, t.sea, (c) => x.cells.includes(c)), `${where}: a reading miscounts`);
+        if (tally && decoyed.some((c) => x.cells.includes(c))) tally.paths.decoyUnderSonar = (tally.paths.decoyUnderSonar ?? 0) + 1;
       });
     }
     // A boomerang says its cell is water: no shot of that volley may read a hit there (only a decoy could make one).
@@ -240,6 +305,19 @@ function assertNoLeaks(s: SalvoState, step: number): void {
         check(!s.splashes.some((f) => f.fool !== seat && f.sea === x.sea && f.cell === x.cell && f.round === v.lastVolley!.round), `${where}: someone else's fake shell`);
       }
       check(fakeShells === shown.length, `${where}: the fool's volley is missing a fake shell`);
+      // Every cell the volley names was shot in it (a repair's spark is public; a told splash was aimed blind), so
+      // never an unhit cell of a live decoy or a ship afloat.
+      if (!over) {
+        const named: [string, string][] = [
+          ...v.lastVolley.shells.filter((x) => !faked.has(`${x.sea} ${x.cell}`)).map((x): [string, string] => [x.sea, x.cell]),
+          ...v.lastVolley.blasts.flatMap((b) => b.cells.map((c): [string, string] => [b.sea, c])),
+          ...v.lastVolley.tricks.flatMap((x): [string, string][] => (x.kind === 'mine' ? [[x.sea, x.cell], ...(x.result === 'boomerang' ? x.hits.map((h): [string, string] => [h.sea, h.cell]) : [])] : [])),
+          ...v.lastVolley.items.flatMap((x): [string, string][] =>
+            x.item === 'cluster' ? [x.cell, ...x.cells].map((c) => [x.sea, c]) : x.item === 'torpedo' ? x.path.map((c) => [x.sea, c]) : x.item === 'decoy' ? x.cells.map((c) => [x.sea, c]) : [],
+          ),
+        ];
+        for (const [sea, c] of named) check(s.shots[sea][c] !== undefined, `${where}: lastVolley names ${sea} ${c}, unshot`);
+      }
       for (const b of v.lastVolley.blasts) for (const c of b.cells) check(s.shots[b.sea][c] !== undefined, `${where}: unresolved blast cell`);
       for (const b of v.lastVolley.buoys) check(s.sonar[b.from].some((x) => x.sea === b.sea && x.cell === b.cell), `${where}: unresolved buoy`);
       check(!JSON.stringify(v.lastVolley.buoys).includes('afloat'), `${where}: a buoy's reading in the public volley`);
@@ -253,6 +331,12 @@ function assertNoLeaks(s: SalvoState, step: number): void {
     // Nothing outside mySea, targets, lastVolley and the viewer's own myOrders and myTricks names a cell.
     const { mySea: _m, targets: _t, lastVolley: _l, myOrders: _o, myTricks: _k, ...top } = rest;
     for (const str of strings(top)) check(cellIndex(str) === null, `${where}: a cell in the view's top level`);
+    // No item is named outside the viewer's own hand and orders and the public volley (a crate is its owner's alone).
+    const { myArsenal: _h, ...elsewhere } = top;
+    // (A shot of your own on a revealed decoy reads 'decoy': public driftwood, and only that.)
+    for (const t of v.targets) for (const m of t.mine) check(m.result !== 'decoy' || driftwoodOf(s, t.sea).has(m.cell), `${where}: ${t.sea} ${m.cell} reads decoy, not driftwood`);
+    const targets = v.targets.map((t) => ({ ...t, mine: t.mine.map((m) => m.cell) }));
+    for (const str of strings([elsewhere, targets, v.mySea])) check(!ITEM_WORD.test(str), `${where}: an item named in the view: ${str}`);
   }
 }
 
@@ -269,7 +353,19 @@ function assertSummarySafe(before: SalvoState, after: SalvoState): void {
   const used = v ? (v.items ?? []).flatMap((x) => (x.item === 'cluster' ? [x.cell, ...x.cells] : x.item === 'torpedo' ? x.path : x.item === 'repair' ? [x.cell] : x.item === 'decoy-laid' ? [] : x.cells)) : [];
   const landed = new Set(v ? [...v.shells.map((x) => x.cell), ...v.buoys.map((x) => x.cell), ...v.blasts.flatMap((b) => b.cells), ...told, ...used] : []);
   const sunk = new Set<string>(v ? v.sunk.map((x) => x.ship) : []);
+  // An item is named only when it was used in this volley (a decoy also when one is found, or a mine blows it up):
+  // never a held item, a crate's cards, or a decoy still out there.
+  const kinds = new Set<string>(v ? (v.items ?? []).map((x) => (x.item === 'decoy-laid' ? 'decoy' : x.item)) : []);
+  if (v?.tricks.some((t) => t.kind === 'mine' && t.result === 'backfire' && t.ship === 'decoy')) kinds.add('decoy');
+  const words: [RegExp, string][] = [
+    [/cluster/i, 'cluster'],
+    [/torpedo/i, 'torpedo'],
+    [/weld|repair/i, 'repair'],
+    [/decoy/i, 'decoy'],
+  ];
   for (const line of lines) {
+    for (const [word, kind] of words) check(!word.test(line) || kinds.has(kind), `summary names an item not used: ${line}`);
+    if (line.includes('pulls a crate')) check(!ITEM_WORD.test(line), `a crate's cards told: ${line}`);
     // Laying a decoy is told, never where.
     if (line.includes('slips a decoy')) check((line.match(CELL) ?? []).length === 0, `a decoy laid is placed: ${line}`);
     for (const cell of line.match(CELL) ?? []) check(landed.has(cell), `summary names ${cell}: ${line}`);
@@ -288,13 +384,112 @@ interface Tally {
   blind: number;
   /** Ghosts forfeited (placement checked at the end). */
   ghostForfeits: number;
+  /**
+   * Arsenal paths walked: items used and decoys found or blown up (from the volleys), crate pick/swap/pass,
+   * legal entries applied by kind (`apply:<kind>`), random item and crate commands checked against legal
+   * (`agree`), decoys moved under a seat's legal (`decoyBlind`), decoys under fog and sonar.
+   */
+  paths: Record<string, number>;
 }
+const bump = (t: Tally, k: string, n = 1) => (t.paths[k] = (t.paths[k] ?? 0) + n);
 
 /** A random trick command, legal or not. */
 function randomTrick(s: SalvoState, rng: Rng): SalvoCommand {
   const at = rng.pick(s.seats);
   const cell = cellName(rng.int(64));
   return rng.next() < 0.5 ? { trick: 'mine', at, cell } : { trick: 'splash', fool: rng.pick(s.seats), at, cell };
+}
+
+/** A random item or crate command, legal or not (key order as legal writes them, so JSON compares). */
+function randomItemCmd(s: SalvoState, seat: string, rng: Rng): SalvoCommand {
+  const sea = rng.pick(s.seats);
+  const cell = cellName(rng.int(64));
+  switch (rng.int(5)) {
+    case 0: {
+      const r = rng.next();
+      return r < 0.2 ? { crate: 'pass' } : r < 0.6 ? { crate: rng.pick(ITEMS) } : { crate: rng.pick(ITEMS), drop: rng.pick(ITEMS) };
+    }
+    case 1:
+      return { fire: 'cluster', at: sea, cell };
+    case 2:
+      return { fire: 'torpedo', at: sea, lane: rng.pick([...lanesFor('north'), ...lanesFor('east')]) };
+    case 3: {
+      // Half the time a cell of the seat's own fleet: hit or not, sunk or not.
+      const own = s.fleets[seat]?.flatMap((x) => x.cells) ?? [];
+      return { use: 'repair', cell: own.length > 0 && rng.next() < 0.5 ? rng.pick(own) : cell };
+    }
+    default:
+      return { use: 'decoy', at: cell, facing: rng.pick(['east', 'north'] as const) };
+  }
+}
+
+/**
+ * legal × apply for the arsenal: one entry of every kind on offer applies cleanly (a crate pick, swap and pass,
+ * each item, a shell, a buoy), and random item and crate commands are accepted exactly when legal lists them
+ * (refused with a code otherwise).
+ */
+function checkArsenalCommands(s: SalvoState, seat: string, legal: SalvoCommand[], rng: Rng, g: number, tally: Tally): void {
+  const groups = new Map<string, SalvoCommand[]>();
+  for (const c of legal) {
+    const k = 'crate' in c ? (c.crate === 'pass' ? 'pass' : 'drop' in c ? 'swap' : 'pick') : (kindOf(c) ?? 'other');
+    groups.set(k, [...(groups.get(k) ?? []), c]);
+  }
+  for (const [k, cmds] of groups) {
+    // Shells and buoys are most of every turn (and apply once a turn already): sampled; crates and items always.
+    if ((k === 'shell' || k === 'buoy') && rng.next() < 0.85) continue;
+    const cmd = rng.pick(cmds);
+    const code = codeOf(() => turn.apply(s, seat, cmd));
+    check(code === null, `game ${g}: ${seat}'s legal ${JSON.stringify(cmd)} was refused (${code})`);
+    bump(tally, `apply:${k}`);
+  }
+  const offered = new Set(legal.map((x) => JSON.stringify(x)));
+  for (let k = 0; k < 2; k++) {
+    const cmd = randomItemCmd(s, seat, rng);
+    const code = codeOf(() => turn.apply(s, seat, cmd));
+    if (offered.has(JSON.stringify(cmd))) check(code === null, `game ${g}: ${seat}'s legal ${JSON.stringify(cmd)} was refused (${code})`);
+    else check(code !== null && code !== 'NO_CODE', `game ${g}: ${seat}'s ${JSON.stringify(cmd)} is not in legal but was ${code === null ? 'accepted' : 'refused without a code'}`);
+    bump(tally, code === null ? 'agree:accepted' : 'agree:refused');
+  }
+}
+
+/**
+ * The same state with another seat's live decoy moved somewhere else it may lie: cells nobody has shot, clear of
+ * that fleet, a hit cell kept where it is (a hit is public). Null when no decoy of a seat but `not` can move.
+ */
+function decoyMoved(s: SalvoState, not: string, rng: Rng): SalvoState | null {
+  const t = structuredClone(s);
+  for (const sea of [...t.seats].sort(() => rng.next() - 0.5)) {
+    if (sea === not) continue;
+    const d = t.decoys[sea].find((x) => !x.revealed);
+    if (!d || d.hits.length > 1) continue;
+    const ships = new Set(t.fleets[sea].flatMap((x) => x.cells));
+    const options: string[][] = [];
+    for (let i = 0; i < 64; i++) {
+      for (const facing of ['east', 'north'] as const) {
+        const cells = hullCells(cellName(i), 2, facing);
+        if (!cells || cells.join() === d.cells.join() || !d.hits.every((h) => cells.includes(h))) continue;
+        if (cells.every((c) => d.hits.includes(c) || (!t.shots[sea][c] && !ships.has(c)))) options.push(cells);
+      }
+    }
+    if (options.length === 0) continue;
+    d.cells = rng.pick(options);
+    return t;
+  }
+  return null;
+}
+
+/** Blind to decoys: another seat's live decoy moved under this seat changes nothing it can ask about or see. */
+function checkBlindToDecoys(s: SalvoState, seat: string, legal: SalvoCommand[], rng: Rng, g: number, tally: Tally): void {
+  const moved = decoyMoved(s, seat, rng);
+  if (!moved) return;
+  bump(tally, 'decoyBlind');
+  check(JSON.stringify(turn.legal(moved, seat)) === JSON.stringify(legal), `game ${g}: ${seat}'s legal depends on where a decoy is`);
+  check(JSON.stringify(turn.toMove(moved)) === JSON.stringify(turn.toMove(s)), `game ${g}: toMove depends on where a decoy is`);
+  check(JSON.stringify(viewOf(moved, seat)) === JSON.stringify(viewOf(s, seat)), `game ${g}: ${seat}'s view depends on where a decoy is`);
+  for (let k = 0; k < 4; k++) {
+    const cmd = k % 2 === 0 ? randomItemCmd(s, seat, rng) : rng.next() < 0.5 ? randomTrick(s, rng) : { fire: 'shell' as const, at: rng.pick(s.seats), cell: cellName(rng.int(64)) };
+    check(codeOf(() => turn.apply(moved, seat, cmd)) === codeOf(() => turn.apply(s, seat, cmd)), `game ${g}: ${seat}'s refusal of ${JSON.stringify(cmd)} depends on where a decoy is`);
+  }
 }
 
 /**
@@ -326,8 +521,8 @@ function shipMoved(s: SalvoState, rng: Rng): SalvoState | null {
 
 /** A ghost's turn, before it plays: legal × apply, refusals with a code, and a legal blind to where ships are. */
 function checkGhostTurn(s: SalvoState, seat: string, legal: SalvoCommand[], rng: Rng, g: number, tally: Tally): void {
-  const alive = s.seats.filter((x) => !isOut(s, x)).length;
-  check(legal.length <= alive * 64 + (alive >= 3 ? alive * (alive - 1) * 64 : 0), `game ${g}: a ghost's legal is ${legal.length} long`);
+  const living = s.seats.filter((x) => !isOut(s, x)).length;
+  check(legal.length <= living * 64 + (living >= 3 ? living * (living - 1) * 64 : 0), `game ${g}: a ghost's legal is ${legal.length} long`);
   check(legal.every(isTrickCmd), `game ${g}: a ghost is offered something other than a trick`);
   // legal × apply: a sample of entries apply cleanly.
   for (let k = 0; k < 5; k++) {
@@ -345,6 +540,15 @@ function checkGhostTurn(s: SalvoState, seat: string, legal: SalvoCommand[], rng:
     break;
   }
   check(codeOf(() => turn.apply(s, seat, { fire: 'shell', at: s.seats.find((x) => !isOut(s, x))!, cell: 'a1' })) === 'BAD_COMMAND', `game ${g}: a ghost fired`);
+  // A ghost holds no items and opens no crates.
+  const item = randomItemCmd(s, seat, rng);
+  check(!['NO_CODE', null].includes(codeOf(() => turn.apply(s, seat, item))), `game ${g}: a ghost's ${JSON.stringify(item)} was not refused with a code`);
+  // A false splash is offered on exactly the living seas the table reads at 2+ afloat (a live decoy's hits count).
+  const alive = s.seats.filter((x) => !isOut(s, x));
+  const splashSeas = s.seats.filter((x) => legal.some((c) => 'trick' in c && c.trick === 'splash' && c.at === x));
+  const want = alive.length >= 3 ? alive.filter((x) => publicAfloatOf(s, x) >= 2) : [];
+  check(JSON.stringify(splashSeas) === JSON.stringify(want), `game ${g}: splash seas ${splashSeas} are not the seas the table reads at 2+ afloat (${want})`);
+  if (want.some((x) => s.decoys[x].some((d) => !d.revealed && d.hits.length > 0))) bump(tally, 'splashOverDecoyHits');
   // Blind: a living ship moved under it changes nothing the ghost can ask about.
   if (rng.next() < 0.25) {
     const moved = shipMoved(s, rng);
@@ -403,7 +607,10 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
         if (s.phase === 'fire') check(legal.length <= 192 + 108 + 7 + 192 + 24 + 12 + 112, `game ${g}: legal is ${legal.length} long`);
         // legal × apply: a few other entries apply cleanly too, and a spent cell is refused.
         turn.apply(s, seat, rng.pick(legal));
+        if (s.phase === 'fire' && rng.next() < 0.4) checkArsenalCommands(s, seat, legal, rng, g, tally);
       }
+      // Nothing this seat may ask or see depends on where another seat's live decoy lies.
+      if (s.phase === 'fire' && rng.next() < 0.25) checkBlindToDecoys(s, seat, legal, rng, g, tally);
       if (s.phase === 'fire' && !ghostsOf(s).includes(seat)) {
         // A living seat cannot play a trick.
         check(codeOf(() => turn.apply(s, seat, randomTrick(s, rng))) === 'NOT_A_GHOST', `game ${g}: a living seat played a trick`);
@@ -422,9 +629,11 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
           const again = { fire: 'buoy', at: [...living][0] ?? mine.targets[0].sea, cell: buoyed.cell };
           check(codeOf(() => turn.apply(s, seat, again)) === 'ONE_BUOY', `game ${g}: a second buoy was accepted`);
         }
-        check(mine.myOrders.length < mine.guns[seat], `game ${g}: ${seat} owes a shot with its salvo full`);
+        // A seat with its salvo in owes only its crate.
+        check(mine.myOrders.length < mine.guns[seat] || mine.myArsenal!.crate !== null, `game ${g}: ${seat} owes a shot with its salvo full`);
       }
       const cmd = choose(mine, legal, rng);
+      if ('crate' in cmd) bump(tally, cmd.crate === 'pass' ? 'crate:pass' : 'drop' in cmd ? 'crate:swap' : 'crate:pick');
       s = turn.apply(s, seat, cmd);
       check(SAFE_DESCRIBE.includes(turn.describe!(cmd)), `describe: ${turn.describe!(cmd)}`);
       check(SAFE_NARRATE.includes(turn.narrate!(before, s, seat, cmd)), `narrate: ${turn.narrate!(before, s, seat, cmd)}`);
@@ -435,10 +644,12 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
       for (const t of s.lastVolley.tricks) {
         const kind = t.kind === 'mine' ? t.result : 'splash';
         tally.tricks[kind] = (tally.tricks[kind] ?? 0) + 1;
+        if (t.kind === 'mine' && t.result === 'backfire' && t.ship === 'decoy') bump(tally, 'decoyBackfire');
       }
+      for (const x of s.lastVolley.items) bump(tally, `item:${x.item}`);
     }
     if (leaks) {
-      assertNoLeaks(s, guard);
+      assertNoLeaks(s, guard, tally);
       assertSummarySafe(before, s);
     }
   }
@@ -456,7 +667,7 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
   if (out.reason === 'tiebreak') tally.knockouts += 1;
   expect(turn.toMove(s)).toEqual([]);
   for (const seat of s.seats) expect(turn.legal(s, seat)).toEqual([]);
-  if (leaks) for (let k = 0; k <= s.seats.length; k++) assertNoLeaks(s, k);
+  if (leaks) for (let k = 0; k <= s.seats.length; k++) assertNoLeaks(s, k, tally);
 }
 
 /** Mark every cell of a sea's ships hit except `keep` (setup for forced endings). */
@@ -481,7 +692,7 @@ function permutations<T>(xs: T[]): T[][] {
 }
 
 describe('fuzz', () => {
-  const tally: Tally = { reasons: {}, blasts: 0, knockouts: 0, ghostMoves: 0, tricks: {}, blind: 0, ghostForfeits: 0 };
+  const tally: Tally = { reasons: {}, blasts: 0, knockouts: 0, ghostMoves: 0, tricks: {}, blind: 0, ghostForfeits: 0, paths: {} };
 
   test(`legal × apply agreement, one winner, and no leaks over ${GAMES} games`, () => {
     for (let g = 0; g < GAMES; g++) playthrough(g, tally, true);
@@ -495,6 +706,14 @@ describe('fuzz', () => {
     expect(tally.tricks.splash).toBeGreaterThan(0);
     expect(tally.blind).toBeGreaterThan(0);
     expect(tally.ghostForfeits).toBeGreaterThan(0);
+    // ...and the arsenal: every crate choice, every item used, decoys found, blown up by a mine and moved
+    // under other seats' legal, under fog and sonar, a queued item counted, and every kind applied from legal.
+    const walked = [
+      ...['crate:pick', 'crate:swap', 'crate:pass', 'item:cluster', 'item:torpedo', 'item:repair', 'item:decoy-laid', 'item:decoy', 'decoyBackfire'],
+      ...['decoyBlind', 'decoyUnderFog', 'decoyUnderSonar', 'heldQueued', 'splashOverDecoyHits', 'agree:accepted', 'agree:refused'],
+      ...['pick', 'swap', 'pass', 'cluster', 'torpedo', 'repair', 'decoy', 'shell', 'buoy'].map((k) => `apply:${k}`),
+    ];
+    expect(walked.filter((k) => !((tally.paths[k] ?? 0) > 0))).toEqual([]);
   }, 60_000);
 
   test('same-volley knockouts always go through the tiebreak to one winner', () => {
@@ -627,5 +846,91 @@ describe('fuzz', () => {
     expect(told.boomerang).toBeGreaterThan(0);
     expect(told.backfire).toBeGreaterThan(0);
     expect(told.shown + (told.splash ?? 0)).toBeGreaterThan(0);
+  });
+
+  test('resolution never depends on commit order with the arsenal: cluster, torpedo, repair and decoy (and a crate) in one round', () => {
+    const tally = { rounds: 0, revealed: 0, rehit: 0, struckDecoy: 0 };
+    for (let seed = 1; seed <= 12; seed++) {
+      const rng = createRng(seed * 53);
+      let s = deployedAtRandom(4, 100 + seed);
+      while (s.round <= 2 + (seed % 4) && !G.outcome(s)) {
+        const seat = turn.toMove(s)[0];
+        s = turn.apply(s, seat, choose(viewOf(s, seat), turn.legal(s, seat) as SalvoCommand[], rng));
+      }
+      if (G.outcome(s) || s.eliminated.length > 0) continue;
+      // Roles turn with the seed: one seat each holds a cluster, a torpedo, a repair and a decoy (nothing else).
+      const [cl, tp, rp, dc] = [0, 1, 2, 3].map((k) => s.seats[(k + seed) % 4]);
+      if (s.decoys[dc].some((d) => !d.revealed && d.hits.length > 0)) continue;
+      s.decoys[dc] = s.decoys[dc].filter((d) => d.revealed);
+      Object.assign(s.arsenal, { [cl]: ['cluster'], [tp]: ['torpedo'], [rp]: ['repair'], [dc]: ['decoy'] });
+      // The torpedo's seat also has a crate to open this round.
+      s.crates[tp] = [...s.crates[tp], ['cluster', 'repair', 'decoy']];
+      // The repairer has a hit to weld on a ship afloat.
+      if (!s.fleets[rp].some((x) => x.hits.length > 0 && x.hits.length < x.cells.length)) {
+        const ship = s.fleets[rp].find((x) => x.cells.some((c) => !s.shots[rp][c]))!;
+        const c = ship.cells.find((x) => !s.shots[rp][x])!;
+        ship.hits = ship.cells.filter((x) => ship.hits.includes(x) || x === c);
+        s.shots[rp][c] = { result: 'hit', by: [cl] };
+      }
+      const legalOf = (seat: string) => turn.legal(s, seat) as SalvoCommand[];
+      const pickOr = (seat: string, want: SalvoCommand, kind: string) => {
+        const offered = legalOf(seat);
+        return offered.some((x) => JSON.stringify(x) === JSON.stringify(want)) ? want : rng.pick(offered.filter((x) => kindOf(x) === kind));
+      };
+      // The decoy goes down; the cluster lands on it and the torpedo runs its lane (the decoy may stop it);
+      // the repaired cell is shelled in the same volley by a seat that never shot it.
+      const decoy = rng.pick(legalOf(dc).filter((x) => kindOf(x) === 'decoy')) as Extract<SalvoCommand, { use: 'decoy' }>;
+      const cells = hullCells(decoy.at, 2, decoy.facing)!;
+      const lane = tp === 'east' || tp === 'west' ? cells[1].slice(1) : cells[1][0];
+      const repair = rng.pick(legalOf(rp).filter((x) => kindOf(x) === 'repair')) as Extract<SalvoCommand, { use: 'repair' }>;
+      const first: Record<string, SalvoCommand[]> = {
+        [cl]: [pickOr(cl, { fire: 'cluster', at: dc, cell: cells[0] }, 'cluster')],
+        [tp]: [pickOr(tp, { fire: 'torpedo', at: dc, lane }, 'torpedo')],
+        [rp]: [repair],
+        [dc]: [decoy],
+      };
+      const welder = s.seats.find((x) => x !== rp && !s.shots[rp][repair.cell].by.includes(x) && s.fleets[x].filter((y) => y.hits.length < y.cells.length).length >= 2);
+      if (welder) first[welder].push({ fire: 'shell', at: rp, cell: repair.cell });
+      const salvos: Record<string, SalvoCommand[]> = {};
+      for (const seat of s.seats) {
+        let t = s;
+        for (const cmd of first[seat]) t = turn.apply(t, seat, cmd);
+        const cmds = [...first[seat]];
+        while (turn.toMove(t).includes(seat)) {
+          const cmd = choose(viewOf(t, seat), turn.legal(t, seat) as SalvoCommand[], rng);
+          cmds.push(cmd);
+          t = turn.apply(t, seat, cmd);
+        }
+        expect(t.round).toBe(s.round);
+        salvos[seat] = cmds;
+      }
+      expect(salvos[tp].some((x) => 'crate' in x)).toBe(true);
+      const results: string[] = [];
+      for (const order of permutations([...s.seats])) {
+        let t = s;
+        for (const seat of order) for (const cmd of salvos[seat]) t = turn.apply(t, seat, cmd);
+        results.push(JSON.stringify(t));
+        let u = s;
+        const longest = Math.max(...s.seats.map((x) => salvos[x].length));
+        for (let k = 0; k < longest; k++) for (const seat of order) if (k < salvos[seat].length) u = turn.apply(u, seat, salvos[seat][k]);
+        results.push(JSON.stringify(u));
+      }
+      expect(new Set(results).size).toBe(1);
+      const after = JSON.parse(results[0]) as SalvoState;
+      const used = after.lastVolley!.items.map((x) => x.item);
+      expect(used).toEqual(expect.arrayContaining(['cluster', 'torpedo', 'repair', 'decoy-laid']));
+      tally.rounds += 1;
+      if (used.includes('decoy')) tally.revealed += 1;
+      if (after.lastVolley!.items.some((x) => x.item === 'torpedo' && x.struck !== null && cells.includes(x.struck))) tally.struckDecoy += 1;
+      if (welder) {
+        // Review Focus 5: the repair lands first, so the shell hits the welded cell again.
+        expect(after.shots[rp][repair.cell]?.result).toBe('hit');
+        tally.rehit += 1;
+      }
+    }
+    expect(tally.rounds).toBeGreaterThan(5);
+    expect(tally.revealed).toBeGreaterThan(0);
+    expect(tally.rehit).toBeGreaterThan(0);
+    expect(tally.struckDecoy).toBeGreaterThan(0);
   });
 });
