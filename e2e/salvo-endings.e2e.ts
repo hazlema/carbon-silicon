@@ -91,6 +91,9 @@ test('Salvo: a sunk fleet is stamped DEFEATED, your own sinking opens the ghost 
   await expect(page.getByText("👻 You're a ghost.", { exact: true })).toBeVisible();
   done = true;
   await Promise.all(loops);
+  // Two fleets afloat: the false splash is greyed out, and the board says why in words (not a tooltip).
+  await expect(page.getByTestId('trick-splash')).toBeDisabled();
+  await expect(page.getByTestId('trick-why')).toHaveText('False splash needs three fleets afloat; only two are left.');
 
   // Plant a mine through the board on a living sea; the server holds that very trick.
   const now = await read(page.request);

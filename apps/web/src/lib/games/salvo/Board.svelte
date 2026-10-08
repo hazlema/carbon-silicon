@@ -218,6 +218,16 @@
   const ghostTricks = $derived(legal.filter(isTrick));
   const minesLegal = $derived(ghostTricks.some(isMine));
   const splashLegal = $derived(ghostTricks.some(isSplash));
+  /** Why a trick is greyed out, said on the board rather than in a tooltip nobody hovers. */
+  const afloatSeats = $derived(view.seats.filter((x) => !out(x)).length);
+  const mineWhy = $derived(minesLegal ? null : `All ${MINE_LIMIT} of your mines are down: one has to go off before you plant another.`);
+  const splashWhy = $derived(
+    splashLegal
+      ? null
+      : afloatSeats < 3
+        ? `False splash needs three fleets afloat; only ${afloatSeats === 1 ? 'one is' : `${['no', 'one', 'two'][afloatSeats] ?? afloatSeats} are`} left.`
+        : 'False splash needs a sea with at least two ship cells afloat.',
+  );
   /** The trick the next click is for: the one you picked, unless only the other is on offer. */
   const trickNow = $derived<TrickKind>(trickKind === 'splash' ? (splashLegal || !minesLegal ? 'splash' : 'mine') : minesLegal || !splashLegal ? 'mine' : 'splash');
   const pendingTrick = $derived(view.myTricks?.pending ?? null);
@@ -1017,7 +1027,7 @@
         <p class="gc-sub">Each round, play one dirty trick:</p>
         <ul>
           <li><span class="gc-li" aria-hidden="true">💀</span><span><strong>Mine:</strong> hide it on a cell. Whoever shoots there gets hit on their own sea… unless a ship is under it, then you've just sunk that ship for them.</span></li>
-          <li><span class="gc-li" aria-hidden="true">💦</span><span><strong>False splash:</strong> show one player a fake hit, to waste their shots.</span></li>
+          <li><span class="gc-li" aria-hidden="true">💦</span><span><strong>False splash:</strong> show one player a fake hit, to waste their shots (while three fleets are still afloat).</span></li>
         </ul>
         <p class="gc-sub">You can't win now, but you can decide who does. Idle three rounds and your ghost fades away.</p>
         {#if secondsLeft !== null && !pendingTrick}<p class="gc-clock" data-testid="ghost-clock">Round {view.round}: {secondsLeft} s to play your first trick</p>{/if}
@@ -1164,7 +1174,7 @@
               aria-pressed={trickNow === 'mine'}
               data-testid="trick-mine"
               disabled={!minesLegal}
-              title={!minesLegal ? `${MINE_LIMIT} live mines: wait for one to go off` : undefined}
+              title={mineWhy ?? undefined}
               onclick={() => setTrickKind('mine')}>💀 Mine</button
             >
             <button
@@ -1172,10 +1182,11 @@
               aria-pressed={trickNow === 'splash'}
               data-testid="trick-splash"
               disabled={!splashLegal}
-              title={!splashLegal ? 'Needs three fleets afloat' : undefined}
+              title={splashWhy ?? undefined}
               onclick={() => setTrickKind('splash')}>👻 False splash</button
             >
           </div>
+          {#if splashWhy || mineWhy}<p class="hint why" data-testid="trick-why">{splashWhy ?? mineWhy}</p>{/if}
           {#if trickNow === 'splash' && trickAim}
             <p class="hint">Who do you fool?</p>
             <div class="fools" role="group" aria-label="Who to fool">
@@ -1196,7 +1207,9 @@
                   ? 'Pick a cell for your mine'
                   : trickAim
                     ? 'Pick who to fool'
-                    : 'Pick a cell for the false splash'}</button
+                    : trickCells.size === 0
+                      ? 'This sea is down to its last ship cell: splash another sea'
+                      : 'Pick a cell for the false splash'}</button
             >
           {/if}
         {/if}
@@ -1817,6 +1830,11 @@
   }
   .hint {
     color: var(--fog);
+  }
+  .hint.why {
+    margin: 2px 0 0;
+    font-size: var(--step--1);
+    color: #c9a2ff;
   }
   .actions .row {
     display: flex;
