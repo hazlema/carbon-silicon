@@ -120,93 +120,107 @@ test('Salvo whisper: a ghost auctions a reading, the human bids through the pane
     }
   };
 
-  /** The human's shots, through the API: these cells on that sea, one by one. */
+  /** The human's shots, through the API: these cells on that sea, one by one (a 409 refetches the revision and tries again). */
   const fire = async (at: string, cells: string[]) => {
     for (const cell of cells) {
-      const env = await read(page.request);
-      const res = await move({ fire: 'shell', at, cell }, env.match.revision);
-      expect(res.ok(), `shell at ${at} ${cell}: ${await res.text()}`).toBe(true);
+      for (let attempt = 1; ; attempt++) {
+        const env = await read(page.request);
+        const res = await move({ fire: 'shell', at, cell }, env.match.revision);
+        if (res.status() === 409 && attempt < 5) continue;
+        expect(res.ok(), `shell at ${at} ${cell}: ${await res.text()}`).toBe(true);
+        break;
+      }
     }
   };
 
   await expect(page.getByTestId('sv-round')).toHaveText('deploying', { timeout: 15_000 });
   const loops = agents.map((_, i) => play(i));
-  await page.getByTestId('random').click();
-  await expect.poll(async () => (await read(page.request)).view.round, { timeout: 20_000 }).toBe(1);
-  await expect.poll(async () => (await read(page.request)).view.phase, { timeout: 20_000 }).toBe('fire');
+  // The scripted seats stop whether the test passes or fails.
+  try {
+    await page.getByTestId('random').click();
+    await expect.poll(async () => (await read(page.request)).view.round, { timeout: 20_000 }).toBe(1);
+    await expect.poll(async () => (await read(page.request)).view.phase, { timeout: 20_000 }).toBe('fire');
 
-  // Round 1: the human's four shells sink the doomed agent's cruiser; the other two agents finish its fleet.
-  await fire(ghost, HUMAN_R1);
-  await expect.poll(async () => (await read(page.request)).view.round, { timeout: 20_000 }).toBe(2);
-  const r2 = await read(page.request);
-  expect(r2.view.ghosts, `round 1 sinks ${ghost} (out: ${r2.view.eliminated})`).toContain(ghost);
+    // Round 1: the human's four shells sink the doomed agent's cruiser; the other two agents finish its fleet.
+    await fire(ghost, HUMAN_R1);
+    await expect.poll(async () => (await read(page.request)).view.round, { timeout: 20_000 }).toBe(2);
+    const r2 = await read(page.request);
+    expect(r2.view.ghosts, `round 1 sinks ${ghost} (out: ${r2.view.eliminated})`).toContain(ghost);
 
-  // Round 2: the human passes on its crate and shells water on the rival's sea; the ghost lists its whisper.
-  if (r2.legal.some((l) => l.crate === 'pass')) expect((await move({ crate: 'pass' }, r2.match.revision)).ok()).toBe(true);
-  await expect.poll(async () => (await read(page.request, agents[0].headers)).view.myTricks?.pending, { timeout: 15_000 }).toEqual({ trick: 'whisper', at: sea, cell: CENTRE });
-  await fire(rival, ['g1', 'g2', 'g3', 'g4']);
-  await expect.poll(async () => (await read(page.request)).view.round, { timeout: 20_000 }).toBe(3);
+    // Round 2: the human passes on its crate and shells water on the rival's sea; the ghost lists its whisper.
+    if (r2.legal.some((l) => l.crate === 'pass')) expect((await move({ crate: 'pass' }, r2.match.revision)).ok()).toBe(true);
+    await expect.poll(async () => (await read(page.request, agents[0].headers)).view.myTricks?.pending, { timeout: 15_000 }).toEqual({ trick: 'whisper', at: sea, cell: CENTRE });
+    await fire(rival, ['g1', 'g2', 'g3', 'g4']);
+    await expect.poll(async () => (await read(page.request)).view.round, { timeout: 20_000 }).toBe(3);
 
-  // Round 3: the auction is open. The human sees the panel naming the ghost and the sea.
-  const r3 = await read(page.request);
-  const auction = r3.view.auctions.find((a) => a.ghost === ghost)!;
-  expect(auction, `an auction is open: ${JSON.stringify(r3.view.auctions)}`).toBeTruthy();
-  expect(auction.sea).toBe(sea);
-  expect(auction.cells).toHaveLength(9);
-  expect(r3.recent.some((r) => r.text === `👻 ${handle(ghost)} auctions a sonar reading on ${handle(sea)}'s sea, a3–c5 — 30 seconds.`), JSON.stringify(r3.recent.map((r) => r.text))).toBe(true);
-  const panel = page.locator(`[data-testid="auction"][data-ghost="${ghost}"][data-sea="${sea}"]`);
-  await expect(panel).toBeVisible({ timeout: 10_000 });
-  await expect(panel).toContainText('👻 30-second ghost intel auction');
-  await expect(panel.getByTestId('auction-what')).toContainText(`@${handle(ghost)}'s reading on`);
-  await expect(panel.getByTestId('auction-what')).toContainText(`@${handle(sea)}'s sea, a3–c5`);
-  await expect(panel.getByTestId('auction-clock')).toBeVisible();
+    // Round 3: the auction is open. The human sees the panel naming the ghost and the sea.
+    const r3 = await read(page.request);
+    const auction = r3.view.auctions.find((a) => a.ghost === ghost)!;
+    expect(auction, `an auction is open: ${JSON.stringify(r3.view.auctions)}`).toBeTruthy();
+    expect(auction.sea).toBe(sea);
+    expect(auction.cells).toHaveLength(9);
+    expect(r3.recent.some((r) => r.text === `👻 ${handle(ghost)} auctions a sonar reading on ${handle(sea)}'s sea, a3–c5 — 30 seconds.`), JSON.stringify(r3.recent.map((r) => r.text))).toBe(true);
+    const panel = page.locator(`[data-testid="auction"][data-ghost="${ghost}"][data-sea="${sea}"]`);
+    await expect(panel).toBeVisible({ timeout: 10_000 });
+    await expect(panel).toContainText('👻 30-second ghost intel auction');
+    await expect(panel.getByTestId('auction-what')).toContainText(`@${handle(ghost)}'s reading on`);
+    await expect(panel.getByTestId('auction-what')).toContainText(`@${handle(sea)}'s sea, a3–c5`);
+    await expect(panel.getByTestId('auction-clock')).toBeVisible();
 
-  // The ghost tells a lie; its own view holds the truth.
-  await expect.poll(async () => (await read(page.request, agents[0].headers)).view.myTricks?.whisper, { timeout: 15_000 }).toEqual({ truth: TRUTH, tell: TELL });
+    // The ghost tells a lie; its own view holds the truth.
+    await expect.poll(async () => (await read(page.request, agents[0].headers)).view.myTricks?.whisper, { timeout: 15_000 }).toEqual({ truth: TRUTH, tell: TELL });
 
-  // The human bids through the panel; the server holds the amount as the human's alone.
-  const before = (await read(page.request)).view.scrap;
-  expect(before[me]).toBeGreaterThanOrEqual(BID);
-  await panel.getByTestId(`auction-bid-${BID}`).click();
-  await expect.poll(async () => (await read(page.request)).view.myBids[ghost], { timeout: 10_000 }).toBe(BID);
-  await expect(panel.getByTestId('auction-mybid')).toHaveText(`Your sealed bid: ${BID}`);
-  await expect(panel.locator(`[data-testid="auction-status"][data-seat="${me}"]`)).toHaveAttribute('data-status', 'bid');
+    // Firing the last shot would land the volley and close the auction: the panel says so, and while the human
+    // owes its salvo with the auction untouched, a note by the Fire button says to bid first.
+    await expect(panel.getByTestId('auction-close-note')).toHaveText("Closes when this round's volley lands, if that's sooner — bid before you lock in.");
+    await expect(page.getByTestId('auction-first')).toHaveText('An auction is still open: bid first.');
 
-  // Another seat sees that the human bid, never how much.
-  await expect
-    .poll(async () => (await read(page.request, agents[2].headers)).view.auctions.find((a) => a.ghost === ghost)?.bids, { timeout: 15_000 })
-    .toEqual(expect.objectContaining({ [me]: 'bid', [sea]: 'abstained', [rival]: 'bid' }));
-  const theirs = await read(page.request, agents[2].headers);
-  const seen = theirs.view.auctions.find((a) => a.ghost === ghost)!;
-  expect(Object.values(seen.bids).every((b) => b === null || typeof b === 'string'), JSON.stringify(seen.bids)).toBe(true);
-  expect(theirs.view.myBids).toEqual({ [ghost]: 1 });
-  expect(JSON.stringify(theirs.view.auctions)).not.toContain(`"n"`);
-  expect(theirs.view.myTricks).toBeNull();
+    // The human bids through the panel; the server holds the amount as the human's alone.
+    const before = (await read(page.request)).view.scrap;
+    expect(before[me]).toBeGreaterThanOrEqual(BID);
+    await panel.getByTestId(`auction-bid-${BID}`).click();
+    await expect.poll(async () => (await read(page.request)).view.myBids[ghost], { timeout: 10_000 }).toBe(BID);
+    await expect(panel.getByTestId('auction-mybid')).toHaveText(`Your sealed bid: ${BID}`);
+    await expect(panel.locator(`[data-testid="auction-status"][data-seat="${me}"]`)).toHaveAttribute('data-status', 'bid');
+    await expect(page.getByTestId('auction-first')).toBeHidden();
 
-  // The human holds its salvo, so round 3 can't resolve: the auction closes on its 30-second clock.
-  const closesAt = (await read(page.request)).view.auctions.find((a) => a.ghost === ghost)!.closesAt;
-  expect(closesAt, 'the clock stamped the close').not.toBeNull();
-  await expect.poll(async () => (await read(page.request)).view.auctions.length, { timeout: 40_000, intervals: [500] }).toBe(0);
-  const after = await read(page.request);
-  expect(after.view.round, 'closed on the clock, not by the round resolving').toBe(3);
-  expect(Date.now()).toBeGreaterThanOrEqual(closesAt! - 2_000);
-  expect(after.view.scrap[me]).toBe(before[me] - BID);
-  expect(after.view.scrap[ghost]).toBe(before[ghost] + BID);
-  expect(after.view.whispers).toEqual([{ ghost, sea, cells: auction.cells, said: TELL }]);
-  expect(after.recent.some((r) => r.text === `${handle(me)} wins ${handle(ghost)}'s whisper for ${BID} scrap.`), JSON.stringify(after.recent.map((r) => r.text))).toBe(true);
-  // The rival, who bid 1, paid nothing.
-  expect(after.view.scrap[rival]).toBe(before[rival]);
+    // Another seat sees that the human bid, never how much.
+    await expect
+      .poll(async () => (await read(page.request, agents[2].headers)).view.auctions.find((a) => a.ghost === ghost)?.bids, { timeout: 15_000 })
+      .toEqual(expect.objectContaining({ [me]: 'bid', [sea]: 'abstained', [rival]: 'bid' }));
+    const theirs = await read(page.request, agents[2].headers);
+    const seen = theirs.view.auctions.find((a) => a.ghost === ghost)!;
+    expect(Object.values(seen.bids).every((b) => b === null || typeof b === 'string'), JSON.stringify(seen.bids)).toBe(true);
+    expect(theirs.view.myBids).toEqual({ [ghost]: 1 });
+    // An auction's public face is exactly these fields: no amounts, no truth, no tell.
+    expect(Object.keys(seen).sort()).toEqual(['bids', 'cells', 'centre', 'closesAt', 'ghost', 'sea']);
+    expect(theirs.view.myTricks).toBeNull();
 
-  // The board shows the ghost's word on the area: show that sea, and the marker reads the tell.
-  await expect(panel).toBeHidden({ timeout: 10_000 });
-  await page.locator(`button.chip:not(.gone)[data-seat="${sea}"]`).click();
-  const main = page.locator('[data-main]');
-  await expect(main).toHaveAttribute('data-sea', sea);
-  const mark = main.locator(`[data-testid="whisper-mark"][data-ghost="${ghost}"]`);
-  await expect(mark).toHaveAttribute('data-said', String(TELL));
-  await expect(mark).toHaveText(`👻 ${TELL}?`);
-  await expect(main.locator(`[data-cell="${CENTRE}"]`)).toHaveAttribute('title', new RegExp(`👻 @${handle(ghost)} says ${TELL}`));
+    // The human holds its salvo, so round 3 can't resolve: the auction closes on its 30-second clock.
+    const closesAt = (await read(page.request)).view.auctions.find((a) => a.ghost === ghost)!.closesAt;
+    expect(closesAt, 'the clock stamped the close').not.toBeNull();
+    await expect.poll(async () => (await read(page.request)).view.auctions.length, { timeout: 40_000, intervals: [500] }).toBe(0);
+    const after = await read(page.request);
+    expect(after.view.round, 'closed on the clock, not by the round resolving').toBe(3);
+    expect(Date.now()).toBeGreaterThanOrEqual(closesAt! - 2_000);
+    expect(after.view.scrap[me]).toBe(before[me] - BID);
+    expect(after.view.scrap[ghost]).toBe(before[ghost] + BID);
+    expect(after.view.whispers).toEqual([{ ghost, sea, cells: auction.cells, said: TELL }]);
+    expect(after.recent.some((r) => r.text === `${handle(me)} wins ${handle(ghost)}'s whisper for ${BID} scrap.`), JSON.stringify(after.recent.map((r) => r.text))).toBe(true);
+    // The rival, who bid 1, paid nothing.
+    expect(after.view.scrap[rival]).toBe(before[rival]);
 
-  done = true;
-  await Promise.all(loops);
+    // The board shows the ghost's word on the area: show that sea, and the marker reads the tell.
+    await expect(panel).toBeHidden({ timeout: 10_000 });
+    await page.locator(`button.chip:not(.gone)[data-seat="${sea}"]`).click();
+    const main = page.locator('[data-main]');
+    await expect(main).toHaveAttribute('data-sea', sea);
+    const mark = main.locator(`[data-testid="whisper-mark"][data-ghost="${ghost}"]`);
+    await expect(mark).toHaveAttribute('data-said', String(TELL));
+    await expect(mark).toHaveText(`👻 ${TELL}?`);
+    await expect(main.locator(`[data-cell="${CENTRE}"]`)).toHaveAttribute('title', new RegExp(`👻 @${handle(ghost)} says ${TELL}`));
+  } finally {
+    done = true;
+    await Promise.all(loops);
+  }
 });
