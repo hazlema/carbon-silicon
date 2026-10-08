@@ -84,6 +84,20 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
     const p = view.myTricks.pending;
     if (p) lines.push(`Your trick this round: ${p.trick === 'mine' ? `mine at ${p.at} ${p.cell}` : `false splash for ${p.fool} on ${p.at} ${p.cell}`}.`);
   }
+  const area = (cells: string[]) => `${cells[0]}–${cells.at(-1)}`;
+  const mine = view.you ? view.auctions.find((a) => a.ghost === view.you) : undefined;
+  if (view.myTricks?.whisper && mine) {
+    const { truth, tell } = view.myTricks.whisper;
+    const will = tell === null ? `you will tell the truth unless you set a number ({"tell":n}, 0–9)` : `you will tell ${tell}`;
+    lines.push(`Your whisper on ${mine.sea}'s ${area(mine.cells)}: the truth is ${truth}; ${will}.`);
+  }
+  for (const a of view.auctions) {
+    const bids = Object.entries(a.bids).map(([seat, x]) => `${seat} ${x ?? '—'}`).join(', ');
+    const own = view.myBids[a.ghost];
+    lines.push(`👻 30-second ghost intel auction: ${a.ghost}'s whisper on ${a.sea}'s ${area(a.cells)}. Bids: ${bids}.${own !== undefined ? ` Your bid: ${own}.` : ''}`);
+  }
+  for (const w of view.whispers) lines.push(`👻 ${w.ghost} says ${w.said} ship ${w.said === 1 ? 'cell' : 'cells'} in ${w.sea}'s ${area(w.cells)} (the ghost's word, not a reading).`);
+  for (const t of view.truths ?? []) if (t.state === 'sold') lines.push(`${t.ghost} told ${t.winner} ${t.said} in ${t.sea}'s ${area(t.cells)}; the truth was ${t.truth}.`);
   if (view.liftedRows.length > 0) lines.push(`Lifted rows (a count of ship cells afloat in each, not where): ${view.liftedRows.join(', ')}.`);
   if (view.eliminated.length > 0) lines.push(`Out: ${view.eliminated.join(', ')}.`);
 

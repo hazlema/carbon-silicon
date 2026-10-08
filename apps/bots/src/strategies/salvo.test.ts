@@ -19,6 +19,10 @@ const view = (targets: TargetView[], over: Partial<SalvoView> = {}): SalvoView =
   myTricks: null,
   holding: {},
   myArsenal: null,
+  auctions: [],
+  myBids: {},
+  whispers: [],
+  truths: null,
   mySea: null,
   targets,
   lastVolley: null,
@@ -599,7 +603,8 @@ describe('ghost tricks', () => {
     expect(viewOf(s, 'west').ghosts).toEqual(['west']);
     s.mines = ['e2', 'f2', 'g2'].map((cell) => ({ ghost: 'west', sea: 'north', cell, round: 1 }));
     expect(s.mines.length).toBe(MINE_LIMIT);
-    const legal = legalOf(s, 'west');
+    // (A whisper is on offer too; this test is about the splash.)
+    const legal = legalOf(s, 'west').filter((c) => !('trick' in c && c.trick === 'whisper'));
     expect(legal.every((c) => 'trick' in c && c.trick === 'splash')).toBe(true);
     const v = viewOf(s, 'west');
     const afloat = Object.fromEntries(v.targets.map((t) => [t.sea, t.afloat]));

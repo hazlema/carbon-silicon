@@ -23,14 +23,16 @@ const turn = G.turn;
 const GAMES = 300;
 const CELL = /\b[a-h][1-8]\b/g;
 const SHIP_NAME = /cruiser|destroyer|frigate|submarine/g;
-const SAFE_DESCRIBE = ['fires', 'deploys a ship', 'deploys the fleet', 'plays a dirty trick', 'opens a crate'];
-const SAFE_NARRATE = ['is ready', 'deploys a ship', 'deploys the fleet', 'is up to something…', 'opens a crate'];
+const SAFE_DESCRIBE = ['fires', 'deploys a ship', 'deploys the fleet', 'plays a dirty trick', 'opens a crate', 'bids on a whisper', 'sets its whisper'];
+const SAFE_NARRATE = ['is ready', 'deploys a ship', 'deploys the fleet', 'is up to something…', 'opens a crate', 'bids on a whisper', 'sets its whisper'];
 const viewOf = (s: SalvoState, seat: string | null) => G.view(s, seat) as SalvoView;
 const isOut = (s: SalvoState, seat: string) => s.eliminated.some((x) => x.seat === seat);
 /** Sunk fleets still at the table, worked out from the state alone (the view's `ghosts` must agree). */
 const ghostsOf = (s: SalvoState) =>
   s.phase === 'over' ? [] : s.seats.filter((x) => s.eliminated.some((e) => e.seat === x && e.reason === 'sunk') && !s.ghostsGone.includes(x));
 const isTrickCmd = (c: unknown) => typeof c === 'object' && c !== null && 'trick' in c;
+const isTellCmd = (c: unknown) => typeof c === 'object' && c !== null && 'tell' in c;
+const openAuctionsOf = (s: SalvoState) => s.auctions.filter((a) => a.state === 'open');
 const codeOf = (fn: () => unknown): string | null => {
   try {
     fn();
@@ -160,6 +162,15 @@ function secretsStripped(s: SalvoState, seat: string | null): SalvoState {
   if (t.phase !== 'over') {
     t.mines = t.mines.filter((m) => m.ghost === seat);
     t.splashes = t.splashes.filter((x) => x.ghost === seat || x.fool === seat);
+    for (const a of t.auctions) {
+      // Another seat's bid amounts are its own (a bid stays a bid; the close's price is public in its line).
+      for (const [x, b] of Object.entries(a.bids)) if (x !== seat && b) a.bids[x] = { n: b.n + 1, at: b.at };
+      if (a.ghost === seat) continue;
+      // The truth and the tell are the ghost's, until the match ends; the winner knows only what it was told.
+      if (a.state === 'sold' && a.winner === seat) a.tell = a.tell ?? a.truth;
+      else if (a.tell !== null) a.tell = (a.tell + 1) % 10;
+      a.truth = (a.truth + 1) % 10;
+    }
   }
   return t;
 }
@@ -214,6 +225,29 @@ function assertNoLeaks(s: SalvoState, step: number, tally?: Tally): void {
         JSON.stringify(v.myTricks.pending) === JSON.stringify(p ? { trick: p.kind, at: p.sea, cell: p.cell, ...(p.fool ? { fool: p.fool } : {}) } : null),
         `${where}: myTricks.pending is not my own commit`,
       );
+      const a = openAuctionsOf(s).find((x) => x.ghost === seat);
+      check(JSON.stringify(v.myTricks.whisper) === JSON.stringify(a ? { truth: a.truth, tell: a.tell } : null), `${where}: myTricks.whisper is not my own auction`);
+    }
+    // Whisper auctions: the open ones in public with each living seat's status, never an amount; your own bids;
+    // the whispers you bought; every truth only once the match is over.
+    const living = s.seats.filter((x) => !isOut(s, x));
+    const auctions = openAuctionsOf(s).map((a) => ({
+      ghost: a.ghost,
+      sea: a.sea,
+      centre: a.centre,
+      cells: a.cells,
+      closesAt: a.closesAt,
+      bids: Object.fromEntries(living.map((x) => [x, a.bids[x] ? 'bid' : a.abstained.includes(x) ? 'abstained' : null])),
+    }));
+    check(JSON.stringify(v.auctions) === JSON.stringify(auctions), `${where}: auctions are not the open ones, sealed`);
+    const myBids = seat === null ? {} : Object.fromEntries(openAuctionsOf(s).flatMap((a) => (a.bids[seat] ? [[a.ghost, a.bids[seat]!.n]] : [])));
+    check(JSON.stringify(v.myBids) === JSON.stringify(myBids), `${where}: myBids is not my own`);
+    const bought = s.auctions.filter((a) => seat !== null && a.state === 'sold' && a.winner === seat).map((a) => ({ ghost: a.ghost, sea: a.sea, cells: a.cells, said: a.tell ?? a.truth }));
+    check(JSON.stringify(v.whispers) === JSON.stringify(bought), `${where}: whispers are not the ones I bought`);
+    check((v.truths === null) === !over, `${where}: truths shown while live (or missing at the end)`);
+    if (!over) {
+      const { myTricks: _w, ...public_ } = rest;
+      check(!JSON.stringify(public_).includes('"truth"') && !JSON.stringify(public_).includes('"tell"'), `${where}: a truth or a tell outside myTricks`);
     }
     // The false splashes this viewer is fooled by (it sees them as hits, and in its copy of the volley).
     const fakes = over || seat === null ? [] : s.splashes.filter((x) => x.fool === seat);
@@ -332,7 +366,8 @@ function assertNoLeaks(s: SalvoState, step: number, tally?: Tally): void {
       }
     }
     // Nothing outside mySea, targets, lastVolley and the viewer's own myOrders and myTricks names a cell.
-    const { mySea: _m, targets: _t, lastVolley: _l, myOrders: _o, myTricks: _k, ...top } = rest;
+    // (A whisper's area is public: a ghost's blind pick, like a buoy's drop.)
+    const { mySea: _m, targets: _t, lastVolley: _l, myOrders: _o, myTricks: _k, auctions: _a, whispers: _w, truths: _r, ...top } = rest;
     for (const str of strings(top)) check(cellIndex(str) === null, `${where}: a cell in the view's top level`);
     // No item is named outside the viewer's own hand and orders and the public volley (a crate is its owner's alone).
     const { myArsenal: _h, ...elsewhere } = top;
@@ -354,7 +389,10 @@ function assertSummarySafe(before: SalvoState, after: SalvoState): void {
   const v = after.lastVolley;
   const told = v ? v.tricks.flatMap((t) => [t.cell, ...(t.kind === 'mine' && t.result === 'boomerang' ? t.hits.map((h) => h.cell) : [])]) : [];
   const used = v ? (v.items ?? []).flatMap((x) => (x.item === 'cluster' ? [x.cell, ...x.cells] : x.item === 'torpedo' ? x.path : x.item === 'repair' ? [x.cell] : x.item === 'decoy-laid' ? [] : x.cells)) : [];
-  const landed = new Set(v ? [...v.shells.map((x) => x.cell), ...v.buoys.map((x) => x.cell), ...v.blasts.flatMap((b) => b.cells), ...told, ...used] : []);
+  // A whisper's area is told when it's listed (this volley) and when the truth comes out (the end).
+  const listed = after.auctions.slice(before.auctions.length).flatMap((a) => a.cells);
+  const truths = after.phase === 'over' ? after.auctions.filter((a) => a.state === 'sold').flatMap((a) => a.cells) : [];
+  const landed = new Set([...(v ? [...v.shells.map((x) => x.cell), ...v.buoys.map((x) => x.cell), ...v.blasts.flatMap((b) => b.cells), ...told, ...used] : []), ...listed, ...truths]);
   const sunk = new Set<string>(v ? v.sunk.map((x) => x.ship) : []);
   // An item is named only when it was used in this volley (a decoy also when one is found, or a mine blows it up):
   // never a held item, a crate's cards, or a decoy still out there.
@@ -525,8 +563,9 @@ function shipMoved(s: SalvoState, rng: Rng): SalvoState | null {
 /** A ghost's turn, before it plays: legal × apply, refusals with a code, and a legal blind to where ships are. */
 function checkGhostTurn(s: SalvoState, seat: string, legal: SalvoCommand[], rng: Rng, g: number, tally: Tally): void {
   const living = s.seats.filter((x) => !isOut(s, x)).length;
-  check(legal.length <= living * 64 + (living >= 3 ? living * (living - 1) * 64 : 0), `game ${g}: a ghost's legal is ${legal.length} long`);
-  check(legal.every(isTrickCmd), `game ${g}: a ghost is offered something other than a trick`);
+  // Mines, splashes, whispers (36 centres a living sea), then tells 0–9 while its auction runs.
+  check(legal.length <= living * 64 + (living >= 3 ? living * (living - 1) * 64 : 0) + living * 36 + 10, `game ${g}: a ghost's legal is ${legal.length} long`);
+  check(legal.every((c) => isTrickCmd(c) || isTellCmd(c)), `game ${g}: a ghost is offered something other than a trick or a tell`);
   // legal × apply: a sample of entries apply cleanly.
   for (let k = 0; k < 5; k++) {
     const cmd = rng.pick(legal);
@@ -607,7 +646,8 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
       } else {
         // Shells, buoys and crate choices, then a held cluster (a centre per cell), a held torpedo (a lane per sea),
         // a held repair (a hit cell of the fleet) and a held decoy (two facings from each cell: 56 + 56).
-        if (s.phase === 'fire') check(legal.length <= 192 + 108 + 7 + 192 + 24 + 12 + 112, `game ${g}: legal is ${legal.length} long`);
+        // Then the bids, 0..20 on each open auction (three ghosts at most).
+        if (s.phase === 'fire') check(legal.length <= 192 + 108 + 7 + 192 + 24 + 12 + 112 + 3 * 21, `game ${g}: legal is ${legal.length} long`);
         // legal × apply: a few other entries apply cleanly too, and a spent cell is refused.
         turn.apply(s, seat, rng.pick(legal));
         if (s.phase === 'fire' && rng.next() < 0.4) checkArsenalCommands(s, seat, legal, rng, g, tally);
@@ -651,6 +691,9 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
       }
       for (const x of s.lastVolley.items) bump(tally, `item:${x.item}`);
     }
+    // Whispers listed, and closed (by the round resolving: this fuzz runs no clock), sold or not.
+    bump(tally, 'whisper:listed', s.auctions.length - before.auctions.length);
+    for (const a of s.auctions.filter((x, i) => x.state !== 'open' && before.auctions[i]?.state === 'open')) bump(tally, `whisper:${a.state}`);
     if (leaks) {
       assertNoLeaks(s, guard, tally);
       assertSummarySafe(before, s);
@@ -713,6 +756,7 @@ describe('fuzz', () => {
     // under other seats' legal, under fog and sonar, a queued item counted, and every kind applied from legal.
     const walked = [
       ...['crate:pick', 'crate:swap', 'crate:pass', 'item:cluster', 'item:torpedo', 'item:repair', 'item:decoy-laid', 'item:decoy', 'decoyBackfire'],
+      ...['whisper:listed', 'whisper:sold', 'whisper:unsold'],
       ...['decoyBlind', 'decoyUnderFog', 'decoyUnderSonar', 'heldQueued', 'splashOverDecoyHits', 'agree:accepted', 'agree:refused'],
       ...['pick', 'swap', 'pass', 'cluster', 'torpedo', 'repair', 'decoy', 'shell', 'buoy'].map((k) => `apply:${k}`),
     ];

@@ -2,12 +2,30 @@ import { GameRuleError, createRng, type GameModule, type Outcome, type SeatId, t
 import { renderAscii } from './ascii';
 import { ITEM_LIMIT, clusterCells, dealCrate, isItemId, lanesFor, torpedoLane, type ItemId } from './arsenal';
 import { MINE_LIMIT, SIZE, buoyCells, cellIndex, cellName, hullCells, isBuoyCentre, liftedRows, neighbours, rowOf, type Facing } from './board';
+import {
+  AUCTION_MS,
+  BID_LEGAL_MAX,
+  TELL_MAX,
+  areaName,
+  closeDue,
+  closeLine,
+  closedBetween,
+  fadeLine,
+  listingLine,
+  openAuctionOf,
+  openAuctions,
+  said,
+  truthLine,
+  type Auction,
+} from './whisper';
 
 export { FOG_FROM, MINE_LIMIT, SIZE, buoyCells, cellIndex, cellName, hullCells, isBuoyCentre, liftedRows, neighbours } from './board';
 export type { Facing } from './board';
 export { renderAscii } from './ascii';
 export { ITEMS, ITEM_LIMIT, clusterCells, lanesFor, torpedoLane } from './arsenal';
 export type { ItemId } from './arsenal';
+export { AUCTION_MS, BID_LEGAL_MAX, TELL_MAX } from './whisper';
+export type { Auction } from './whisper';
 
 export const SEATS = ['north', 'east', 'south', 'west'] as const;
 /** A false splash needs a sea with at least this many ship cells afloat, or its fake would read "0 afloat". */
@@ -81,7 +99,7 @@ export interface Splash {
 }
 /** A ghost's commit for the round. */
 export interface PendingTrick {
-  kind: 'mine' | 'splash';
+  kind: 'mine' | 'splash' | 'whisper';
   sea: SeatId;
   cell: string;
   fool?: SeatId;
@@ -173,6 +191,10 @@ export interface SalvoState {
   /** Welding sparks on each sea (public): cells repaired and not shot since, oldest first. */
   repairs: Record<SeatId, { cell: string; round: number }[]>;
   scrap: Record<SeatId, number>;
+  /** Every whisper auction ever listed, oldest first (see Auction): bids, truth and tell are secret to their owners. */
+  auctions: Auction[];
+  /** The bid clock: each new bid amount takes the next number (ties go to the earliest). */
+  bidSeq: number;
   hitsLanded: Record<SeatId, number>;
   /** In order; reason 'sunk' | 'resign' | 'timeout' | … A tiebreak winner is taken back out of this list. */
   eliminated: { seat: SeatId; round: number; reason: string }[];
@@ -192,6 +214,9 @@ export type SalvoCommand =
   | { fire: 'torpedo'; at: SeatId; lane: string }
   | { trick: 'mine'; at: SeatId; cell: string }
   | { trick: 'splash'; fool: SeatId; at: SeatId; cell: string }
+  | { trick: 'whisper'; at: SeatId; cell: string }
+  | { bid: number; ghost: SeatId }
+  | { tell: number }
   | { use: 'repair'; cell: string }
   | { use: 'decoy'; at: string; facing: Facing }
   | { crate: ItemId; drop?: ItemId }
@@ -240,8 +265,21 @@ export interface SalvoView {
   myTricks: {
     mines: { sea: SeatId; cell: string; round: number }[];
     splashes: { fool: SeatId; sea: SeatId; cell: string; round: number }[];
-    pending: { trick: 'mine' | 'splash'; at: SeatId; cell: string; fool?: SeatId } | null;
+    pending: { trick: 'mine' | 'splash' | 'whisper'; at: SeatId; cell: string; fool?: SeatId } | null;
+    /** Your open auction's true count and the number you will tell (null: the truth). Null when none is open. */
+    whisper: { truth: number; tell: number | null } | null;
   } | null;
+  /**
+   * Open whisper auctions (public): whose, on which sea's 3×3, when it closes (null until its first clock), and
+   * for each living seat whether it has bid, abstained or neither (null). Never an amount.
+   */
+  auctions: { ghost: SeatId; sea: SeatId; centre: string; cells: string[]; closesAt: number | null; bids: Record<SeatId, 'bid' | 'abstained' | null> }[];
+  /** Your own bids on open auctions, by ghost. Yours alone ({} for spectators). */
+  myBids: Record<SeatId, number>;
+  /** The whispers you bought: the ghost's word on that area (not a reading). Yours alone. */
+  whispers: { ghost: SeatId; sea: SeatId; cells: string[]; said: number }[];
+  /** Once the match is over, every auction that opened, with its truth (public). Null until then. */
+  truths: { ghost: SeatId; sea: SeatId; centre: string; cells: string[]; truth: number; said: number; state: Auction['state']; winner: SeatId | null; price: number }[] | null;
   /** How many items each living seat holds (public; never which). */
   holding: Record<SeatId, number>;
   /** Your items and your open crate's cards (null when none is open). Null for spectators and ghosts. */
@@ -315,7 +353,8 @@ const minesOf = (s: SalvoState, ghost: SeatId) => s.mines.filter((x) => x.ghost 
  * then, with three fleets afloat, a false splash: a living fool, another living sea with at least
  * SPLASH_MIN_AFLOAT ship cells afloat (the public count; a fake hit on a sea's last cell would read "0 afloat"
  * and give itself away), an unshot cell. Ship cells are on offer like any other, and so are a live decoy's:
- * nothing here may depend on where a ship or a decoy is.
+ * nothing here may depend on where a ship or a decoy is. Last, while the ghost has no auction open, a whisper:
+ * any buoy centre (b2–g7) of a living sea, shot or not.
  */
 function trickLegal(s: SalvoState, ghost: SeatId): SalvoCommand[] {
   const out: SalvoCommand[] = [];
@@ -328,6 +367,9 @@ function trickLegal(s: SalvoState, ghost: SeatId): SalvoCommand[] {
   if (alive.length >= 3) {
     const seas = alive.filter((x) => publicAfloat(s, x) >= SPLASH_MIN_AFLOAT);
     for (const fool of alive) for (const sea of seas) if (sea !== fool) for (const cell of unshot(sea)) out.push({ trick: 'splash', fool, at: sea, cell });
+  }
+  if (!openAuctionOf(s, ghost)) {
+    for (const sea of alive) for (let i = 0; i < SIZE * SIZE; i++) if (isBuoyCentre(cellName(i))) out.push({ trick: 'whisper', at: sea, cell: cellName(i) });
   }
   return out;
 }
@@ -420,14 +462,26 @@ const buoyedAt = (s: SalvoState, seat: SeatId, sea: SeatId, cell: string) => s.s
 function applyTrick(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
   if (!isGhost(s, seat)) throw new GameRuleError('NOT_A_GHOST', 'Only a sunk fleet plays tricks; you fire: {"fire":"shell","at":"east","cell":"e5"}.');
   const { trick, at, cell, fool } = command;
-  if ((trick !== 'mine' && trick !== 'splash') || typeof at !== 'string' || typeof cell !== 'string') {
-    throw new GameRuleError('BAD_COMMAND', 'Send {"trick":"mine","at":"east","cell":"e5"} or {"trick":"splash","fool":"south","at":"east","cell":"e5"}.');
+  if ((trick !== 'mine' && trick !== 'splash' && trick !== 'whisper') || typeof at !== 'string' || typeof cell !== 'string') {
+    throw new GameRuleError(
+      'BAD_COMMAND',
+      'Send {"trick":"mine","at":"east","cell":"e5"}, {"trick":"splash","fool":"south","at":"east","cell":"e5"} or {"trick":"whisper","at":"east","cell":"d4"}.',
+    );
   }
   const alive = living(s);
   if (!alive.includes(at)) throw new GameRuleError('BAD_TARGET', `Play your trick on a living sea: ${alive.join(', ')}.`);
   const i = cellIndex(cell);
   if (i === null) throw new GameRuleError('BAD_CELL', `There is no cell "${cell}" on an 8×8 sea (a1 to h8).`);
   const name = cellName(i);
+  if (trick === 'whisper') {
+    // A whisper lists a 3×3 like a sonar buoy's; shot cells are no bar (the reading counts what's afloat).
+    if (!isBuoyCentre(name)) throw new GameRuleError('BAD_AREA', `A whisper's 3×3 must lie on the sea: centre it on b2 to g7, not ${name}.`);
+    if (openAuctionOf(s, seat)) throw new GameRuleError('AUCTION_OPEN', 'Your whisper is still up for auction; one at a time. Plant a mine or play a false splash.');
+    s.pendingTrick[seat] = { kind: 'whisper', sea: at, cell: name };
+    s.ready = bySeatOrder(s, [...s.ready, seat]);
+    if (toMove(s).length === 0) resolve(s);
+    return;
+  }
   if (s.shots[at][name]) throw new GameRuleError('ALREADY_SHOT', `A shell has already landed on ${at}'s ${name}.`);
   if (trick === 'mine') {
     if (minesOf(s, seat).length >= MINE_LIMIT) throw new GameRuleError('MINE_LIMIT', `You have ${MINE_LIMIT} live mines; wait for one to go off, or play a false splash.`);
@@ -600,6 +654,103 @@ function applyCrate(s: SalvoState, seat: SeatId, command: Record<string, unknown
   markReady(s, seat);
 }
 
+// ── Whisper: bids and tells (optional: never owed, never a bar to readiness) ──
+
+/** Did this auction close this round or the last (a bid racing its close)? */
+const justClosed = (s: SalvoState, a: Auction) => a.closedRound !== null && a.closedRound >= s.round - 1;
+
+/**
+ * A sealed bid on a ghost's open auction (`ghost` names it; it may be left out while only one is open). 1 up to
+ * your scrap, replaceable until the close (the same amount again keeps its place in the tiebreak); 0 abstains
+ * (and withdraws a bid). Only the living bid, the sea's owner included. Scrap moves only at the close.
+ */
+function applyBid(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
+  const { bid, ghost } = command;
+  if (ghost !== undefined && typeof ghost !== 'string') throw new GameRuleError('BAD_COMMAND', 'Send {"bid":3,"ghost":"west"}: the ghost whose whisper you bid on.');
+  if (typeof bid !== 'number' || !Number.isInteger(bid) || bid < 0) throw new GameRuleError('BAD_BID', 'Bid a whole number of scrap: {"bid":3}, or {"bid":0} to abstain.');
+  const open = openAuctions(s);
+  const named = typeof ghost === 'string' ? s.auctions.filter((a) => a.ghost === ghost) : s.auctions;
+  const target = typeof ghost === 'string' ? open.find((a) => a.ghost === ghost) : open.length === 1 ? open[0] : undefined;
+  if (target?.ghost === seat || (!target && typeof ghost === 'string' && ghost === seat && isGhost(s, seat))) {
+    throw new GameRuleError('OWN_WHISPER', 'That is your own whisper: you set the number you tell, {"tell":3}.');
+  }
+  if (!target) {
+    if (open.length > 1 && ghost === undefined) {
+      throw new GameRuleError('BAD_COMMAND', `${open.length} whispers are up for auction: name one, {"bid":${bid},"ghost":"${open[0].ghost}"} (${open.map((a) => a.ghost).join(', ')}).`);
+    }
+    if (named.some((a) => justClosed(s, a))) throw new GameRuleError('AUCTION_CLOSED', 'That auction has closed.');
+    throw new GameRuleError('NO_AUCTION', typeof ghost === 'string' ? `${ghost} has no whisper up for auction.` : 'No whisper is up for auction.');
+  }
+  if (isEliminated(s, seat)) throw new GameRuleError('NO_AUCTION', 'Only the living bid on a whisper.');
+  if (bid > s.scrap[seat]) throw new GameRuleError('BAD_BID', `You have ${s.scrap[seat]} scrap; bid at most that, or {"bid":0} to abstain.`);
+  if (bid === 0) {
+    target.bids[seat] = null;
+    if (!target.abstained.includes(seat)) target.abstained = bySeatOrder(s, [...target.abstained, seat]);
+    return;
+  }
+  target.abstained = target.abstained.filter((x) => x !== seat);
+  if (target.bids[seat]?.n === bid) return;
+  s.bidSeq += 1;
+  target.bids[seat] = { n: bid, at: s.bidSeq };
+}
+
+/** The number a ghost tells the winner of its open auction: 0–9, changeable until the close. */
+function applyTell(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
+  const a = isGhost(s, seat) ? openAuctionOf(s, seat) : undefined;
+  if (!a) {
+    if (s.auctions.some((x) => x.ghost === seat && justClosed(s, x))) throw new GameRuleError('AUCTION_CLOSED', 'Your auction has closed.');
+    throw new GameRuleError('NOT_YOUR_AUCTION', 'You have no whisper up for auction; a ghost lists one with {"trick":"whisper","at":"east","cell":"d4"}.');
+  }
+  const { tell } = command;
+  if (typeof tell !== 'number' || !Number.isInteger(tell) || tell < 0 || tell > TELL_MAX) {
+    throw new GameRuleError('BAD_TELL', `Tell a whole number of ship cells, 0 to ${TELL_MAX}: {"tell":3}.`);
+  }
+  a.tell = tell;
+}
+
+/** Is a seat a bidder (living, an auction open) or a ghost with its own auction open? */
+function mayAct(s: SalvoState, seat: SeatId): boolean {
+  if (s.phase !== 'fire' || !s.seats.includes(seat)) return false;
+  const open = openAuctions(s);
+  if (open.length === 0) return false;
+  return isEliminated(s, seat) ? isGhost(s, seat) && open.some((a) => a.ghost === seat) : true;
+}
+
+/** The optional commands: a bidder's bids (0..min(scrap, BID_LEGAL_MAX)) on each open auction, a ghost's tells. */
+function optionalLegal(s: SalvoState, seat: SeatId): SalvoCommand[] {
+  if (!mayAct(s, seat)) return [];
+  const out: SalvoCommand[] = [];
+  if (isEliminated(s, seat)) {
+    for (let n = 0; n <= TELL_MAX; n++) out.push({ tell: n });
+    return out;
+  }
+  for (const a of openAuctions(s)) for (let n = 0; n <= Math.min(s.scrap[seat], BID_LEGAL_MAX); n++) out.push({ bid: n, ghost: a.ghost });
+  return out;
+}
+
+/**
+ * The game's clock: an auction opening this round is stamped to close AUCTION_MS from now; one at or past
+ * its close is closed. The same state when nothing is due.
+ */
+function clock(state: SalvoState, nowMs: number): SalvoState {
+  if (state.phase !== 'fire') return state;
+  const open = openAuctions(state);
+  const stamp = open.filter((a) => a.closesAt === null && a.opensRound <= state.round);
+  const due = open.filter((a) => a.closesAt !== null && nowMs >= a.closesAt);
+  if (stamp.length === 0 && due.length === 0) return state;
+  const s = clone(state);
+  for (const a of openAuctions(s)) if (a.closesAt === null && a.opensRound <= s.round) a.closesAt = nowMs + AUCTION_MS;
+  closeDue(s, living(s), (a) => a.closesAt !== null && nowMs >= a.closesAt);
+  return s;
+}
+
+/** The earliest close among open auctions, or null. */
+function wakeAt(s: SalvoState): number | null {
+  if (s.phase !== 'fire') return null;
+  const times = openAuctions(s).flatMap((a) => (a.closesAt === null ? [] : [a.closesAt]));
+  return times.length > 0 ? Math.min(...times) : null;
+}
+
 /** Is one of this seat's shells already aimed at that cell this round? */
 const aimedAt = (s: SalvoState, seat: SeatId, sea: SeatId, cell: string) =>
   s.pending[seat].some((x) => (x.kind === 'shell' || x.kind === 'cluster') && x.sea === sea && x.cell === cell);
@@ -631,6 +782,9 @@ function finish(s: SalvoState, winner: SeatId, reason: string): void {
   // Nothing is still being played: a false splash on show is over with the match (a volley that ends it tells it first).
   s.splashes = [];
   for (const x of s.seats) s.pendingTrick[x] = null;
+  // An auction under way closes with its bids; one not yet open never will.
+  closeDue(s, living(s), (a) => a.opensRound <= s.round);
+  for (const a of s.auctions) if (a.state === 'open') a.state = 'void';
 }
 
 const colOf = (cell: string) => cellIndex(cell)! % SIZE;
@@ -656,6 +810,8 @@ function dressAs(s: SalvoState, fool: SeatId, sea: SeatId, shells: Shell[]): Sea
  * not hit before becomes a hit credited to every seat that covered it; so does every cell of a live decoy. Mutates `s`.
  */
 function resolve(s: SalvoState): void {
+  // The round's auctions close first, with the bids so far (scrap moves before this volley's is paid).
+  closeDue(s, living(s), (a) => a.opensRound <= s.round);
   const orders = s.seats.flatMap((x) => s.pending[x]);
   // Repairs and decoys land first, before any shot. A repaired cell is unhit and unshot again, so this
   // volley's shells may hit it; a decoy laid now is on the sea for this volley's shells. Everything below
@@ -693,7 +849,7 @@ function resolve(s: SalvoState): void {
     const t = s.pendingTrick[g];
     if (!t || !alive.includes(t.sea)) continue;
     if (t.kind === 'mine') s.mines.push({ ghost: g, sea: t.sea, cell: t.cell, round: s.round });
-    else if (alive.length >= 3 && alive.includes(t.fool!)) {
+    else if (t.kind === 'splash' && alive.length >= 3 && alive.includes(t.fool!)) {
       const as = dressAs(s, t.fool!, t.sea, shells);
       if (as) s.splashes.push({ ghost: g, fool: t.fool!, sea: t.sea, cell: t.cell, round: s.round, as });
     }
@@ -897,6 +1053,32 @@ function resolve(s: SalvoState): void {
   s.splashes = ends ? [] : s.splashes.filter((x) => !isEliminated(s, x.sea) && publicAfloat(s, x.sea) >= SPLASH_MIN_AFLOAT);
   // Crates: one per sinking to each credited seat still afloat (never a ghost), none once the match is over.
   if (!ends) for (const x of crateEarners(s, sunk)) s.crates[x].push(dealCrate(s.seed, s.draws++));
+  // Whispers listed this round: the ghost's reading is taken now, as a buoy's would be (real ship cells afloat
+  // once the shells have landed; a decoy is invisible to it). The auction opens with the next round; never
+  // once the match is over. A sea that went out in this volley is still listed: its reading stands.
+  if (!ends) {
+    for (const g of s.seats) {
+      const t = s.pendingTrick[g];
+      if (!t || t.kind !== 'whisper' || !alive.includes(t.sea)) continue;
+      const cells = buoyCells(t.cell);
+      s.auctions.push({
+        ghost: g,
+        sea: t.sea,
+        centre: t.cell,
+        cells,
+        truth: afloatIn(s, t.sea, (c) => cells.includes(c)),
+        tell: null,
+        opensRound: s.round + 1,
+        closesAt: null,
+        bids: {},
+        abstained: [],
+        state: 'open',
+        winner: null,
+        price: 0,
+        closedRound: null,
+      });
+    }
+  }
 
   s.lastVolley = { round: s.round, shells: results, buoys, blasts, sunk, eliminated: out, tricks, items };
   for (const x of s.seats) s.pending[x] = [];
@@ -912,11 +1094,17 @@ function resolve(s: SalvoState): void {
 
 function apply(state: SalvoState, seat: SeatId, command: unknown): SalvoState {
   if (state.phase === 'over') throw new GameRuleError('GAME_OVER', 'The game is over.');
-  if (!toMove(state).includes(seat)) throw new GameRuleError('NOT_YOUR_TURN', `${seat} owes nothing this round.`);
+  // A bid or a tell is optional: open to any seat the auction allows, owing or not (applyBid and applyTell judge).
+  const optional = typeof command === 'object' && command !== null && ('bid' in command || 'tell' in command);
+  if (!optional && !toMove(state).includes(seat)) throw new GameRuleError('NOT_YOUR_TURN', `${seat} owes nothing this round.`);
   if (typeof command !== 'object' || command === null) throw new GameRuleError('BAD_COMMAND', 'Send a JSON object; see legal.');
   const s = clone(state);
   const cmd = command as Record<string, unknown>;
-  if (s.phase === 'deploy') {
+  if (optional) {
+    if (!s.seats.includes(seat)) throw new GameRuleError('NO_AUCTION', 'Only seats at the table bid.');
+    if ('bid' in cmd) applyBid(s, seat, cmd);
+    else applyTell(s, seat, cmd);
+  } else if (s.phase === 'deploy') {
     if (!('place' in cmd)) throw new GameRuleError('BAD_COMMAND', 'The fleets are deploying: send {"place":"random"} or a placement.');
     applyPlace(s, seat, cmd);
     maybeOpenFire(s);
@@ -933,8 +1121,12 @@ function apply(state: SalvoState, seat: SeatId, command: unknown): SalvoState {
   return s;
 }
 
+/** What a seat owes first (its placements, crate, salvo or trick), then what it may do besides (bids, tells). */
 function legal(s: SalvoState, seat: SeatId): SalvoCommand[] {
-  if (!toMove(s).includes(seat)) return [];
+  return [...(toMove(s).includes(seat) ? owedLegal(s, seat) : []), ...optionalLegal(s, seat)];
+}
+
+function owedLegal(s: SalvoState, seat: SeatId): SalvoCommand[] {
   if (isGhost(s, seat)) return trickLegal(s, seat);
   if (s.phase === 'deploy') {
     const out: SalvoCommand[] = inPort(s, seat).flatMap((ship) => placements(s, seat, ship));
@@ -1022,6 +1214,12 @@ function forfeit(state: SalvoState, seat: SeatId, reason: string): SalvoState {
     s.pendingTrick[seat] = null;
     s.mines = s.mines.filter((x) => x.ghost !== seat);
     s.splashes = s.splashes.filter((x) => x.ghost !== seat);
+    // Its auction goes with it: no sale (told when the round's story is).
+    for (const a of s.auctions) {
+      if (a.ghost !== seat || a.state !== 'open') continue;
+      a.state = 'faded';
+      a.closedRound = s.round;
+    }
     s.ready = s.ready.filter((x) => x !== seat);
     if (s.phase === 'fire' && toMove(s).length === 0) resolve(s);
     return s;
@@ -1138,8 +1336,24 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
             mines: minesOf(s, you).map(({ sea, cell, round }) => ({ sea, cell, round })),
             splashes: s.splashes.filter((x) => x.ghost === you).map(({ fool, sea, cell, round }) => ({ fool, sea, cell, round })),
             pending: s.pendingTrick[you] ? { trick: s.pendingTrick[you]!.kind, at: s.pendingTrick[you]!.sea, cell: s.pendingTrick[you]!.cell, ...(s.pendingTrick[you]!.fool ? { fool: s.pendingTrick[you]!.fool } : {}) } : null,
+            whisper: openAuctionOf(s, you) ? { truth: openAuctionOf(s, you)!.truth, tell: openAuctionOf(s, you)!.tell } : null,
           }
         : null,
+    auctions: openAuctions(s).map((a) => ({
+      ghost: a.ghost,
+      sea: a.sea,
+      centre: a.centre,
+      cells: [...a.cells],
+      closesAt: a.closesAt,
+      bids: Object.fromEntries(living(s).map((x) => [x, a.bids[x] ? 'bid' : a.abstained.includes(x) ? 'abstained' : null] as const)),
+    })),
+    myBids: you ? Object.fromEntries(openAuctions(s).flatMap((a) => (a.bids[you] ? [[a.ghost, a.bids[you]!.n]] : []))) : {},
+    whispers: you ? s.auctions.filter((a) => a.state === 'sold' && a.winner === you).map((a) => ({ ghost: a.ghost, sea: a.sea, cells: [...a.cells], said: said(a) })) : [],
+    truths: over
+      ? s.auctions
+          .filter((a) => a.state !== 'void')
+          .map((a) => ({ ghost: a.ghost, sea: a.sea, centre: a.centre, cells: [...a.cells], truth: a.truth, said: said(a), state: a.state, winner: a.winner, price: a.price }))
+      : null,
     // A queued item still counts until the reveal: the table must not learn mid-round that someone committed one.
     // Capped at the limit: hold 2, queue one, take a crate card → 3 would be impossible and a tell.
     holding: Object.fromEntries(living(s).map((x) => [x, Math.min(ITEM_LIMIT, s.arsenal[x].length + s.pending[x].filter(isItemOrder).length)])),
@@ -1164,8 +1378,13 @@ const isRandom = (c: unknown) => typeof c === 'object' && c !== null && (c as { 
 
 const isTrick = (c: unknown) => typeof c === 'object' && c !== null && 'trick' in c;
 const isCrate = (c: unknown) => typeof c === 'object' && c !== null && 'crate' in c;
+const isBid = (c: unknown) => typeof c === 'object' && c !== null && 'bid' in c;
+const isTell = (c: unknown) => typeof c === 'object' && c !== null && 'tell' in c;
 
+/** A bid or a tell is told without its number (bids are sealed, the tell is the ghost's secret). */
 function describe(command: unknown): string {
+  if (isBid(command)) return 'bids on a whisper';
+  if (isTell(command)) return 'sets its whisper';
   if (isCrate(command)) return 'opens a crate';
   if (isTrick(command)) return 'plays a dirty trick';
   if (isFire(command)) return 'fires';
@@ -1173,6 +1392,7 @@ function describe(command: unknown): string {
 }
 
 function narrate(_before: SalvoState, _after: SalvoState, _seat: SeatId, command: unknown): string {
+  if (isBid(command) || isTell(command)) return describe(command);
   if (isTrick(command)) return 'is up to something…';
   if (isCrate(command)) return 'opens a crate';
   return isFire(command) ? 'is ready' : describe(command);
@@ -1207,12 +1427,16 @@ function decoyFinder(v: Volley, d: { sea: SeatId; cells: string[] }, seat: SeatI
   return 'shell';
 }
 
-/** The round's story, told once it has landed, credited to no seat. Seats are written {seat}. */
+/**
+ * The round's story, told once it has landed, credited to no seat. Seats are written {seat}. Within a round
+ * (a clock() change) it tells only the whisper auctions that closed; a resolution or the end tells them first.
+ */
 export function roundSummary(before: SalvoState, after: SalvoState): string[] {
   if (before.phase === 'deploy' && after.phase === 'fire') return ['All fleets are down. Round 1 begins.'];
   const ended = before.phase !== 'over' && after.phase === 'over';
-  if (after.round === before.round && !ended) return [];
-  const lines: string[] = [];
+  const closes = closedBetween(before, after).map(closeLine);
+  if (after.round === before.round && !ended) return closes;
+  const lines: string[] = closes;
   const v = after.lastVolley;
   const fresh = v !== null && v.round === before.round && v !== before.lastVolley && before.phase === 'fire';
   const tied = after.endReason === 'tiebreak' && v ? v.eliminated : [];
@@ -1260,6 +1484,7 @@ export function roundSummary(before: SalvoState, after: SalvoState): string[] {
       if (!told) lines.push(`${who(x.by)} ${x.by.length === 1 ? 'sinks' : 'sink'} {${x.sea}}'s ${x.ship}.`);
     }
     for (const t of v.tricks ?? []) lines.push(trickLine(t));
+    for (const a of after.auctions.slice(before.auctions.length)) lines.push(listingLine(a));
     if (!ended) for (const x of crateEarners(after, v.sunk)) lines.push(`{${x}} pulls a crate from the wreck.`);
     for (const x of v.eliminated) {
       if (tied.includes(x)) continue;
@@ -1267,6 +1492,8 @@ export function roundSummary(before: SalvoState, after: SalvoState): string[] {
       lines.push(`{${x}} is out${sunk && !ended ? ', and comes back as a ghost' : ''}.`);
     }
   }
+  // A whisper whose ghost faded this round is told with the round's story (a fade alone tells nothing).
+  for (const a of after.auctions) if (a.state === 'faded' && a.closedRound === before.round) lines.push(fadeLine(a));
   if (!ended) {
     const lifted = liftedRows(after.round).filter((r) => !liftedRows(before.round).includes(r));
     for (const r of lifted) lines.push(`The fog lifts from row ${r}.`);
@@ -1287,6 +1514,8 @@ export function roundSummary(before: SalvoState, after: SalvoState): string[] {
   } else {
     lines.push(`Everyone else is gone. ${w} takes it.`);
   }
+  // The truth comes out: every whisper sold, what the ghost told and what was there.
+  for (const a of after.auctions) if (a.state === 'sold') lines.push(truthLine(a));
   return lines;
 }
 
@@ -1328,6 +1557,8 @@ export const salvoGame: GameModule<SalvoState> & { turn: TurnRules<SalvoState> &
       decoys: each<Decoy[]>(() => []),
       repairs: each<SalvoState['repairs'][SeatId]>(() => []),
       scrap: each(() => 0),
+      auctions: [],
+      bidSeq: 0,
       hitsLanded: each(() => 0),
       eliminated: [],
       timeouts: each(() => 0),
@@ -1350,6 +1581,9 @@ export const salvoGame: GameModule<SalvoState> & { turn: TurnRules<SalvoState> &
     describe,
     narrate,
     roundSummary,
+    clock,
+    wakeAt,
+    mayAct,
   },
 };
 

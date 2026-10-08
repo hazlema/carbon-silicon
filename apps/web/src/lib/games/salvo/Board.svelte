@@ -437,6 +437,7 @@
   const pendingText = $derived.by(() => {
     const t = pendingTrick;
     if (!t) return '';
+    if (t.trick === 'whisper') return `whisper on @${handleOf(t.at)} ${t.cell}`;
     return t.trick === 'mine' ? `mine at @${handleOf(t.at)} ${t.cell}` : `false splash for @${handleOf(t.fool ?? '')} on @${handleOf(t.at)} ${t.cell}`;
   });
   /** The mines and false splashes to mark, by `sea cell`: your own live ones and this round's trick (a ghost), every mine left once it's over. */
@@ -445,7 +446,8 @@
     const t = view.myTricks;
     // Your mine that went off this volley keeps its skull until its flash plays.
     for (const k of fusing) at.set(k, { kind: 'mine', pending: false });
-    if (t?.pending) at.set(`${t.pending.at} ${t.pending.cell}`, { kind: t.pending.trick, pending: true });
+    // (A pending whisper is an area, not a mark: the auction panel draws it.)
+    if (t?.pending && t.pending.trick !== 'whisper') at.set(`${t.pending.at} ${t.pending.cell}`, { kind: t.pending.trick, pending: true });
     for (const x of t?.splashes ?? []) at.set(`${x.sea} ${x.cell}`, { kind: 'splash', pending: false });
     for (const x of t?.mines ?? []) at.set(`${x.sea} ${x.cell}`, { kind: 'mine', pending: false });
     if (!settling) for (const tv of view.targets) for (const x of tv.mines ?? []) at.set(`${tv.sea} ${x.cell}`, { kind: 'mine', pending: false });

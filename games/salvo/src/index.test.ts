@@ -1053,7 +1053,7 @@ describe('ghosts', () => {
     expect(G.stillSeated!(s, 'west')).toBe(true);
     expect(turn.toMove(s)).toEqual(['north', 'east', 'south', 'west']);
     expect(viewOf(s, null).ghosts).toEqual(['west']);
-    expect(viewOf(s, 'west').myTricks).toEqual({ mines: [], splashes: [], pending: null });
+    expect(viewOf(s, 'west').myTricks).toEqual({ mines: [], splashes: [], pending: null, whisper: null });
     expect(viewOf(s, 'north').myTricks).toBeNull();
   });
 
@@ -1119,7 +1119,7 @@ describe('ghosts', () => {
     ];
     expect(MINE_LIMIT).toBe(3);
     expect(codeOf(() => trick(s, 'west', { trick: 'mine', at: 'north', cell: 'h4' }))).toBe('MINE_LIMIT');
-    expect(tricksOf(s, 'west').every((c) => c.trick === 'splash')).toBe(true);
+    expect(tricksOf(s, 'west').every((c) => c.trick !== 'mine')).toBe(true);
     s = { ...s, mines: s.mines.slice(0, 1) };
     expect(codeOf(() => trick(s, 'west', { trick: 'mine', at: 'east', cell: 'h1' }))).toBe('YOUR_MINE');
     s = { ...s, mines: [{ ghost: 'north', sea: 'east', cell: 'h5', round: 1 }] };
@@ -1132,7 +1132,7 @@ describe('ghosts', () => {
     s = volley(s, { north: ['south', 'b7'] });
     expect(G.stillSeated!(s, 'south')).toBe(true);
     expect(codeOf(() => trick(s, 'south', { trick: 'splash', fool: 'north', at: 'east', cell: 'e2' }))).toBe('TOO_FEW');
-    expect(tricksOf(s, 'south').every((c) => c.trick === 'mine')).toBe(true);
+    expect(tricksOf(s, 'south').every((c) => c.trick !== 'splash')).toBe(true);
   });
 
   test('a ghost with no trick sits out', () => {
@@ -1140,7 +1140,11 @@ describe('ghosts', () => {
     preHit(s, 'south', SHIP_CELLS.filter((c) => c !== 'b7'));
     s = volley(s, { north: ['south', 'b7'] });
     s.mines = ['h1', 'h2', 'h3'].map((cell) => ({ ghost: 'south', sea: 'east', cell, round: 1 }));
-    expect(turn.legal(s, 'south')).toEqual([]);
+    // A whisper is always on offer, unless its own auction is still running.
+    s.auctions = [{ ghost: 'south', sea: 'east', centre: 'd4', cells: buoyCells('d4'), truth: 0, tell: null, opensRound: s.round, closesAt: null, bids: {}, abstained: [], state: 'sold', winner: 'north', price: 1, closedRound: s.round }];
+    expect(tricksOf(s, 'south').every((c) => (c.trick as string) === 'whisper')).toBe(true);
+    s.auctions[0] = { ...s.auctions[0], state: 'open', winner: null, closedRound: null };
+    expect(turn.legal(s, 'south')).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ tell: n })));
     expect(turn.toMove(s)).toEqual(['north', 'east']);
   });
 
@@ -2197,5 +2201,528 @@ describe('repair and decoy', () => {
       expect(turn.describe!(cmd)).toBe('fires');
       expect(turn.narrate!(s, use(s, 'east', cmd), 'east', cmd)).toBe('is ready');
     }
+  });
+});
+
+// ── Whisper: a ghost auctions a sonar reading ──
+
+const T0 = 1_700_000_000_000;
+const clockAt = (s: SalvoState, now: number) => turn.clock!(s, now);
+const bid = (s: SalvoState, seat: string, n: unknown, ghost?: string) => turn.apply(s, seat, ghost === undefined ? { bid: n } : { bid: n, ghost });
+const tell = (s: SalvoState, seat: string, n: unknown) => turn.apply(s, seat, { tell: n });
+/**
+ * West (a ghost) lists a whisper on east's d4 (c3–e5: east's c3 and c5 are ship cells, so the truth is 2) in
+ * round 2; the living fire (`shots`, fillers for the rest): round 3 opens with the auction open. North has 4
+ * scrap (it sank west), the others none.
+ */
+function listed(shots: Record<string, Shot | Shot[]> = {}, cell = 'd4', sea = 'east'): SalvoState {
+  let s = withGhost();
+  s = trick(s, 'west', { trick: 'whisper', at: sea, cell });
+  return volley(s, shots);
+}
+/** The same, with the auction stamped open at T0 and some scrap to bid with. */
+function bidding(scrap: Record<string, number> = { north: 10, east: 10, south: 10 }): SalvoState {
+  const s = clockAt(listed(), T0);
+  Object.assign(s.scrap, scrap);
+  return s;
+}
+const whisperOf = (s: SalvoState) => s.auctions.at(-1)!;
+const bidsIn = (l: unknown[]) => (l as SalvoCommand[]).filter((c) => 'bid' in c);
+const tellsIn = (l: unknown[]) => (l as SalvoCommand[]).filter((c) => 'tell' in c);
+
+describe('whisper: the listing', () => {
+  test("a ghost's tricks include a whisper on every buoy centre (b2–g7) of every living sea", () => {
+    const s = withGhost();
+    const whispers = (turn.legal(s, 'west') as SalvoCommand[]).filter((c) => 'trick' in c && c.trick === 'whisper') as { trick: 'whisper'; at: string; cell: string }[];
+    expect(whispers.length).toBe(3 * 36);
+    expect(whispers.every((c) => ['north', 'east', 'south'].includes(c.at) && isBuoyCentre(c.cell))).toBe(true);
+    expect(whispers[0]).toEqual({ trick: 'whisper', at: 'north', cell: 'b2' });
+    // Whispers come after the mines and the splashes.
+    const legal = turn.legal(s, 'west') as SalvoCommand[];
+    expect(legal.findIndex((c) => 'trick' in c && c.trick === 'whisper')).toBe(legal.length - 108);
+  });
+
+  test('illegal listings carry precise codes', () => {
+    const s = withGhost();
+    expect(codeOf(() => trick(s, 'west', { trick: 'whisper', at: 'east', cell: 'a1' }))).toBe('BAD_AREA');
+    expect(codeOf(() => trick(s, 'west', { trick: 'whisper', at: 'east', cell: 'h8' }))).toBe('BAD_AREA');
+    expect(codeOf(() => trick(s, 'west', { trick: 'whisper', at: 'east', cell: 'z9' }))).toBe('BAD_CELL');
+    expect(codeOf(() => trick(s, 'west', { trick: 'whisper', at: 'west', cell: 'd4' }))).toBe('BAD_TARGET');
+    expect(codeOf(() => trick(s, 'north', { trick: 'whisper', at: 'east', cell: 'd4' }))).toBe('NOT_A_GHOST');
+    // A shot cell is no bar: the area is listed, not shot.
+    const shot = structuredClone(s);
+    preHit(shot, 'east', ['d4']);
+    expect(codeOf(() => trick(shot, 'west', { trick: 'whisper', at: 'east', cell: 'd4' }))).toBeNull();
+  });
+
+  test('the listing is the round\'s trick: secret until the volley, then an open auction and a line', () => {
+    let s = withGhost();
+    const cmd = { trick: 'whisper', at: 'east', cell: 'd4' };
+    const after = trick(s, 'west', cmd);
+    expect(after.ready).toEqual(['west']);
+    expect(viewOf(after, 'west').myTricks!.pending).toEqual({ trick: 'whisper', at: 'east', cell: 'd4' });
+    expect(turn.describe!(cmd)).toBe('plays a dirty trick');
+    expect(turn.narrate!(s, after, 'west', cmd)).toBe('is up to something…');
+    expect(viewOf(after, 'north').auctions).toEqual([]);
+    const round = s.round;
+    const before = after;
+    s = volley(after, {});
+    expect(s.round).toBe(round + 1);
+    expect(s.auctions).toEqual([
+      {
+        ghost: 'west',
+        sea: 'east',
+        centre: 'd4',
+        cells: ['c3', 'd3', 'e3', 'c4', 'd4', 'e4', 'c5', 'd5', 'e5'],
+        truth: 2,
+        tell: null,
+        opensRound: round + 1,
+        closesAt: null,
+        bids: {},
+        abstained: [],
+        state: 'open',
+        winner: null,
+        price: 0,
+        closedRound: null,
+      },
+    ]);
+    expect(roundSummary(before, s)).toContain("👻 {west} auctions a sonar reading on {east}'s sea, c3–e5 — 30 seconds.");
+  });
+
+  test('the truth counts real ship cells afloat after the listing volley: a hit in it counts, a decoy never does', () => {
+    // North hits east's c3 in the listing volley: only c5 is left.
+    expect(whisperOf(listed({ north: ['east', 'c3'] })).truth).toBe(1);
+    // A live decoy on d4–e4 sits under the area: invisible to it, as to a buoy.
+    let s = withGhost();
+    s = turn.apply(s, 'north', { crate: 'pass' });
+    s.arsenal.east = ['decoy'];
+    s = turn.apply(s, 'east', { use: 'decoy', at: 'd4', facing: 'east' });
+    s = trick(s, 'west', { trick: 'whisper', at: 'east', cell: 'd4' });
+    s = volley(s, {});
+    expect(s.decoys.east[0].cells).toEqual(['d4', 'e4']);
+    expect(whisperOf(s).truth).toBe(2);
+  });
+
+  test('one open auction a ghost: no whisper on offer while it runs, and a second is refused', () => {
+    const s = listed();
+    expect(tricksOf(s, 'west').some((c) => (c.trick as string) === 'whisper')).toBe(false);
+    expect(codeOf(() => trick(s, 'west', { trick: 'whisper', at: 'north', cell: 'd4' }))).toBe('AUCTION_OPEN');
+    // The ghost still owes its trick for the round (a mine or a splash).
+    expect(turn.toMove(s)).toContain('west');
+  });
+
+  test('a listing whose sea goes out in its own volley still opens (its reading stands)', () => {
+    let s = withGhost();
+    preHit(s, 'east', SHIP_CELLS.filter((c) => c !== 'b7'));
+    s = trick(s, 'west', { trick: 'whisper', at: 'east', cell: 'c6' });
+    s = volley(s, { north: ['east', 'b7'] });
+    expect(s.eliminated.map((x) => x.seat)).toEqual(['west', 'east']);
+    expect(whisperOf(s)).toMatchObject({ sea: 'east', truth: 0, state: 'open' });
+  });
+
+  test('a listing in the volley that ends the match never opens', () => {
+    let s = deployed(3);
+    preHit(s, 'south', SHIP_CELLS.filter((c) => c !== 'b7'));
+    s = volley(s, { north: ['south', 'b7'] });
+    preHit(s, 'east', SHIP_CELLS.filter((c) => c !== 'b7'));
+    s = trick(s, 'south', { trick: 'whisper', at: 'north', cell: 'd4' });
+    const before = s;
+    s = volley(s, { north: ['east', 'b7'] });
+    expect(s.phase).toBe('over');
+    expect(s.auctions).toEqual([]);
+    expect(roundSummary(before, s).some((l) => l.includes('auctions'))).toBe(false);
+  });
+});
+
+describe('whisper: the clock', () => {
+  test('the first clock in the opening round stamps closesAt; wakeAt asks for it; nothing due is the same object', () => {
+    const s = listed();
+    expect(turn.wakeAt!(s)).toBeNull();
+    const stamped = clockAt(s, T0);
+    expect(whisperOf(stamped).closesAt).toBe(T0 + 30_000);
+    expect(turn.wakeAt!(stamped)).toBe(T0 + 30_000);
+    expect(clockAt(stamped, T0 + 29_999)).toBe(stamped);
+    expect(roundSummary(s, stamped)).toEqual([]);
+    expect(viewOf(stamped, null).auctions[0].closesAt).toBe(T0 + 30_000);
+  });
+
+  test('a clock at or after closesAt closes it, told in a same-round summary', () => {
+    let s = bidding();
+    s = bid(s, 'north', 4);
+    const closed = clockAt(s, T0 + 30_000);
+    expect(closed.round).toBe(s.round);
+    expect(whisperOf(closed)).toMatchObject({ state: 'sold', winner: 'north', price: 4, closedRound: s.round });
+    expect(roundSummary(s, closed)).toEqual(["{north} wins {west}'s whisper for 4 scrap."]);
+    expect(turn.wakeAt!(closed)).toBeNull();
+    expect(clockAt(closed, T0 + 60_000)).toBe(closed);
+  });
+
+  test('a clock with no auction, or after the match, changes nothing', () => {
+    const s = deployed();
+    expect(clockAt(s, T0)).toBe(s);
+    expect(turn.wakeAt!(s)).toBeNull();
+    const over = { ...listed(), phase: 'over' as const };
+    expect(clockAt(over, T0)).toBe(over);
+    expect(turn.wakeAt!(over)).toBeNull();
+  });
+
+  test('wakeAt is the earliest closesAt among open auctions', () => {
+    const s = bidding();
+    s.auctions.push({ ...structuredClone(whisperOf(s)), ghost: 'north', closesAt: T0 + 10_000 });
+    expect(turn.wakeAt!(s)).toBe(T0 + 10_000);
+  });
+});
+
+describe('whisper: bids', () => {
+  test('the living may act during the auction; the ghost may tell; nobody else', () => {
+    let s = bidding();
+    for (const seat of ['north', 'east', 'south', 'west']) expect(turn.mayAct!(s, seat)).toBe(true);
+    expect(turn.mayAct!(withGhost(), 'north')).toBe(false);
+    expect(turn.mayAct!(withGhost(), 'west')).toBe(false);
+    s = clockAt(s, T0 + 30_000);
+    for (const seat of ['north', 'east', 'south', 'west']) expect(turn.mayAct!(s, seat)).toBe(false);
+  });
+
+  test('a bid is sealed: the table sees bid / abstained / nothing, the bidder its own amount', () => {
+    let s = bidding();
+    s = bid(s, 'north', 3);
+    s = bid(s, 'south', 0);
+    const status: Record<string, 'bid' | 'abstained' | null> = { north: 'bid', east: null, south: 'abstained' };
+    for (const seat of [null, 'north', 'east', 'south', 'west']) {
+      const v = viewOf(s, seat);
+      expect(v.auctions).toEqual([{ ghost: 'west', sea: 'east', centre: 'd4', cells: buoyCells('d4'), closesAt: T0 + 30_000, bids: status }]);
+      expect(v.myBids).toEqual(seat === 'north' ? { west: 3 } : {});
+      expect(v.whispers).toEqual([]);
+      expect(v.truths).toBeNull();
+    }
+    // The amount and the truth are nowhere in another seat's view (north's 3 vs the other views).
+    expect(JSON.stringify(viewOf(s, 'east'))).not.toContain('"truth"');
+  });
+
+  test('a bid never makes a seat owe or blocks the round; nor does a tell', () => {
+    let s = bidding();
+    const owing = turn.toMove(s);
+    s = bid(s, 'east', 2);
+    s = tell(s, 'west', 5);
+    expect(turn.toMove(s)).toEqual(owing);
+    expect(s.ready).toEqual([]);
+    s = salvo(s, 'north');
+    expect(s.ready).toEqual(['north']);
+    s = bid(s, 'north', 1); // north owes nothing now: an optional move
+    expect(s.ready).toEqual(['north']);
+    expect(turn.toMove(s)).not.toContain('north');
+  });
+
+  test('a bid is replaced, withdrawn with 0, and ties go to the earliest time that amount was placed', () => {
+    let s = bidding();
+    s = bid(s, 'east', 5);
+    s = bid(s, 'south', 5);
+    s = bid(s, 'east', 5); // the same amount again keeps its place
+    expect(whisperOf(s).bids.east!.at).toBeLessThan(whisperOf(s).bids.south!.at);
+    expect(whisperOf(clockAt(s, T0 + 30_000))).toMatchObject({ winner: 'east', price: 5 });
+    s = bid(s, 'east', 4);
+    s = bid(s, 'east', 5); // a new time: now after south's
+    expect(whisperOf(clockAt(s, T0 + 30_000))).toMatchObject({ winner: 'south', price: 5 });
+    s = bid(s, 'south', 0); // withdrawn: abstains
+    expect(viewOf(s, null).auctions[0].bids.south).toBe('abstained');
+    expect(whisperOf(clockAt(s, T0 + 30_000))).toMatchObject({ winner: 'east', price: 5 });
+    s = bid(s, 'south', 6); // back in: no longer abstaining
+    expect(viewOf(s, null).auctions[0].bids.south).toBe('bid');
+    expect(whisperOf(clockAt(s, T0 + 30_000))).toMatchObject({ winner: 'south', price: 6 });
+  });
+
+  test("the winner pays the ghost; only the winner hears the ghost's word (the truth unless it told otherwise)", () => {
+    let s = bidding({ north: 10, east: 8, south: 3 });
+    s.scrap.west = 1;
+    s = bid(s, 'east', 4);
+    s = bid(s, 'south', 3);
+    let closed = clockAt(s, T0 + 30_000);
+    expect(closed.scrap).toMatchObject({ north: 10, east: 4, south: 3, west: 5 });
+    expect(viewOf(closed, 'east').whispers).toEqual([{ ghost: 'west', sea: 'east', cells: buoyCells('d4'), said: 2 }]);
+    for (const seat of [null, 'north', 'south', 'west']) expect(viewOf(closed, seat).whispers).toEqual([]);
+    expect(viewOf(closed, null).auctions).toEqual([]);
+    s = tell(s, 'west', 7);
+    closed = clockAt(s, T0 + 30_000);
+    expect(viewOf(closed, 'east').whispers[0].said).toBe(7);
+    expect(viewOf(closed, 'east').ascii).toContain('👻 west says 7 ship cells in east\'s c3–e5');
+  });
+
+  test('no bids: no sale, no scrap moves', () => {
+    let s = bidding();
+    s = bid(s, 'north', 0);
+    const closed = clockAt(s, T0 + 30_000);
+    expect(whisperOf(closed)).toMatchObject({ state: 'unsold', winner: null, price: 0 });
+    expect(closed.scrap).toEqual(s.scrap);
+    expect(roundSummary(s, closed)).toEqual(["Nobody bids on {west}'s whisper."]);
+  });
+
+  test('the sea\'s owner may bid to bury it', () => {
+    let s = bidding();
+    s = bid(s, 'east', 9);
+    s = bid(s, 'north', 2);
+    expect(whisperOf(clockAt(s, T0 + 30_000))).toMatchObject({ winner: 'east', price: 9 });
+  });
+
+  test('refused bids carry precise codes', () => {
+    const s = bidding({ north: 4, east: 0, south: 10 });
+    expect(codeOf(() => bid(withGhost(), 'north', 1))).toBe('NO_AUCTION');
+    expect(codeOf(() => bid(s, 'west', 1))).toBe('OWN_WHISPER');
+    expect(codeOf(() => bid(s, 'north', -1))).toBe('BAD_BID');
+    expect(codeOf(() => bid(s, 'north', 1.5))).toBe('BAD_BID');
+    expect(codeOf(() => bid(s, 'north', '3'))).toBe('BAD_BID');
+    expect(codeOf(() => bid(s, 'north', 5))).toBe('BAD_BID'); // more than its scrap
+    expect(codeOf(() => bid(s, 'east', 1))).toBe('BAD_BID');
+    expect(codeOf(() => bid(s, 'east', 0))).toBeNull(); // abstaining costs nothing
+    expect(codeOf(() => bid(s, 'north', 4))).toBeNull(); // all of it
+    expect(codeOf(() => bid(s, 'north', 1, 'south'))).toBe('NO_AUCTION');
+    expect(codeOf(() => bid(s, 'north', 1, 'west'))).toBeNull();
+    expect(codeOf(() => turn.apply(s, 'north', { bid: 1, ghost: 7 }))).toBe('BAD_COMMAND');
+  });
+
+  test('refused tells carry precise codes', () => {
+    const s = bidding();
+    expect(codeOf(() => tell(s, 'north', 3))).toBe('NOT_YOUR_AUCTION');
+    expect(codeOf(() => tell(withGhost(), 'west', 3))).toBe('NOT_YOUR_AUCTION');
+    for (const n of [-1, 10, 2.5, '3', null]) expect(codeOf(() => tell(s, 'west', n))).toBe('BAD_TELL');
+    for (const n of [0, 9]) expect(codeOf(() => tell(s, 'west', n))).toBeNull();
+    const told = tell(tell(s, 'west', 0), 'west', 4); // changeable until the close
+    expect(whisperOf(told).tell).toBe(4);
+  });
+
+  test("the ghost sees its truth and its tell; nobody else does", () => {
+    let s = bidding();
+    expect(viewOf(s, 'west').myTricks!.whisper).toEqual({ truth: 2, tell: null });
+    s = tell(s, 'west', 6);
+    expect(viewOf(s, 'west').myTricks!.whisper).toEqual({ truth: 2, tell: 6 });
+    expect(viewOf(s, 'west').ascii).toContain('Your whisper on east\'s c3–e5: the truth is 2; you will tell 6.');
+    for (const seat of [null, 'north', 'east', 'south']) {
+      const v = viewOf(s, seat);
+      expect(v.myTricks).toBeNull();
+      expect(JSON.stringify(v)).not.toContain('"tell"');
+      expect(v.ascii).not.toContain('truth');
+    }
+    expect(viewOf(withGhost(), 'west').myTricks!.whisper).toBeNull();
+  });
+
+  test('legal: a seat that owes nothing gets its bids only (0..min(scrap, 20)); an owing seat its owed commands first', () => {
+    let s = bidding({ north: 3, east: 25, south: 0 });
+    // Owing: shells and buoys first, then the bids.
+    const north = turn.legal(s, 'north') as SalvoCommand[];
+    expect(bidsIn(north)).toEqual([0, 1, 2, 3].map((n) => ({ bid: n, ghost: 'west' })));
+    expect(north.slice(-4)).toEqual(bidsIn(north));
+    expect('fire' in north[0]).toBe(true);
+    expect(bidsIn(turn.legal(s, 'east')).length).toBe(21);
+    expect(bidsIn(turn.legal(s, 'south'))).toEqual([{ bid: 0, ghost: 'west' }]);
+    // Ready: the bids alone.
+    s = salvo(s, 'north');
+    expect(turn.legal(s, 'north')).toEqual([0, 1, 2, 3].map((n) => ({ bid: n, ghost: 'west' })));
+    // Every one of them applies.
+    for (const c of turn.legal(s, 'north')) expect(codeOf(() => turn.apply(s, 'north', c))).toBeNull();
+    // The ghost: its owed tricks first, then its tells 0–9.
+    const west = turn.legal(s, 'west') as SalvoCommand[];
+    expect('trick' in west[0]).toBe(true);
+    expect(tellsIn(west)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ tell: n })));
+    expect(west.slice(-10)).toEqual(tellsIn(west));
+    expect(bidsIn(west)).toEqual([]);
+    // A ghost that has played its trick: its tells alone.
+    s = trick(s, 'west', { trick: 'mine', at: 'south', cell: 'h1' });
+    expect(turn.legal(s, 'west')).toEqual(tellsIn(west));
+  });
+
+  test('a bid from a seat that owes nothing applies (mayAct); after the close it is refused AUCTION_CLOSED', () => {
+    let s = bidding();
+    s = salvo(s, 'north');
+    s = bid(s, 'north', 2);
+    expect(whisperOf(s).bids.north!.n).toBe(2);
+    const closed = clockAt(s, T0 + 30_000);
+    expect(codeOf(() => bid(closed, 'north', 3))).toBe('AUCTION_CLOSED');
+    expect(codeOf(() => bid(closed, 'east', 3))).toBe('AUCTION_CLOSED');
+    expect(codeOf(() => bid(closed, 'east', 3, 'west'))).toBe('AUCTION_CLOSED');
+    expect(codeOf(() => tell(closed, 'west', 3))).toBe('AUCTION_CLOSED');
+    expect(turn.legal(closed, 'north')).toEqual([]);
+    expect(bidsIn(turn.legal(closed, 'east'))).toEqual([]);
+  });
+});
+
+describe('whisper: the close', () => {
+  test('Review Focus 1: the round resolving before 30 s closes it with the bids so far, before the volley', () => {
+    let s = bidding({ north: 10, east: 10, south: 10 });
+    s = bid(s, 'south', 3);
+    const before = s;
+    s = haunt(volley(s, {}));
+    expect(s.round).toBe(before.round + 1);
+    expect(s.auctions[0]).toMatchObject({ state: 'sold', winner: 'south', price: 3, closedRound: before.round });
+    expect(s.scrap.south).toBe(7);
+    expect(s.scrap.west).toBe(3);
+    const lines = roundSummary(before, s);
+    expect(lines[0]).toBe("{south} wins {west}'s whisper for 3 scrap.");
+    expect(turn.wakeAt!(s)).toBeNull();
+    // A clock after the resolution has nothing left to close.
+    expect(clockAt(s, T0 + 31_000).auctions).toEqual(s.auctions);
+  });
+
+  test('an auction never stamped (no clock ran) still closes with its round', () => {
+    let s = listed();
+    s.scrap.north = 5;
+    s = bid(s, 'north', 5);
+    s = haunt(volley(s, {}));
+    expect(s.auctions[0]).toMatchObject({ state: 'sold', winner: 'north', closesAt: null });
+  });
+
+  test('Review Focus 2: a stale bid after the clock closed it is refused, and scrap moves once', () => {
+    let s = bidding({ north: 10, east: 10, south: 10 });
+    s = bid(s, 'east', 6);
+    const closed = clockAt(s, T0 + 30_000);
+    expect(closed.scrap.east).toBe(4);
+    expect(codeOf(() => bid(closed, 'east', 7))).toBe('AUCTION_CLOSED');
+    // The round resolving later closes nothing again.
+    const resolved = haunt(volley(closed, {}));
+    expect(resolved.scrap.east).toBe(4);
+    expect(resolved.scrap.west).toBe(6);
+    expect(roundSummary(closed, resolved).some((l) => l.includes('whisper'))).toBe(false);
+    // A second clock at the same time is no change.
+    expect(clockAt(closed, T0 + 30_000)).toBe(closed);
+  });
+
+  test('Review Focus 3: scrap moves only at the close; a bid over your scrap is refused when made, and skipped at the close if you can no longer pay', () => {
+    // Two ghosts, two auctions: east bids 5 on each with 6 scrap. The first close takes 5; the second bid is skipped.
+    let s = deployed(4);
+    preHit(s, 'west', SHIP_CELLS.filter((c) => c !== 'b7'));
+    preHit(s, 'south', SHIP_CELLS.filter((c) => c !== 'b7'));
+    s = volley(s, { north: ['west', 'b7'], east: ['south', 'b7'] });
+    expect(G.stillSeated!(s, 'south') && G.stillSeated!(s, 'west')).toBe(true);
+    s = trick(s, 'south', { trick: 'whisper', at: 'north', cell: 'd4' });
+    s = trick(s, 'west', { trick: 'whisper', at: 'north', cell: 'f6' });
+    s = volley(s, {});
+    expect(s.auctions.map((a) => a.ghost)).toEqual(['south', 'west']);
+    s = clockAt(s, T0);
+    s.scrap.east = 6;
+    s.scrap.north = 1;
+    expect(codeOf(() => bid(s, 'east', 2))).toBe('BAD_COMMAND'); // two open: name the ghost
+    expect(codeOf(() => bid(s, 'east', 7, 'south'))).toBe('BAD_BID');
+    s = bid(s, 'east', 5, 'south');
+    s = bid(s, 'east', 5, 'west');
+    s = bid(s, 'north', 1, 'west');
+    expect(s.scrap.east).toBe(6); // nothing moves until the close
+    expect(viewOf(s, 'east').myBids).toEqual({ south: 5, west: 5 });
+    const before = s;
+    s = clockAt(s, T0 + 30_000);
+    expect(s.auctions.map((a) => [a.state, a.winner, a.price])).toEqual([
+      ['sold', 'east', 5],
+      ['sold', 'north', 1],
+    ]);
+    expect(s.scrap).toMatchObject({ east: 1, north: 0, south: 5, west: 1 });
+    expect(roundSummary(before, s)).toEqual(["{east} wins {south}'s whisper for 5 scrap.", "{north} wins {west}'s whisper for 1 scrap."]);
+    // A ghost may not bid on another ghost's auction.
+    expect(codeOf(() => bid(before, 'south', 0, 'west'))).toBe('NO_AUCTION');
+    expect(bidsIn(turn.legal(before, 'south'))).toEqual([]);
+    expect(viewOf(before, null).auctions.map((a) => Object.keys(a.bids))).toEqual([['north', 'east'], ['north', 'east']]);
+  });
+
+  test("a ghost that fades takes its auction with it: no sale, told at the round's end", () => {
+    let s = bidding();
+    s = bid(s, 'north', 4);
+    s = G.forfeit!(s, 'west', 'timeout');
+    expect(whisperOf(s)).toMatchObject({ state: 'faded', winner: null });
+    expect(s.scrap.north).toBe(10);
+    expect(turn.wakeAt!(s)).toBeNull();
+    expect(turn.mayAct!(s, 'north')).toBe(false);
+    expect(viewOf(s, null).auctions).toEqual([]);
+    const before = s;
+    s = volley(s, {});
+    expect(roundSummary(before, s)).toContain("{west}'s whisper fades with them.");
+    // Faded in the same step that resolves the round: told then.
+    let t = bidding();
+    for (const seat of ['north', 'east', 'south']) t = salvo(t, seat);
+    const tBefore = t;
+    t = G.forfeit!(t, 'west', 'timeout');
+    expect(t.round).toBe(tBefore.round + 1);
+    expect(roundSummary(tBefore, t)).toContain("{west}'s whisper fades with them.");
+  });
+
+  test('an auction whose sea goes out before the close still closes', () => {
+    let s = bidding();
+    s = bid(s, 'north', 2);
+    s = G.forfeit!(s, 'east', 'resign');
+    expect(whisperOf(clockAt(s, T0 + 30_000))).toMatchObject({ state: 'sold', winner: 'north' });
+  });
+
+  test("a bidder who leaves before the close is out of it", () => {
+    let s = bidding();
+    s = bid(s, 'south', 5);
+    s = bid(s, 'north', 2);
+    s = G.forfeit!(s, 'south', 'resign');
+    expect(whisperOf(clockAt(s, T0 + 30_000))).toMatchObject({ winner: 'north', price: 2 });
+  });
+});
+
+describe('whisper: the end of the match', () => {
+  /** North wins east's whisper (west told `told`), then sinks east's and south's last cells: north takes it. */
+  function ended(told: number | null): { before: SalvoState; after: SalvoState } {
+    let s = bidding();
+    s = bid(s, 'north', 3);
+    if (told !== null) s = tell(s, 'west', told);
+    s = clockAt(s, T0 + 30_000);
+    preHit(s, 'east', SHIP_CELLS.filter((c) => c !== 'b7'), 'south');
+    preHit(s, 'south', SHIP_CELLS.filter((c) => c !== 'b7'), 'east');
+    const before = s;
+    return { before, after: haunt(volley(s, { north: [['east', 'b7'], ['south', 'b7']] })) };
+  }
+
+  test('every sold whisper is told with its truth in the final summary', () => {
+    const lie = ended(3);
+    expect(lie.after.phase).toBe('over');
+    const lines = roundSummary(lie.before, lie.after);
+    expect(lines.at(-1)).toBe("{west} told {north} 3 in {east}'s c3–e5. The truth was 2.");
+    expect(lines.at(-2)).toBe('{north} is the last fleet afloat and takes it.');
+    const honest = ended(null);
+    expect(roundSummary(honest.before, honest.after).at(-1)).toBe("{west} told {north} 2 in {east}'s c3–e5. The truth was 2. An honest ghost!");
+  });
+
+  test('once the match is over every auction is public with its truth', () => {
+    const { after } = ended(3);
+    for (const seat of [null, 'north', 'east', 'west']) {
+      expect(viewOf(after, seat).truths).toEqual([
+        { ghost: 'west', sea: 'east', centre: 'd4', cells: buoyCells('d4'), truth: 2, said: 3, state: 'sold', winner: 'north', price: 3 },
+      ]);
+    }
+    expect(viewOf(after, 'north').whispers).toEqual([{ ghost: 'west', sea: 'east', cells: buoyCells('d4'), said: 3 }]);
+    expect(viewOf(after, null).ascii).toContain("west told north 3 in east's c3–e5; the truth was 2.");
+  });
+
+  test('the match ending by forfeit while an auction runs closes it with its bids, and tells the truth', () => {
+    let s = bidding();
+    s = bid(s, 'east', 2);
+    s = G.forfeit!(s, 'south', 'resign');
+    const before = s;
+    s = G.forfeit!(s, 'north', 'resign');
+    expect(s.phase).toBe('over');
+    expect(whisperOf(s)).toMatchObject({ state: 'sold', winner: 'east', price: 2 });
+    expect(roundSummary(before, s)).toEqual([
+      "{east} wins {west}'s whisper for 2 scrap.",
+      'Everyone else is gone. {east} takes it.',
+      "{west} told {east} 2 in {east}'s c3–e5. The truth was 2. An honest ghost!",
+    ]);
+  });
+});
+
+describe('whisper: narration and ascii', () => {
+  test('a bid or a tell is described without its number', () => {
+    const s = bidding();
+    expect(turn.describe!({ bid: 7, ghost: 'west' })).toBe('bids on a whisper');
+    expect(turn.describe!({ tell: 3 })).toBe('sets its whisper');
+    expect(turn.narrate!(s, bid(s, 'north', 7), 'north', { bid: 7 })).toBe('bids on a whisper');
+    expect(turn.narrate!(s, tell(s, 'west', 3), 'west', { tell: 3 })).toBe('sets its whisper');
+  });
+
+  test('the ascii lists the open auction with its seats, your own bid alone', () => {
+    let s = bidding();
+    s = bid(s, 'north', 3);
+    s = bid(s, 'south', 0);
+    const north = viewOf(s, 'north').ascii;
+    expect(north).toContain("👻 30-second ghost intel auction: west's whisper on east's c3–e5. Bids: north bid, east —, south abstained. Your bid: 3.");
+    const east = viewOf(s, 'east').ascii;
+    expect(east).toContain("👻 30-second ghost intel auction: west's whisper on east's c3–e5. Bids: north bid, east —, south abstained.");
+    expect(east).not.toContain('Your bid');
   });
 });

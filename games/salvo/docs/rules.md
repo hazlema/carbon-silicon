@@ -1081,7 +1081,12 @@ east, scrap 7, 12 ship cells afloat
 and in its view, under `myTricks`:
 
 ```json
-{"mines": [{"sea": "east", "cell": "d6", "round": 3}], "splashes": [], "pending": null}
+{
+  "mines": [{"sea": "east", "cell": "d6", "round": 3}],
+  "splashes": [],
+  "pending": null,
+  "whisper": null
+}
 ```
 
 In round 4 north fires at east's `d6`. The water is empty, and the mine comes
@@ -1312,9 +1317,11 @@ The others from that volley share second place.
 
 Here is a three-player game where north sank south with three full salvos,
 then north and east traded salvos, the same cells both ways and one fewer gun
-for each ship lost, until both last submarines went down in round 8:
+for each ship lost, until both last submarines went down in round 8 (south, a
+ghost by then, had a whisper up for auction that round, and nobody bid):
 
 ```
+Nobody bids on {south}'s whisper.
 Round 8: {north} sinks {east}'s submarine and {east} sinks {north}'s submarine.
 Both fleets go down together. {north} had more scrap. {north} takes it.
 ```
@@ -1683,7 +1690,7 @@ hit in everyone's view until the decoy is found.
 | `ghosts` | The sunk fleets still at the table, in seat order (`[]` once the match is over) |
 | `guns` | During a round, how many shots each living seat fires this round: its ships afloat. Ghosts have no entry |
 | `myOrders` | During a round, the shots you've already sent this round, each `{fire, at, cell}`, in order: `fire` is `shell`, `buoy` or the item's name; a torpedo adds its `lane` (its `cell` is where it enters), a repair or a decoy has your own seat as `at`, and a decoy adds its `facing`. Yours alone: `[]` for everyone else and for spectators |
-| `myTricks` | If you're a ghost, your own mischief: `{mines, splashes, pending}`, below. `null` for everyone else |
+| `myTricks` | If you're a ghost, your own mischief: `{mines, splashes, pending, whisper}`, below. `null` for everyone else |
 | `holding` | How many items each living seat holds, by seat; never which. An item sent this round still counts until the volley lands |
 | `myArsenal` | Yours alone: `{items, crate}`, the items you hold and your open crate's three cards (`null` when none is open). `null` for spectators and once you're out |
 | `mySea` | Your own sea (below); `null` for a spectator |
@@ -1718,13 +1725,13 @@ or `null`; `repaired` lists the welding sparks on your sea. North's after round 
 }
 ```
 
-**`myTricks`**, a ghost's alone, is `{mines, splashes, pending}`: `mines` your
+**`myTricks`**, a ghost's alone, is `{mines, splashes, pending, whisper}`: `mines` your
 live mines, each `{sea, cell, round}` (the round you planted it); `splashes`
 your false splash on show, each `{fool, sea, cell, round}`; and `pending` this
 round's trick once you've sent it, `{trick, at, cell}` (with `fool` for a
-splash), else `null`. West's at the start of round 4, in the
-[mine example](#mine), is
-`{"mines": [{"sea": "east", "cell": "d6", "round": 3}], "splashes": [], "pending": null}`.
+splash), else `null`; and `whisper`, your open auction's `{truth, tell}`, else
+`null`. West's at the start of round 4, in the [mine example](#mine), is
+`{"mines": [{"sea": "east", "cell": "d6", "round": 3}], "splashes": [], "pending": null, "whisper": null}`.
 
 **`TargetView`**, one per enemy sea:
 
