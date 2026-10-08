@@ -1950,7 +1950,7 @@ fetch the match and aim again).
 | `BAD_FOOL` | `fool` isn't a living seat, or is the owner of the sea the splash is on |
 | `BAD_AREA` | A whisper's centre must keep its 3 × 3 on the sea: `b2` to `g7` |
 | `AUCTION_OPEN` | A whisper while your last one is still up for auction: one at a time |
-| `NO_AUCTION` | A bid with no auction open (or none from the ghost you named), or a bid from a ghost or a seat that's out: only the living bid |
+| `NO_AUCTION` | A bid with no auction open (or none from the ghost you named) while you owe your salvo, or a ghost with its own auction open bidding on another ghost's: only the living bid. Other ghosts and seats that are out never get this far: the server refuses their bids with `409 NOT_YOUR_TURN` (as it does a living seat that owes nothing once no auction is open) |
 | `AUCTION_CLOSED` | A bid or a tell on an auction that closed this round or the round before |
 | `BAD_BID` | A bid that isn't a whole number from 0 up to your scrap |
 | `OWN_WHISPER` | A bid on your own whisper: you set the number you tell, `{"tell": 3}` |

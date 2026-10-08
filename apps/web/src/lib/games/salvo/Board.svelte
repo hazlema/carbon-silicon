@@ -1226,6 +1226,13 @@
   /** The seats still owing this round: the match's own list when the page passes it; else the living and the ghosts
    *  not yet ready (a ghost with no trick to play, rare, is counted too: the view doesn't say). */
   const owes = (s: string) => (toMove ? toMove.includes(s) : (!out(s) || ghostOf(s)) && !view.ready.includes(s));
+  /**
+   * Locking in your salvo (or trick) may land the volley, and that closes every auction at once, whatever the
+   * ring says: while you owe, an open auction you haven't touched gets a nudge by the button (never a block).
+   */
+  const bidFirst = $derived(!!me && live && owes(me) && otherAuctions.some((a) => mayBid(a.ghost) && !a.bids[me!]));
+  /** The same for a ghost whose own auction is open and whose number is still the default (the truth). */
+  const tellFirst = $derived(!!me && live && owes(me) && !!myAuction && view.myTricks?.whisper?.tell === null);
   /** Those still owing, besides you. */
   const waitingFor = $derived(view.seats.filter((s) => s !== me && owes(s)).map(handleOf));
   /** The one seat everybody is waiting on, when it comes to that. */
@@ -1298,6 +1305,7 @@
       {#if a.sea === me}<strong>your</strong> sea{:else}<button type="button" class="au-sea" class:human={humanSeat(a.sea)} aria-pressed={targetSea === a.sea} title="Show this sea" onclick={() => (picked = a.sea)}>@{handleOf(a.sea)}</button>'s sea{/if}, <strong>{areaName(a.cells)}</strong>
     </p>
     {#if bidder}
+      <p class="hint au-close" data-testid="auction-close-note">Closes when this round's volley lands, if that's sooner — bid before you lock in.</p>
       <div class="au-mine">
         <span data-testid="auction-mybid">{#if mine > 0}Your sealed bid: <strong>{mine}</strong>{:else if status === 'abstained'}You abstained.{:else}No bid yet{a.sea === me ? ': bid to bury it' : '.'}{/if}</span>
         {#if mine > 0}
@@ -1358,6 +1366,7 @@
         {/each}
       </div>
       <p class="hint au-lie" data-testid="tell-note">{told === w.truth ? 'The truth.' : 'A lie: the truth comes out at the end.'}</p>
+      <p class="hint au-close" data-testid="my-auction-close-note">Closes when this round's volley lands, if that's sooner — set your number before you lock in.</p>
     {/if}
     {@render bidders(a)}
   </div>
@@ -1976,6 +1985,7 @@
                             : `Pick ${plural(room, 'cell')} to fire`}</button
             >
           {/if}
+          {#if bidFirst}<p class="hint au-first" data-testid="auction-first">An auction is still open: bid first.</p>{/if}
         {/if}
       {:else if haunting}
         <div class="ghost-row">
@@ -2051,6 +2061,7 @@
                       : 'Pick a cell for the false splash'}</button
             >
           {/if}
+          {#if tellFirst}<p class="hint au-first" data-testid="auction-first">Your auction is still open: set your number first.</p>{/if}
         {/if}
       {:else if live && amOut}
         <p class="slot">{settling ? 'The volley is landing…' : 'Your fleet is sunk. Watch any sea: the others play on.'}</p>
@@ -4252,6 +4263,15 @@
   }
   .au-lie {
     font-size: 12px;
+  }
+  .au-close {
+    margin: 0;
+    font-size: 11px;
+  }
+  .au-first {
+    margin: 2px 0 0;
+    font-size: var(--step--1);
+    color: #c9a2ff;
   }
   @container salvo (max-width: 520px) {
     .tells {
