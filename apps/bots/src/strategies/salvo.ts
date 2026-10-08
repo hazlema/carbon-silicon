@@ -361,7 +361,12 @@ function mineScores(view: SalvoView, odds: Map<string, Map<string, number>>): (m
  * sea that seat fired at most in the last volley, in the coldest cell there, to waste its shots (never a
  * cell its own splash is still on show at).
  */
-export function chooseGhostTrick(view: SalvoView, legal: SalvoCommand[], opts: SalvoStrategyOptions): SalvoCommand {
+/** A bid or a tell: optional, never owed. */
+const isOptional = (c: SalvoCommand) => 'bid' in c || 'tell' in c;
+
+export function chooseGhostTrick(view: SalvoView, offered: SalvoCommand[], opts: SalvoStrategyOptions): SalvoCommand {
+  const owed = offered.filter((c) => !isOptional(c));
+  const legal = owed.length > 0 ? owed : offered;
   const mines = legal.filter(isMine);
   // Never the same cell twice while its splash there is still on show: the reveal would be told twice.
   const shown = new Set((view.myTricks?.splashes ?? []).map((x) => `${x.sea} ${x.cell}`));
@@ -545,8 +550,11 @@ function doubtBuoy(view: SalvoView, buoys: Map<string, Buoy[]>): Buoy | null {
  * Picks one entry of `legal`, from the view alone: one shot of this round's salvo (it is asked once
  * per gun; `view.myOrders` says what is already in). Deployment is always at random.
  */
-export function chooseSalvoMove(view: SalvoView, legal: SalvoCommand[], opts: SalvoStrategyOptions): SalvoCommand {
-  if (legal.length === 0) throw new Error('No legal moves.');
+export function chooseSalvoMove(view: SalvoView, offered: SalvoCommand[], opts: SalvoStrategyOptions): SalvoCommand {
+  if (offered.length === 0) throw new Error('No legal moves.');
+  // Bids and tells are optional (never owed): no fallback below may land on one by chance.
+  const owed = offered.filter((c) => !isOptional(c));
+  const legal = owed.length > 0 ? owed : offered;
   const random = legal.find((c) => 'place' in c && c.place === 'random');
   if (random) return random;
   // A sunk fleet stays at the table as a ghost: its legal is tricks.

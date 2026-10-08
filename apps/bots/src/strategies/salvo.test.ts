@@ -957,3 +957,25 @@ describe('volleyMoment: crates and decoys', () => {
     expect(at({ items: [{ ...revealed, sea: 'east' }] })).toBeNull();
   });
 });
+
+describe('optional commands are never a fallback', () => {
+  const bids: SalvoCommand[] = [0, 1, 2, 3, 4, 5].map((n) => ({ bid: n, ghost: 'west' }));
+  const tells: SalvoCommand[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ tell: n }));
+
+  test("a ghost whose tricks are all whispers lists one, never tells by chance", () => {
+    const legal: SalvoCommand[] = [{ trick: 'whisper', at: 'east', cell: 'd4' }, { trick: 'whisper', at: 'east', cell: 'e4' }, ...tells];
+    for (const strength of ['easy', 'medium', 'hard'] as const) {
+      for (let k = 0; k < 20; k++) {
+        const c = chooseSalvoMove(view([target('east')], { you: 'west' }), legal, { strength, rng: createRng(k).next });
+        expect('trick' in c && c.trick === 'whisper').toBe(true);
+      }
+    }
+  });
+
+  test('a living seat with no shell on offer falls back to what it owes, never a bid', () => {
+    const legal: SalvoCommand[] = [{ use: 'repair', cell: 'a1' }, ...bids];
+    for (const strength of ['easy', 'medium', 'hard'] as const) {
+      for (let k = 0; k < 20; k++) expect(chooseSalvoMove(view([target('east')]), legal, { strength, rng: createRng(k).next })).toEqual({ use: 'repair', cell: 'a1' });
+    }
+  });
+});

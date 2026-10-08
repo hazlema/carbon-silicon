@@ -95,6 +95,11 @@ export interface TurnRules<S> {
    * firing. Such a move never resets the seat's misses, moves the deadline or changes who owes.
    */
   mayAct?(state: S, seat: SeatId): boolean;
+  /**
+   * Optional: commands a seat may send but never owes (a bid, say). The autopilot never sends them: when a
+   * seat times out it picks only among its legal entries for which this is false.
+   */
+  optional?(state: S, command: unknown): boolean;
 }
 
 // ── Doctrine (standing orders for real-time games, rule 11). Validated and evaluated in doctrine.ts. ──

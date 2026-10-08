@@ -1,4 +1,4 @@
-import { LETTERS, MINE_LIMIT, SIZE, cellName } from './board';
+import { LETTERS, MINE_LIMIT, SIZE, buoyCells, cellName } from './board';
 import type { SalvoView, Ship, ShipId, TargetView } from './index';
 
 /** Ship letters for cells you are allowed to see whole: your own fleet, and every fleet once it is over. */
@@ -82,7 +82,15 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
   if (view.myTricks) {
     lines.push(`You are a ghost: one trick a round. Live mines: ${view.myTricks.mines.length} of ${MINE_LIMIT}.`);
     const p = view.myTricks.pending;
-    if (p) lines.push(`Your trick this round: ${p.trick === 'mine' ? `mine at ${p.at} ${p.cell}` : `false splash for ${p.fool} on ${p.at} ${p.cell}`}.`);
+    if (p) {
+      const what =
+        p.trick === 'mine'
+          ? `mine at ${p.at} ${p.cell}`
+          : p.trick === 'whisper'
+            ? `a whisper on ${p.at}'s ${buoyCells(p.cell)[0]}–${buoyCells(p.cell).at(-1)}`
+            : `false splash for ${p.fool} on ${p.at} ${p.cell}`;
+      lines.push(`Your trick this round: ${what}.`);
+    }
   }
   const area = (cells: string[]) => `${cells[0]}–${cells.at(-1)}`;
   const mine = view.you ? view.auctions.find((a) => a.ghost === view.you) : undefined;

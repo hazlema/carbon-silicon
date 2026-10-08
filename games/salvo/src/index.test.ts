@@ -2261,6 +2261,7 @@ describe('whisper: the listing', () => {
     const after = trick(s, 'west', cmd);
     expect(after.ready).toEqual(['west']);
     expect(viewOf(after, 'west').myTricks!.pending).toEqual({ trick: 'whisper', at: 'east', cell: 'd4' });
+    expect(viewOf(after, 'west').ascii).toContain("Your trick this round: a whisper on east's c3–e5.");
     expect(turn.describe!(cmd)).toBe('plays a dirty trick');
     expect(turn.narrate!(s, after, 'west', cmd)).toBe('is up to something…');
     expect(viewOf(after, 'north').auctions).toEqual([]);
@@ -2311,13 +2312,17 @@ describe('whisper: the listing', () => {
     expect(turn.toMove(s)).toContain('west');
   });
 
-  test('a listing whose sea goes out in its own volley still opens (its reading stands)', () => {
+  test('a listing whose sea goes out in its own volley fizzles: no auction, told nothing', () => {
     let s = withGhost();
     preHit(s, 'east', SHIP_CELLS.filter((c) => c !== 'b7'));
     s = trick(s, 'west', { trick: 'whisper', at: 'east', cell: 'c6' });
+    const before = s;
     s = volley(s, { north: ['east', 'b7'] });
     expect(s.eliminated.map((x) => x.seat)).toEqual(['west', 'east']);
-    expect(whisperOf(s)).toMatchObject({ sea: 'east', truth: 0, state: 'open' });
+    expect(s.auctions).toEqual([]);
+    expect(roundSummary(before, s).some((l) => l.includes('auctions') || l.includes('whisper'))).toBe(false);
+    // The ghost may list again next round.
+    expect(codeOf(() => trick(s, 'west', { trick: 'whisper', at: 'north', cell: 'd4' }))).toBeNull();
   });
 
   test('a listing in the volley that ends the match never opens', () => {
@@ -2724,5 +2729,43 @@ describe('whisper: narration and ascii', () => {
     const east = viewOf(s, 'east').ascii;
     expect(east).toContain("👻 30-second ghost intel auction: west's whisper on east's c3–e5. Bids: north bid, east —, south abstained.");
     expect(east).not.toContain('Your bid');
+  });
+});
+
+describe('whisper: the autopilot', () => {
+  /** The engine's autopilot for one seat: random entries of legal not flagged optional, until it owes nothing. */
+  function autopilot(s: SalvoState, seat: string, seed: number): SalvoState {
+    let rng = seed;
+    const next = () => (rng = (rng * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const round = s.round;
+    while (s.round === round && s.phase === 'fire' && turn.toMove(s).includes(seat)) {
+      const legal = (turn.legal(s, seat) as unknown[]).filter((c) => !turn.optional!(s, c));
+      s = turn.apply(s, seat, legal[Math.floor(next() * legal.length)]);
+    }
+    return s;
+  }
+
+  test('bids and tells are optional; nothing owed is', () => {
+    const s = bidding();
+    expect(turn.optional!(s, { bid: 3, ghost: 'west' })).toBe(true);
+    expect(turn.optional!(s, { tell: 3 })).toBe(true);
+    for (const c of [{ fire: 'shell', at: 'east', cell: 'e5' }, { trick: 'mine', at: 'east', cell: 'e5' }, { trick: 'whisper', at: 'east', cell: 'd4' }, { crate: 'pass' }]) {
+      expect(turn.optional!(s, c)).toBe(false);
+    }
+  });
+
+  test("a dozing living seat never bids; a dozing ghost's tell stands", () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      let s = bidding();
+      s = tell(s, 'west', 7);
+      // Every bid and tell sits after what's owed in legal: an unfiltered pick would find one often.
+      expect(bidsIn(turn.legal(s, 'north')).length).toBe(11);
+      for (const seat of ['north', 'east', 'south']) s = autopilot(s, seat, seed);
+      expect(whisperOf(s).bids).toEqual({});
+      expect(whisperOf(s).abstained).toEqual([]);
+      s = autopilot(s, 'west', seed);
+      // West's trick resolved the round: the auction closed unsold, west's word still 7.
+      expect(whisperOf(s)).toMatchObject({ state: 'unsold', tell: 7 });
+    }
   });
 });

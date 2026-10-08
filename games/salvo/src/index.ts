@@ -476,7 +476,7 @@ function applyTrick(s: SalvoState, seat: SeatId, command: Record<string, unknown
   if (trick === 'whisper') {
     // A whisper lists a 3×3 like a sonar buoy's; shot cells are no bar (the reading counts what's afloat).
     if (!isBuoyCentre(name)) throw new GameRuleError('BAD_AREA', `A whisper's 3×3 must lie on the sea: centre it on b2 to g7, not ${name}.`);
-    if (openAuctionOf(s, seat)) throw new GameRuleError('AUCTION_OPEN', 'Your whisper is still up for auction; one at a time. Plant a mine or play a false splash.');
+    if (openAuctionOf(s, seat)) throw new GameRuleError('AUCTION_OPEN', 'Your whisper is still up for auction; one at a time. Your other tricks are in legal.');
     s.pendingTrick[seat] = { kind: 'whisper', sea: at, cell: name };
     s.ready = bySeatOrder(s, [...s.ready, seat]);
     if (toMove(s).length === 0) resolve(s);
@@ -1055,11 +1055,11 @@ function resolve(s: SalvoState): void {
   if (!ends) for (const x of crateEarners(s, sunk)) s.crates[x].push(dealCrate(s.seed, s.draws++));
   // Whispers listed this round: the ghost's reading is taken now, as a buoy's would be (real ship cells afloat
   // once the shells have landed; a decoy is invisible to it). The auction opens with the next round; never
-  // once the match is over. A sea that went out in this volley is still listed: its reading stands.
+  // once the match is over. A listing on a sea that went out in this volley fizzles, untold (nobody hunts it).
   if (!ends) {
     for (const g of s.seats) {
       const t = s.pendingTrick[g];
-      if (!t || t.kind !== 'whisper' || !alive.includes(t.sea)) continue;
+      if (!t || t.kind !== 'whisper' || isEliminated(s, t.sea)) continue;
       const cells = buoyCells(t.cell);
       s.auctions.push({
         ghost: g,
@@ -1113,7 +1113,7 @@ function apply(state: SalvoState, seat: SeatId, command: unknown): SalvoState {
   } else if ('crate' in cmd) {
     applyCrate(s, seat, cmd);
   } else {
-    if (isGhost(s, seat)) throw new GameRuleError('BAD_COMMAND', 'You are a ghost: send {"trick":"mine","at":"east","cell":"e5"} or {"trick":"splash","fool":"south","at":"east","cell":"e5"}.');
+    if (isGhost(s, seat)) throw new GameRuleError('BAD_COMMAND', 'You are a ghost: send {"trick":"mine","at":"east","cell":"e5"}, {"trick":"splash","fool":"south","at":"east","cell":"e5"} or {"trick":"whisper","at":"east","cell":"d4"}.');
     if ('use' in cmd) applyUse(s, seat, cmd);
     else if (!('fire' in cmd)) throw new GameRuleError('BAD_COMMAND', 'The fleets are down: send {"fire":"shell","at":"east","cell":"e5"}.');
     else applyFire(s, seat, cmd);
@@ -1584,6 +1584,8 @@ export const salvoGame: GameModule<SalvoState> & { turn: TurnRules<SalvoState> &
     clock,
     wakeAt,
     mayAct,
+    // Bids and tells are never owed: the autopilot never sends one.
+    optional: (_s, command) => isBid(command) || isTell(command),
   },
 };
 

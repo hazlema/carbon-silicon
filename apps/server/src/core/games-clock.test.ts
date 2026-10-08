@@ -38,8 +38,13 @@ const ALARM_MS = 5000;
 /** West sits round 2 out: it owes nothing then. */
 const owing = (s: Alarm) => s.seats.filter((x) => !s.picked.includes(x) && !(s.round === 2 && x === 'west'));
 
-function alarmGame(calls: number[], opts: { hooks?: boolean } = {}): GameModule<Alarm> {
+/**
+ * `optional`: an owing seat is also offered fifty bets ahead of its pick, flagged optional (the autopilot must
+ * never send one). `turnBased`: not simultaneous (the autopilot moves toMove()[0] once a timeout).
+ */
+function alarmGame(calls: number[], opts: { hooks?: boolean; optional?: boolean; turnBased?: boolean } = {}): GameModule<Alarm> {
   const hooks = opts.hooks ?? true;
+  const bets = opts.optional ? Array.from({ length: 50 }, (_, i) => ({ bet: i + 1 })) : [];
   return {
     meta: { id: 'alarm', name: 'Alarm', tagline: 'Ring.', mode: 'turn', minPlayers: 2, maxPlayers: 4, seats: SEATS, rulesPath: 'no-rules.md', humans: true },
     setup: ({ seats }) => ({ seats, round: 1, picked: [], totals: Object.fromEntries(seats.map((x) => [x, 0])), stamp: null, alarm: null, rang: false, bets: {} }),
@@ -48,10 +53,11 @@ function alarmGame(calls: number[], opts: { hooks?: boolean } = {}): GameModule<
     forfeit: (s) => ({ ...s, round: 4 }),
     turn: {
       turnSeconds: 60,
-      simultaneous: true,
+      simultaneous: !opts.turnBased,
       round: (s) => s.round,
       toMove: owing,
-      legal: (s, seat) => (owing(s).includes(seat) ? [{ pick: 1 }] : s.rang ? [] : [{ bet: 1 }]),
+      legal: (s, seat) => (owing(s).includes(seat) ? [...bets, { pick: 1 }] : s.rang ? [] : [{ bet: 1 }]),
+      ...(opts.optional ? { optional: (_s: Alarm, c: unknown) => typeof c === 'object' && c !== null && 'bet' in c } : {}),
       apply: (s, seat, command) => {
         const c = command as { pick?: number; bet?: number };
         const next = structuredClone(s);
@@ -341,5 +347,35 @@ describe('optional moves (mayAct)', () => {
     expect(view(ctx).rang).toBe(true);
     expect(ctx.games.envelope(ctx.id, ctx.north.id).legal).toEqual([]);
     expect((await errorOf(send(ctx, ctx.north, { bet: 3 }))).code).toBe('NOT_YOUR_TURN');
+  });
+});
+
+describe('optional commands (TurnRules.optional)', () => {
+  test('a simultaneous round that times out never autopilots an optional entry', async () => {
+    const ctx = await setup(alarmGame([], { optional: true }));
+    ctx.clock.advance(60_000);
+    await settle();
+    expect(view(ctx).round).toBe(2);
+    expect(view(ctx).bets).toEqual({});
+  });
+
+  test('a turn-based timeout never autopilots an optional entry', async () => {
+    const ctx = await setup(alarmGame([], { optional: true, turnBased: true }));
+    for (let k = 0; k < 4; k++) {
+      ctx.clock.advance(60_000);
+      await settle();
+    }
+    expect(view(ctx).round).toBe(2);
+    expect(view(ctx).bets).toEqual({});
+    expect(recent(ctx).filter((r) => r.text.includes('pick')).length).toBeGreaterThan(0);
+  });
+
+  test('without the flag the same fifty bets are fair game for the autopilot (the test can tell)', async () => {
+    const game = alarmGame([], { optional: true });
+    delete game.turn!.optional;
+    const ctx = await setup(game);
+    ctx.clock.advance(60_000);
+    await settle();
+    expect(Object.keys(view(ctx).bets).length).toBeGreaterThan(0);
   });
 });

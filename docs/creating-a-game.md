@@ -164,11 +164,12 @@ Set `simultaneous: true` (with `round()`) when every seat in `toMove()` moves at
 
 ### Wake-ups and optional moves
 
-Three optional `TurnRules` hooks for things that run on their own clock (Salvo's 30-second ghost auction). A game that defines none of them behaves exactly as before.
+Four optional `TurnRules` hooks for things that run on their own clock or that a seat may do without owing it (Salvo's 30-second ghost auction). A game that defines none of them behaves exactly as before.
 
 - **`clock(state, nowMs)`** is called with the current time after every accepted move (the autopilot's too) and at every wake-up. Return the same object when nothing is due, or a new state (stamp a time, close what's due). It must be deterministic in `nowMs`. A change is its own revision, and is told through `roundSummary(before, after)`: its lines go to the log with no seat, so `roundSummary()` must also handle a `before`/`after` pair in the same round (return `[]` when there's nothing to say).
 - **`wakeAt(state)`** is the epoch ms at which you next want `clock()` called, or null. The engine re-reads it after every change and keeps one wake-up per match, apart from the round deadline; it's cleared when the match ends or the server stops. A wake-up whose `clock()` changes nothing waits for the next change rather than firing again.
 - **`mayAct(state, seat)`** lets a seat that owes nothing (not in `toMove()`) send a command now, e.g. a bid after firing; `apply()` still validates it. Such a move doesn't reset the seat's misses, move the deadline or change who owes, and in a simultaneous game it isn't logged (the seat is already ready). A command from a seat that *does* owe is an owed move as always, whatever it is.
+- **`optional(state, command)`** flags commands a seat may send but never owes (Salvo's bids and tells). List them in `legal()` after the owed ones; the autopilot never sends a flagged entry when a seat times out, so a dozing player is never made to bid.
 
 ---
 

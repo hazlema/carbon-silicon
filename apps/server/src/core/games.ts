@@ -463,6 +463,20 @@ export class GameManager {
     await this.advance(m, next, { keepTurn: true, clocked: true });
   }
 
+  /** What the autopilot may send: the legal entries the game doesn't flag optional (TurnRules.optional); never throws. */
+  private autopilotLegal(m: LiveMatch, state: unknown, legal: unknown[]): unknown[] {
+    const optional = m.module.turn?.optional;
+    if (!optional) return legal;
+    return legal.filter((c) => {
+      try {
+        return !optional(state, c);
+      } catch (e) {
+        console.error(`[games] optional() in ${m.id} failed`, e);
+        return true;
+      }
+    });
+  }
+
   /** TurnRules.mayAct, never throwing. */
   private mayAct(m: LiveMatch, seat: SeatId): boolean {
     try {
@@ -557,7 +571,7 @@ export class GameManager {
     const who = this.seatInfo(m, seat).identity;
     const table = this.chatOf(m);
     m.timeouts[seat] = (m.timeouts[seat] ?? 0) + 1;
-    const legal = turn.legal(m.state, seat);
+    const legal = this.autopilotLegal(m, m.state, turn.legal(m.state, seat));
     if (m.timeouts[seat] >= this.opts.maxTimeouts || legal.length === 0) {
       const ghost = !!m.module.stillSeated?.(m.state, seat);
       const misses = m.timeouts[seat];
@@ -601,7 +615,7 @@ export class GameManager {
       const moves: string[] = [];
       while (!settled(state) && turn.toMove(state).includes(seat)) {
         const before = state;
-        const legal = turn.legal(before, seat);
+        const legal = this.autopilotLegal(m, before, turn.legal(before, seat));
         applied += 1;
         if (m.timeouts[seat] >= this.opts.maxTimeouts || legal.length === 0) {
           const ghost = !!m.module.stillSeated?.(before, seat);
