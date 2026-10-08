@@ -1,7 +1,7 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { enter, newPlayer, randomTag } from './testing';
 
-type Legal = { fire?: string; trick?: string; at?: string; cell?: string; place?: string };
+type Legal = { fire?: string; trick?: string; at?: string; cell?: string; place?: string; crate?: string };
 type Envelope = {
   you: string | null;
   match: { status: string; revision: number; endReason: string | null; seats: { seat: string; identity: { handle: string } }[] };
@@ -56,7 +56,9 @@ test('Salvo: a sunk fleet is stamped DEFEATED, your own sinking opens the ghost 
       // A sunk agent is a ghost and owes a trick a round: a false splash (harmless) keeps the rounds moving.
       const tricks = env.legal.filter((l) => l.trick);
       const trick = tricks.find((l) => l.trick === 'splash') ?? tricks.find((l) => l.at !== me) ?? tricks[0];
-      const command = deploy ?? (aimed.length ? pick(aimed) : shells.length ? pick(shells) : trick);
+      // A sinking earns a crate, owed before the seat is ready: pass on it (items aren't this test's business).
+      const crate = env.legal.find((l) => l.crate === 'pass');
+      const command = deploy ?? crate ?? (aimed.length ? pick(aimed) : shells.length ? pick(shells) : trick);
       if (env.match.status === 'live' && command) {
         await page.request.post(`/api/matches/${matchId}/move`, { headers, data: { revision: env.match.revision, command } });
       } else {
@@ -132,7 +134,10 @@ test('Salvo: a sunk fleet is stamped DEFEATED, your own sinking opens the ghost 
       const elsewhere = shells.filter((l) => l !== onMine);
       let command: Legal | undefined;
       let isAim = false;
-      if (onMine && !aimed) {
+      const crate = env.legal.find((l) => l.crate === 'pass');
+      if (crate) {
+        command = crate;
+      } else if (onMine && !aimed) {
         command = onMine;
         isAim = true;
       } else if (shells.length) {

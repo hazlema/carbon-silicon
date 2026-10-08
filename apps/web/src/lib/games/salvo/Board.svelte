@@ -1,11 +1,11 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { buoyCells, cellIndex, cellName, hullCells, MINE_LIMIT, SHIPS, SIZE, type Facing, type SalvoCommand, type SalvoView, type ShipId, type TargetView, type Trick, type Volley } from '@cs/salvo';
+  import { cellIndex, cellName, clusterCells, hullCells, MINE_LIMIT, SHIPS, SIZE, torpedoLane, type Facing, type ItemId, type SalvoCommand, type SalvoView, type ShipId, type TargetView, type Trick, type Volley } from '@cs/salvo';
   import type { TableColors } from '$lib/seats';
   import { clampTilt, DRAG_THRESHOLD, fitScale, nearestTurn } from '../critical-mass/iso';
   import { createSound } from '../critical-mass/sound';
   import { typing } from '../lightline/controls';
-  import { incoming, planVolley, sideOf, type Side, type VolleyPlan } from './volley';
+  import { incoming, landingTimes, planVolley, sideOf, TORPEDO_STEP_MS, type Side, type VolleyPlan } from './volley';
 
   let {
     view,
@@ -76,6 +76,15 @@
   const isMine = (l: unknown): l is MineCmd => typeof l === 'object' && l !== null && (l as MineCmd).trick === 'mine';
   const isSplash = (l: unknown): l is SplashCmd => typeof l === 'object' && l !== null && (l as SplashCmd).trick === 'splash';
   const isTrick = (l: unknown): l is MineCmd | SplashCmd => isMine(l) || isSplash(l);
+  type ClusterCmd = Extract<SalvoCommand, { fire: 'cluster' }>;
+  type TorpedoCmd = Extract<SalvoCommand, { fire: 'torpedo' }>;
+  type RepairCmd = Extract<SalvoCommand, { use: 'repair' }>;
+  type DecoyCmd = Extract<SalvoCommand, { use: 'decoy' }>;
+  const isCluster = (l: unknown): l is ClusterCmd => typeof l === 'object' && l !== null && (l as ClusterCmd).fire === 'cluster';
+  const isTorpedo = (l: unknown): l is TorpedoCmd => typeof l === 'object' && l !== null && (l as TorpedoCmd).fire === 'torpedo';
+  const isRepair = (l: unknown): l is RepairCmd => typeof l === 'object' && l !== null && (l as RepairCmd).use === 'repair';
+  const isDecoy = (l: unknown): l is DecoyCmd => typeof l === 'object' && l !== null && (l as DecoyCmd).use === 'decoy';
+  const ITEM_TEST: Record<ItemId, (l: unknown) => boolean> = { cluster: isCluster, torpedo: isTorpedo, repair: isRepair, decoy: isDecoy };
   const randomCmd = $derived(legal.find((l) => typeof l === 'object' && l !== null && (l as { place?: unknown }).place === 'random'));
 
   // ── Which sea is big ──
@@ -96,17 +105,33 @@
   const others = $derived(view.seats.filter((s) => s !== me));
 
   // ── Fire: a salvo, one shot per ship afloat. Clicks toggle aims (on any sea); Fire (or Enter on an aim) sends them, one move each ──
-  type Kind = 'shell' | 'buoy';
+  // An item from your arsenal takes one gun of the salvo, one a round: a cluster or a torpedo at a sea, a repair or a decoy on your own.
+  type Kind = 'shell' | 'buoy' | ItemId;
   interface Aim {
     fire: Kind;
+    /** The sea: a target's, or your own for a repair or a decoy. */
     at: string;
+    /** The cell: a shell's, a buoy's or a cluster's centre, a torpedo's entry, the hit a repair welds, a decoy's first cell. */
     cell: string;
+    lane?: string;
+    facing?: Facing;
   }
+  const ITEM_IDS: readonly ItemId[] = ['cluster', 'torpedo', 'repair', 'decoy'];
+  const isItem = (k: string): k is ItemId => (ITEM_IDS as readonly string[]).includes(k);
+  const ITEM_NAME: Record<ItemId, string> = { cluster: 'Cluster', torpedo: 'Torpedo', repair: 'Repair', decoy: 'Decoy' };
+  const ITEM_ICON: Record<ItemId, string> = { cluster: '✚', torpedo: '➤', repair: '🔧', decoy: '🎭' };
+  /** What each item does, said in the tray while you aim it. */
+  const ITEM_HINT: Record<ItemId, string> = {
+    cluster: 'Cluster: five shells in a plus. Click the centre cell.',
+    torpedo: 'Torpedo: runs a lane from your side to the first ship. Click any cell of the lane.',
+    repair: 'Repair: weld a hit back together. Click a hit on your fleet.',
+    decoy: 'Decoy: a fake two-cell ship on your sea. Click to lay it; R turns it.',
+  };
   let kind = $state<Kind>('shell');
   let aims = $state<Aim[]>([]);
   /** Aims going out right now (each is its own move, awaited in turn). */
   let sending = $state(false);
-  /** The cell under the pointer while aiming a buoy, for its footprint. */
+  /** The cell under the pointer while aiming a buoy, a cluster or a torpedo, for its preview. */
   let aimHover = $state<string | null>(null);
   const round = $derived(view.round);
   const iAmReady = $derived(!!me && view.ready.includes(me));
@@ -118,7 +143,30 @@
   const buoyAimed = $derived(aims.some((a) => a.fire === 'buoy'));
   const buoyUsed = $derived(buoyAimed || sent.some((o) => o.fire === 'buoy'));
   const buoysLegal = $derived(legal.some(isBuoy));
-  const aimKind = $derived<Kind>(buoysLegal && !buoyUsed ? kind : 'shell');
+  // ── The arsenal: what you hold, and the one item this round ──
+  const held = $derived(view.myArsenal?.items ?? []);
+  /** Each kind you hold, once, with how many. */
+  const tray = $derived(ITEM_IDS.filter((x) => held.includes(x)).map((x) => ({ item: x, n: held.filter((h) => h === x).length })));
+  const itemAim = $derived(aims.find((a) => isItem(a.fire)));
+  const itemSent = $derived(sent.find((o) => isItem(o.fire)));
+  const itemLegal = (item: ItemId) => legal.some(ITEM_TEST[item]);
+  /** Why an item can't be aimed now, or null when it can. */
+  function itemWhy(item: ItemId): string | null {
+    if (itemSent) return `One item a round: your ${itemSent.fire} is already away.`;
+    if (itemAim && itemAim.fire !== item) return `One item a round: your ${itemAim.fire} is already in this salvo.`;
+    if (!itemLegal(item)) {
+      if (item === 'repair') return 'Nothing to repair: no hits on a ship still afloat.';
+      if (item === 'decoy') return view.mySea?.decoy ? 'Your decoy is still out there: one at a time.' : 'No open water left on your sea for a decoy.';
+      return `Nothing left to aim a ${item} at.`;
+    }
+    if (!itemAim && room === 0) return 'Every gun is aimed: take one back to use an item.';
+    return null;
+  }
+  /** The tray's reason line: the first item that can't be used and why (one line, like the ghost's). */
+  const trayWhy = $derived(tray.map((x) => itemWhy(x.item)).find((w) => w !== null) ?? null);
+  const aimKind = $derived<Kind>(kind === 'buoy' ? (buoysLegal && !buoyUsed ? 'buoy' : 'shell') : isItem(kind) ? (held.includes(kind) && itemWhy(kind) === null ? kind : 'shell') : 'shell');
+  /** Laying a decoy shows your own sea big. */
+  const placingDecoy = $derived(aimKind === 'decoy' && !iAmReady && !!view.mySea);
   // A new round clears the aims and goes back to shells.
   $effect(() => {
     void round;
@@ -127,22 +175,40 @@
     trickAim = null;
     fool = null;
   });
+  /** The centres a cluster may go on, and the lanes a torpedo may run, on the shown sea. */
+  const clusterCentres = $derived(new Set(legal.filter(isCluster).filter((l) => l.at === targetSea).map((l) => l.cell)));
+  const torpedoLanes = $derived(new Set(legal.filter(isTorpedo).filter((l) => l.at === targetSea).map((l) => l.lane)));
+  const repairCells = $derived(new Set(legal.filter(isRepair).map((l) => l.cell)));
+  /** A torpedo from you runs down a column (north and south) or along a row (east and west): the lane a cell is in. */
+  const laneOf = (cell: string) => (me === 'east' || me === 'west' ? cell.slice(1) : cell[0]);
+  const laneCells = (lane: string) => (me ? (torpedoLane(me, lane) ?? []) : []);
+  /** Which way your torpedo runs on screen (degrees: 0 right, 90 down): north runs down, south up, east leftward, west rightward. */
+  const torpedoDir = (from: string) => ({ north: 90, south: -90, east: 180, west: 0 })[from as Side] ?? 0;
   const aimable = (k: Kind, cell: string) => (k === 'buoy' ? buoyCentres.has(cell) : fireCells.has(cell));
   const aimAt = (sea: string | null, cell: string, k?: Kind) => aims.find((a) => a.at === sea && a.cell === cell && (!k || a.fire === k));
+  /** An aim that sits on this cell (a torpedo's entry cell is only where its lane starts, so it doesn't count). */
+  const aimOn = (sea: string | null, cell: string) => aims.find((a) => a.at === sea && a.cell === cell && a.fire !== 'torpedo');
   const sentAt = (sea: string | null, cell: string) => sent.find((o) => o.fire === 'shell' && o.at === sea && o.cell === cell);
   /** The aims on the shown sea, and how many each other sea has. */
   const aimsHere = $derived(aims.filter((a) => a.at === targetSea));
   const aimedOn = (sea: string) => aims.filter((a) => a.at === sea).length;
   const setKind = (k: Kind) => (kind = k);
-  /** Click a cell: take back an aim there (the buoy's first), or add one if there's a gun free. A buoy moves rather than doubling. */
+  const dropAim = (a: Aim | undefined) => (aims = aims.filter((x) => x !== a));
+  /** Click a cell: take back an aim there (a buoy's or a cluster's first), or add one if there's a gun free. A buoy or an item moves rather than doubling. */
   function toggle(cell: string) {
     if (!targetSea) return;
     const sea = targetSea;
-    const buoy = aimAt(sea, cell, 'buoy');
-    if (buoy) {
-      aims = aims.filter((a) => a !== buoy);
+    if (aimKind === 'torpedo') {
+      const lane = laneOf(cell);
+      const torp = itemAim?.fire === 'torpedo' ? itemAim : undefined;
+      if (torp && torp.at === sea && torp.lane === lane) return dropAim(torp);
+      if (!torpedoLanes.has(lane) || (!itemAim && room === 0)) return;
+      aims = [...aims.filter((a) => a !== itemAim), { fire: 'torpedo', at: sea, cell: laneCells(lane)[0] ?? cell, lane }];
+      kind = 'shell';
       return;
     }
+    const special = aims.find((a) => a.at === sea && a.cell === cell && (a.fire === 'buoy' || a.fire === 'cluster'));
+    if (special) return dropAim(special);
     if (aimKind === 'buoy') {
       if (!buoyCentres.has(cell)) return;
       const other = aims.find((a) => a.fire === 'buoy');
@@ -152,12 +218,59 @@
       kind = 'shell';
       return;
     }
+    if (aimKind === 'cluster') {
+      if (!clusterCentres.has(cell)) return;
+      // A shell aimed at the centre gives way to the cluster (two of your guns can't share a cell).
+      const shellHere = aimAt(sea, cell, 'shell');
+      if (!itemAim && !shellHere && room === 0) return;
+      aims = [...aims.filter((a) => a !== itemAim && a !== shellHere), { fire: 'cluster', at: sea, cell }];
+      kind = 'shell';
+      return;
+    }
     const shell = aimAt(sea, cell, 'shell');
     if (shell) aims = aims.filter((a) => a !== shell);
     else if (room > 0 && fireCells.has(cell)) aims = [...aims, { fire: 'shell', at: sea, cell }];
   }
+  /** Click your own fleet while repairing: weld that hit (again to take it back). */
+  function pickRepair(cell: string) {
+    if (!me) return;
+    const was = itemAim?.fire === 'repair' ? itemAim : undefined;
+    if (was && was.cell === cell) return dropAim(was);
+    if (!repairCells.has(cell) || (!itemAim && room === 0)) return;
+    aims = [...aims.filter((a) => a !== itemAim), { fire: 'repair', at: me, cell }];
+    kind = 'shell';
+  }
+  // ── The decoy: your sea big, a two-cell hull under the pointer, R turns it ──
+  let decoyFacing = $state<Facing>('east');
+  const decoySpots = $derived(new Set(legal.filter(isDecoy).filter((l) => l.facing === decoyFacing).map((l) => l.at)));
+  const decoyAimed = $derived(itemAim?.fire === 'decoy' ? itemAim : undefined);
+  const decoyAimCells = $derived(decoyAimed ? (hullCells(decoyAimed.cell, 2, decoyAimed.facing ?? 'east') ?? []) : []);
+  function pickDecoy(cell: string) {
+    if (!me) return;
+    if (decoyAimed && decoyAimCells.includes(cell)) return dropAim(decoyAimed);
+    if (!decoySpots.has(cell) || (!itemAim && room === 0)) return;
+    aims = [...aims.filter((a) => a !== itemAim), { fire: 'decoy', at: me, cell, facing: decoyFacing }];
+    kind = 'shell';
+  }
+  const turnDecoy = () => (decoyFacing = decoyFacing === 'east' ? 'north' : 'east');
+  $effect(() => {
+    if (!placingDecoy) return;
+    const key = (e: KeyboardEvent) => {
+      if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e.target)) turnDecoy();
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  });
   /** The entry of `legal` an aim stands for, if it's still on offer. */
-  const commandOf = (a: Aim) => legal.find((l) => (a.fire === 'buoy' ? isBuoy(l) : isFire(l)) && (l as FireCmd).at === a.at && (l as FireCmd).cell === a.cell);
+  const commandOf = (a: Aim) =>
+    legal.find((l) => {
+      if (typeof l !== 'object' || l === null) return false;
+      const c = l as Record<string, unknown>;
+      if (a.fire === 'torpedo') return c.fire === 'torpedo' && c.at === a.at && c.lane === a.lane;
+      if (a.fire === 'repair') return c.use === 'repair' && c.cell === a.cell;
+      if (a.fire === 'decoy') return c.use === 'decoy' && c.at === a.cell && c.facing === a.facing;
+      return c.fire === a.fire && c.at === a.at && c.cell === a.cell;
+    });
   /** Send the salvo: one move per aim, in order, each awaited (the page takes one move at a time). Stops if one doesn't land. */
   async function fire() {
     if (!interactive || sending || aims.length === 0) return;
@@ -191,20 +304,60 @@
       out.push({ cell: aimHover, picked: false, sent: false });
     return out;
   });
+  type ItemMark = 'hover' | 'picked' | 'sent';
+  /** A cluster's plus on the shown sea, by cell: the one sent, the one aimed, the one under the pointer. */
+  const plusMarks = $derived.by(() => {
+    const at = new Map<string, { centre: boolean; state: ItemMark }>();
+    const put = (centre: string, state: ItemMark) => clusterCells(centre).forEach((c, k) => at.has(c) || at.set(c, { centre: k === 0, state }));
+    for (const o of sent) if (o.fire === 'cluster' && o.at === targetSea) put(o.cell, 'sent');
+    for (const a of aimsHere) if (a.fire === 'cluster') put(a.cell, 'picked');
+    if (!iAmReady && aimKind === 'cluster' && aimHover && clusterCentres.has(aimHover)) put(aimHover, 'hover');
+    return at;
+  });
+  /** A torpedo's lane on the shown sea, by cell: sent, aimed, or the one the pointer's cell implies (`bad` if it can't run there). */
+  const laneMarks = $derived.by(() => {
+    const at = new Map<string, { head: boolean; state: ItemMark; bad: boolean }>();
+    const put = (lane: string, state: ItemMark, bad = false) => laneCells(lane).forEach((c, k) => at.has(c) || at.set(c, { head: k === 0, state, bad }));
+    for (const o of sent) if (o.fire === 'torpedo' && o.at === targetSea && o.lane) put(o.lane, 'sent');
+    for (const a of aimsHere) if (a.fire === 'torpedo' && a.lane) put(a.lane, 'picked');
+    if (!iAmReady && aimKind === 'torpedo' && aimHover) put(laneOf(aimHover), 'hover', !torpedoLanes.has(laneOf(aimHover)));
+    return at;
+  });
+  /** On your own sea: the repair and the decoy you've aimed or sent this round, by cell. */
+  const ownMarks = $derived.by(() => {
+    const at = new Map<string, { kind: 'repair' | 'decoy'; state: ItemMark; joins: string }>();
+    const put = (o: { fire: Kind; cell: string; facing?: Facing }, state: ItemMark) => {
+      if (o.fire === 'repair') at.set(o.cell, { kind: 'repair', state, joins: '' });
+      if (o.fire === 'decoy') {
+        const cells = hullCells(o.cell, 2, o.facing ?? 'east') ?? [];
+        const joins = joinsOf(cells);
+        for (const c of cells) at.set(c, { kind: 'decoy', state, joins: joins.get(c) ?? '' });
+      }
+    };
+    for (const o of sent) put(o, 'sent');
+    for (const a of aims) if (a.at === me) put(a, 'picked');
+    return at;
+  });
   const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-  /** What the fire button says: "Fire 3 shells", "Fire 2 shells + buoy", "Drop buoy", or "Fire 2 of 4" for part of a salvo. */
+  /** The non-shell parts of a salvo, named: "buoy", "cluster", … */
+  const extrasOf = (list: { fire: Kind }[]) => list.filter((x) => x.fire !== 'shell').map((x) => x.fire);
+  /** What the fire button says: "Fire 3 shells", "Fire 2 shells + buoy", "Fire 1 shell + torpedo", "Drop buoy", or "Fire 2 of 4" for part of a salvo. */
   const fireLabel = $derived.by(() => {
     const shells = aims.filter((a) => a.fire === 'shell').length;
     const owed = guns - sent.length;
     if (aims.length < owed) return `Fire ${aims.length} of ${owed}`;
-    if (!buoyAimed) return `Fire ${plural(shells, 'shell')}`;
-    return shells ? `Fire ${plural(shells, 'shell')} + buoy` : 'Drop buoy';
+    const extras = extrasOf(aims);
+    if (extras.length === 0) return `Fire ${plural(shells, 'shell')}`;
+    if (shells) return `Fire ${plural(shells, 'shell')} + ${extras.join(' + ')}`;
+    if (extras.length === 1) return { buoy: 'Drop buoy', repair: 'Weld the repair', decoy: 'Lay the decoy' }[extras[0] as string] ?? `Fire ${extras[0]}`;
+    return `Fire ${extras.join(' + ')}`;
   });
   /** What went out this round, for the locked-in line. */
   const sentText = $derived.by(() => {
     const shells = sent.filter((o) => o.fire === 'shell').length;
-    const buoy = sent.some((o) => o.fire === 'buoy');
-    return shells && buoy ? `${plural(shells, 'shell')} + buoy away` : buoy ? 'Buoy away' : `${plural(shells, 'shell')} away`;
+    const parts = [...(shells ? [plural(shells, 'shell')] : []), ...extrasOf(sent)];
+    const text = `${parts.join(' + ')} away`;
+    return text[0].toUpperCase() + text.slice(1);
   });
 
   // ── A ghost's trick: one a round, a mine or a false splash. Click a cell (a splash then picks its fool); the button sends it ──
@@ -302,6 +455,9 @@
   function trickText(t: Trick): string {
     if (t.kind === 'splash') return `Dirty trick! The hit ${handleOf(t.fool)} saw on ${handleOf(t.sea)} ${t.cell} was ${handleOf(t.ghost)}'s false splash.`;
     const shell = `${names(t.shooters.map(handleOf))}'s ${t.shooters.length === 1 ? 'shell' : 'shells'}`;
+    if (t.result === 'backfire' && t.ship === 'decoy') {
+      return `Backfire! ${handleOf(t.ghost)}'s mine was sitting on ${handleOf(t.sea)}'s DECOY. ${shell} ${t.shooters.length === 1 ? 'blows' : 'blow'} it out of the water.`;
+    }
     if (t.result === 'backfire') {
       return `Backfire! ${handleOf(t.ghost)}'s mine was sitting on ${handleOf(t.sea)}'s ${t.ship}. ${shell} ${t.shooters.length === 1 ? 'sends' : 'send'} it to the bottom. Thanks for the help, ${handleOf(t.ghost)}.`;
     }
@@ -341,12 +497,17 @@
   });
 
   // ── What each cell shows ──
-  type Mark = 'sea' | 'miss' | 'hit' | 'sunk' | 'ship';
+  /** 'decoy': a revealed decoy's cell, driftwood. */
+  type Mark = 'sea' | 'miss' | 'hit' | 'sunk' | 'ship' | 'decoy';
   interface Hull {
     /** Sides (l r t b) where the hull runs on into the next cell. */
     joins: string;
     wreck: boolean;
     faint: boolean;
+    /** Your own live decoy (dashed), or a revealed one (driftwood). */
+    decoy?: 'live' | 'drift';
+    /** The revealed decoy's first cell carries its DECOY stamp. */
+    stamp?: boolean;
   }
   interface CellModel {
     mark: Mark;
@@ -382,6 +543,14 @@
         cells.set(c, { mark, ship: s.id, hull: { joins: joins.get(c) ?? '', wreck: sunk, faint: false } });
       }
     }
+    // Your live decoy: a dashed hull, its hits like any hit on you.
+    if (m.decoy) {
+      const joins = joinsOf(m.decoy.cells);
+      for (const c of m.decoy.cells)
+        cells.set(c, { mark: m.decoy.hits.includes(c) ? 'hit' : 'ship', ship: null, hull: { joins: joins.get(c) ?? '', wreck: false, faint: false, decoy: 'live' } });
+    }
+    // A hit on your sea with no ship under it was a decoy that has been found: driftwood.
+    for (const [c, r] of Object.entries(m.shots)) if (r === 'hit' && !cells.has(c)) cells.set(c, { mark: 'decoy', ship: null, hull: { joins: '', wreck: false, faint: false, decoy: 'drift' } });
     return cells;
   }
 
@@ -398,6 +567,10 @@
       const joins = joinsOf(s.cells);
       for (const c of s.cells) cells.set(c, { mark: 'sunk', ship: s.ship, hull: { joins: joins.get(c) ?? '', wreck: true, faint: false } });
     }
+    for (const d of t.decoys ?? []) {
+      const joins = joinsOf(d);
+      d.forEach((c, k) => cells.set(c, { mark: 'decoy', ship: null, hull: { joins: joins.get(c) ?? '', wreck: false, faint: false, decoy: 'drift', stamp: k === 0 } }));
+    }
     return cells;
   }
 
@@ -406,17 +579,23 @@
       case 'miss':
         return `${cell}, miss`;
       case 'hit':
-        return own && m.ship ? `${cell}, ${m.ship}, hit` : `${cell}, hit`;
+        return own && m.ship ? `${cell}, ${m.ship}, hit` : own && m.hull?.decoy === 'live' ? `${cell}, your decoy, hit` : `${cell}, hit`;
       case 'sunk':
         return `${cell}, sunk ${m.ship}`;
+      case 'decoy':
+        return `${cell}, decoy (driftwood)`;
       case 'ship':
-        return `${cell}, ${m.ship}`;
+        return m.hull?.decoy === 'live' ? `${cell}, your decoy` : `${cell}, ${m.ship}`;
       default:
         return cell;
     }
   }
 
   const ownCells = $derived(view.mySea ? ownModel(view.mySea) : null);
+  /** Welding sparks (cells repaired and not shot since), by `sea cell`, on every sea you can see. */
+  const sparks = $derived(
+    new Set([...(me && view.mySea ? (view.mySea.repaired ?? []).map((c) => `${me} ${c}`) : []), ...view.targets.flatMap((t) => (t.repaired ?? []).map((c) => `${t.sea} ${c}`))]),
+  );
   const targetCells = $derived(target ? targetModel(target) : null);
   /** The shown sea's lifted rows: row → ship cells still afloat in it (a count, never where). */
   const liftedHere = $derived(new Map((deploying ? [] : (target?.lifted ?? [])).map((x) => [x.row, x.afloat])));
@@ -462,14 +641,18 @@
       clearTimeout(clearFx);
       clearFx = setTimeout(() => (plan = null), p.total + 3000);
       // The warning hangs there until the first shell at you lands (and is long enough to read with no motion at all).
-      const firstAtYou = Math.min(...p.shells.filter((x) => x.sea === me).map((x) => x.landAt));
+      const firstAtYou = Math.min(
+        ...p.shells.filter((x) => x.sea === me).map((x) => x.landAt),
+        ...p.items.flatMap((x) => (x.item === 'cluster' && x.sea === me ? [x.landAt] : x.item === 'torpedo' && x.sea === me ? [x.steps[0] ?? x.at] : [])),
+      );
       const warnFor = !atSea ? 0 : reduced ? 2500 : Number.isFinite(firstAtYou) ? firstAtYou : p.lead + 900;
       if (atSea && me) {
-        const { count, from, buoys } = incoming(v, me);
+        const { count, items, from, buoys } = incoming(v, me);
         const sonar = buoys === 1 ? '1 sonar buoy' : `${buoys} sonar buoys`;
+        const what = [...(count > 0 ? [`${count} ${count === 1 ? 'shell' : 'shells'}`] : []), ...items.map((x) => `a ${x}`)].join(' + ');
         announce(
-          count > 0
-            ? { tone: 'hot', text: `⚠ ${count} ${count === 1 ? 'shell' : 'shells'} incoming on your sea — from ${names(from.map(handleOf))}${buoys ? ` · ${sonar}` : ''}` }
+          what
+            ? { tone: 'hot', text: `⚠ ${what[0].toUpperCase()}${what.slice(1)} incoming on your sea — from ${names(from.map(handleOf))}${buoys ? ` · ${sonar}` : ''}` }
             : buoys > 0
               ? { tone: 'calm', text: `No shells at you — but ${buoys === 1 ? 'a sonar buoy' : sonar} splashed down nearby.` }
               : { tone: 'calm', text: 'Quiet waters: nothing aimed at you this round.' },
@@ -590,14 +773,15 @@
     if (!before) return;
     if ([...now].some((x) => !before.has(x) && x !== me)) untrack(() => sound?.clink());
   });
-  /** When each cell's new result shows: as its shell lands, or with the flash that took it. */
-  const landing = $derived.by(() => {
+  /** When each cell's new result shows: as its shell lands, with the flash that took it, a cluster's plus, a torpedo's run, a boomerang. */
+  const landing = $derived(plan ? landingTimes(plan) : new Map<string, number>());
+  /** When a revealed decoy's stamp comes down, and a repair's spark flies, by `sea cell`. */
+  const itemAt = $derived.by(() => {
     const at = new Map<string, number>();
-    if (!plan) return at;
-    for (const f of plan.flashes) for (const c of f.cells) at.set(`${f.sea} ${c}`, f.at);
-    for (const s of plan.shells) if (!at.has(`${s.sea} ${s.cell}`)) at.set(`${s.sea} ${s.cell}`, s.landAt);
-    // A mine's boomerang lands on the shooter's own sea like one more shell.
-    for (const m of plan.mines) for (const r of m.returns) at.set(`${r.sea} ${r.cell}`, r.at);
+    for (const x of plan?.items ?? []) {
+      if (x.item === 'decoy') for (const c of x.cells) at.set(`${x.sea} ${c}`, x.at);
+      else if (x.item === 'repair') at.set(`${x.from} ${x.cell}`, x.at);
+    }
     return at;
   });
   const sinkingAt = (sea: string, shipId: ShipId | null) => plan?.sinkings.find((x) => x.sea === sea && x.ship === shipId)?.at;
@@ -619,6 +803,17 @@
     }
     for (const k of p.sinkings) sound.thud(k.at / 1000 + 0.25);
     for (const b of p.buoys) sound.pop(9, b.at / 1000);
+    for (const x of p.items) {
+      if (x.item === 'cluster') {
+        sound.thud(x.landAt / 1000);
+        sound.pop(6, x.landAt / 1000 + 0.06);
+        sound.pop(10, x.landAt / 1000 + 0.12);
+      } else if (x.item === 'torpedo') {
+        sound.pop(-10, x.at / 1000);
+        if (x.struck) sound.thud(x.end / 1000);
+      } else if (x.item === 'repair') sound.pop(16, x.at / 1000);
+      else if (x.item === 'decoy') sound.pop(-2, x.at / 1000);
+    }
     for (const m of p.mines) {
       sound.thud(m.at / 1000 + 0.05);
       sound.pop(-4, m.at / 1000 + 0.05);
@@ -740,22 +935,47 @@
     face?.querySelectorAll<HTMLElement>(':scope > button')[row * SIZE + col]?.focus();
   }
 
-  type Mode = 'fire' | 'deploy' | 'view' | 'trick';
-  /** A fire cell takes a click if it holds an aim (to take it back), or is legal and a gun is free (a buoy can always move). */
-  const fireable = (cell: string) =>
-    !sending && (!!aimAt(targetSea, cell) || (aimable(aimKind, cell) && (room > 0 || (aimKind === 'buoy' && buoyAimed))));
+  /** 'repair': your fleet's hits take a click; 'decoy': your own sea, big, takes the decoy. */
+  type Mode = 'fire' | 'deploy' | 'view' | 'trick' | 'repair' | 'decoy';
+  /** A fire cell takes a click if it holds an aim (to take it back), or is legal and a gun is free (a buoy or an item can always move). */
+  const fireable = (cell: string) => {
+    if (sending) return false;
+    const here = aimOn(targetSea, cell);
+    if (aimKind === 'torpedo') {
+      const lane = laneOf(cell);
+      const mine = itemAim?.fire === 'torpedo' && itemAim.at === targetSea && itemAim.lane === lane;
+      return mine || (torpedoLanes.has(lane) && (room > 0 || !!itemAim));
+    }
+    if (aimKind === 'cluster') return (!!here && here.fire !== 'shell') || (clusterCentres.has(cell) && (room > 0 || !!itemAim || here?.fire === 'shell'));
+    return !!here || (aimable(aimKind, cell) && (room > 0 || (aimKind === 'buoy' && buoyAimed)));
+  };
+  const repairable = (cell: string) => !sending && ((itemAim?.fire === 'repair' && itemAim.cell === cell) || (repairCells.has(cell) && (room > 0 || !!itemAim)));
+  const decoyable = (cell: string) => !sending && (decoyAimCells.includes(cell) || (decoySpots.has(cell) && (room > 0 || !!itemAim)));
   /** A trick cell takes a click if it holds the pick (to take it back), or the trick may go there; not once this round's is set. */
   const trickable = (cell: string) => !trickSending && !pendingTrick && (trickAimAt(targetSea, cell) || trickCells.has(cell));
   const enabled = (mode: Mode, cell: string) =>
-    interactive && (mode === 'fire' ? fireable(cell) : mode === 'deploy' ? placeable.has(cell) : mode === 'trick' ? trickable(cell) : false);
+    interactive &&
+    (mode === 'fire'
+      ? fireable(cell)
+      : mode === 'deploy'
+        ? placeable.has(cell)
+        : mode === 'trick'
+          ? trickable(cell)
+          : mode === 'repair'
+            ? repairable(cell)
+            : mode === 'decoy'
+              ? decoyable(cell)
+              : false);
   function press(mode: Mode, cell: string) {
     if (suppress || !enabled(mode, cell)) return;
     if (mode === 'fire') toggle(cell);
+    else if (mode === 'repair') pickRepair(cell);
+    else if (mode === 'decoy') pickDecoy(cell);
     else if (mode === 'trick') pickTrick(cell);
     else if (mode === 'deploy') place(cell);
   }
   function keydown(e: KeyboardEvent, mode: Mode, cell: string, k: number) {
-    if (e.key === 'Enter' && mode === 'fire' && aimAt(targetSea, cell)) {
+    if (e.key === 'Enter' && mode === 'fire' && aimOn(targetSea, cell)) {
       e.preventDefault();
       void fire();
       return;
@@ -784,7 +1004,13 @@
   const STATE_TEXT: Record<string, string> = { locked: 'locked in', out: 'sunk', ghost: '👻 ghost', haunting: '👻 up to something…' };
   /** You're a ghost with the board to haunt: not while the volley that sank you is still landing. */
   const haunting = $derived(live && amGhost && !(settling && !!me && !!view.lastVolley?.eliminated.includes(me)));
-  const mainSea = $derived(deploying ? me : targetSea);
+  const mainSea = $derived(deploying || placingDecoy ? me : targetSea);
+  /** The decoy's hull under the pointer while you lay it. */
+  const decoyPreview = $derived.by(() => {
+    if (!placingDecoy || !hover || !interactive) return null;
+    const cells = hullCells(hover, 2, decoyFacing);
+    return { cells: new Set(cells ?? [hover]), ok: !!cells && decoySpots.has(hover) };
+  });
 </script>
 
 {#snippet sea(seat: string, model: Map<string, CellModel>, size: number, main: boolean, mode: Mode, own: boolean)}
@@ -817,7 +1043,13 @@
           {@const ok = enabled(mode, cell)}
           {@const land = landing.get(`${seat} ${cell}`)}
           {@const sinking = m.mark === 'sunk' ? sinkingAt(seat, m.ship) : undefined}
-          {@const ghost = mode === 'deploy' && preview?.cells.has(cell)}
+          {@const ghost = mode === 'deploy' ? preview?.cells.has(cell) : mode === 'decoy' && decoyPreview?.cells.has(cell)}
+          {@const ghostBad = mode === 'deploy' ? !preview?.ok : !decoyPreview?.ok}
+          {@const pm = mode === 'fire' ? plusMarks.get(cell) : undefined}
+          {@const lm = mode === 'fire' ? laneMarks.get(cell) : undefined}
+          {@const om = own ? ownMarks.get(cell) : undefined}
+          {@const spark = sparks.has(`${seat} ${cell}`)}
+          {@const sparkAt = itemAt.get(`${seat} ${cell}`)}
           {@const reading = intel ? sonarAt.get(cell) : undefined}
           {@const tm = trickMarks.get(`${seat} ${cell}`)}
           {#if main && k % SIZE === 0}<span class="tag row" aria-hidden="true">{SIZE - Math.floor(k / SIZE)}</span>{/if}
@@ -825,15 +1057,31 @@
             type="button"
             data-cell={cell}
             data-mark={m.mark}
-            aria-label={label(cell, m, own) + (reading ? `, sonar buoy: ${reading.afloat} afloat around it` : '') + (tm ? (tm.kind === 'mine' ? ', mine' : ', false splash') : '')}
+            aria-label={label(cell, m, own) +
+              (reading ? `, sonar buoy: ${reading.afloat} afloat around it` : '') +
+              (tm ? (tm.kind === 'mine' ? ', mine' : ', false splash') : '') +
+              (spark ? ', repaired' : '') +
+              (om ? `, ${om.kind} ${om.state === 'sent' ? 'sent' : 'aimed'}` : '')}
             aria-disabled={!ok}
-            aria-pressed={mode === 'fire' ? !!aimAt(seat, cell) : mode === 'trick' ? trickAimAt(seat, cell) : undefined}
-            data-legal={mode === 'trick' ? (trickCells.has(cell) ? 'true' : 'false') : undefined}
+            aria-pressed={mode === 'fire'
+              ? !!aimOn(seat, cell) || (lm?.state === 'picked')
+              : mode === 'trick'
+                ? trickAimAt(seat, cell)
+                : mode === 'repair' || mode === 'decoy'
+                  ? om?.state === 'picked'
+                  : undefined}
+            data-legal={mode === 'trick'
+              ? (trickCells.has(cell) ? 'true' : 'false')
+              : mode === 'repair'
+                ? String(repairCells.has(cell))
+                : mode === 'decoy'
+                  ? String(decoySpots.has(cell))
+                  : undefined}
             onclick={() => press(mode, cell)}
             onkeydown={(e) => keydown(e, mode, cell, k)}
-            onpointerenter={() => (mode === 'deploy' ? (hover = cell) : mode === 'fire' && (aimHover = cell))}
-            onpointerleave={() => (mode === 'deploy' ? hover === cell && (hover = null) : aimHover === cell && (aimHover = null))}
-            onfocus={() => (mode === 'deploy' ? (hover = cell) : mode === 'fire' && (aimHover = cell))}
+            onpointerenter={() => (mode === 'deploy' || mode === 'decoy' ? (hover = cell) : mode === 'fire' && (aimHover = cell))}
+            onpointerleave={() => (mode === 'deploy' || mode === 'decoy' ? hover === cell && (hover = null) : aimHover === cell && (aimHover = null))}
+            onfocus={() => (mode === 'deploy' || mode === 'decoy' ? (hover = cell) : mode === 'fire' && (aimHover = cell))}
             onblur={() => mode === 'fire' && aimHover === cell && (aimHover = null)}
           >
             <span class="water" class:up={intel && liftedHere.has(Number(cell.slice(1)))}></span>
@@ -843,6 +1091,8 @@
                 class="hull"
                 class:wreck={m.hull.wreck}
                 class:faint={m.hull.faint}
+                class:decoy={m.hull.decoy === 'live'}
+                class:drift={m.hull.decoy === 'drift'}
                 class:jl={j.includes('l')}
                 class:jr={j.includes('r')}
                 class:jt={j.includes('t')}
@@ -850,15 +1100,39 @@
               ></span>
             {/if}
             {#if m.mark === 'miss'}<span class="ripple" class:land={land !== undefined} style:--d="{land ?? 0}ms"><i></i></span>{/if}
-            {#if m.mark === 'hit' || m.mark === 'sunk'}
-              <span class="glow" class:land={land !== undefined} style:--d="{land ?? 0}ms"></span>
+            {#if m.mark === 'hit' || m.mark === 'sunk' || m.mark === 'decoy'}
+              <span class="glow" class:drift={m.mark === 'decoy'} class:land={land !== undefined} style:--d="{land ?? 0}ms"></span>
+            {/if}
+            {#if m.hull?.stamp}
+              {@const at = itemAt.get(`${seat} ${cell}`)}
+              <span class="dstamp" class:land={at !== undefined} style:--d="{at ?? 0}ms" data-testid="decoy-stamp">DECOY</span>
+            {/if}
+            {#if spark}<span class="weld" class:land={sparkAt !== undefined} style:--d="{sparkAt ?? 0}ms" data-testid="repaired"></span>{/if}
+            {#if pm}<span class="plus s-{pm.state}" class:centre={pm.centre} data-testid={pm.centre && pm.state !== 'hover' ? 'cluster-aim' : undefined}></span>{/if}
+            {#if lm}
+              <span class="lane s-{lm.state}" class:entry={lm.head} class:bad={lm.bad} style:--dir="{me ? torpedoDir(me) : 0}deg" data-testid={lm.state === 'hover' ? 'lane-preview' : 'torpedo-lane'}
+                ><i></i></span
+              >
+            {/if}
+            {#if om?.kind === 'repair'}<span class="weld aim" class:sent={om.state === 'sent'} data-testid="repair-aim"></span>{/if}
+            {#if om?.kind === 'decoy'}
+              <span
+                class="hull decoy aim"
+                class:sent={om.state === 'sent'}
+                class:jl={om.joins.includes('l')}
+                class:jr={om.joins.includes('r')}
+                class:jt={om.joins.includes('t')}
+                class:jb={om.joins.includes('b')}
+                data-testid="decoy-aim"
+              ></span>
             {/if}
             {#if sinking !== undefined}
               <span class="bubbles" style:--d="{sinking}ms"><i></i><i></i><i></i></span>
             {/if}
-            {#if ghost}<span class="hull-preview" class:bad={!preview?.ok}></span>{/if}
+            {#if ghost}<span class="hull-preview" class:decoy={mode === 'decoy'} class:bad={ghostBad} data-testid={mode === 'decoy' ? 'decoy-preview' : undefined}></span>{/if}
             {#if mode === 'fire' && aimAt(seat, cell, 'shell')}<span class="reticle"></span>
             {:else if mode === 'fire' && aimAt(seat, cell, 'buoy')}<span class="reticle buoy"></span>
+            {:else if mode === 'fire' && aimAt(seat, cell, 'cluster')}<span class="reticle cluster"></span>
             {:else if mode === 'fire' && sentAt(seat, cell)}<span class="reticle sent" data-testid="sent"></span>
             {:else if mode === 'trick' && trickAimAt(seat, cell)}<span class="reticle trick" data-testid="trick-aim"></span>{/if}
             {#if tm}<span class="tmark m-{tm.kind}" class:pending={tm.pending} data-testid="mark-{tm.kind}">{tm.kind === 'mine' ? '💀' : '👻'}</span>{/if}
@@ -925,6 +1199,61 @@
                 {@const c = centre(r.cell, size, g)}
                 <i class="flash mine back" style:left="{c.x}px" style:top="{c.y}px" style:--d="{r.at}ms"></i>
               {/each}
+              <!-- Items: a cluster flies in like a shell and bursts into its plus; a torpedo runs its lane; a repair sparks. -->
+              {#each plan.items.filter((x) => x.item === 'cluster' && x.sea === seat) as x, n (n)}
+                {#if x.item === 'cluster'}
+                  {@const c = centre(x.cell, size, g)}
+                  {@const [fx, fy] = FROM[x.side]}
+                  <span
+                    class="shell big"
+                    style:left="{c.x}px"
+                    style:top="{c.y}px"
+                    style:--sx="{fx * size}px"
+                    style:--sy="{fy * size}px"
+                    style:--fly="{x.flightMs}ms"
+                    style:--d="{x.delay}ms"
+                    style:--c={kindColor(x.from)}
+                  >
+                    <i class="shade"></i>
+                    <span class="arc"><span class="bb"><i class="ball"></i></span></span>
+                  </span>
+                  {#each clusterCells(x.cell) as cell (cell)}
+                    {@const p = centre(cell, size, g)}
+                    <i class="flash plus" style:left="{p.x}px" style:top="{p.y}px" style:--d="{x.landAt}ms"></i>
+                  {/each}
+                {/if}
+              {/each}
+              {#each plan.items.filter((x) => x.item === 'torpedo' && x.sea === seat) as x, n (n)}
+                {#if x.item === 'torpedo' && x.path.length > 0}
+                  {@const a = centre(x.path[0], size, g)}
+                  {@const b = centre(x.path.at(-1)!, size, g)}
+                  {@const dir = torpedoDir(x.from)}
+                  {@const ux = Math.round(Math.cos((dir * Math.PI) / 180))}
+                  {@const uy = Math.round(Math.sin((dir * Math.PI) / 180))}
+                  <!-- It sets off a cell outside the sea and runs to its last cell (struck, or off the far edge). -->
+                  <span
+                    class="torp"
+                    style:left="{a.x - ux * size}px"
+                    style:top="{a.y - uy * size}px"
+                    style:--tx="{b.x - a.x + ux * size * (x.struck ? 1 : 2)}px"
+                    style:--ty="{b.y - a.y + uy * size * (x.struck ? 1 : 2)}px"
+                    style:--run="{x.end - x.at + (x.struck ? 0 : TORPEDO_STEP_MS)}ms"
+                    style:--d="{x.at}ms"
+                    style:--dir="{dir}deg"
+                    style:--c={kindColor(x.from)}><i></i></span
+                  >
+                  {#if x.struck}
+                    {@const h = centre(x.struck, size, g)}
+                    <i class="flash torp-hit" style:left="{h.x}px" style:top="{h.y}px" style:--d="{x.end}ms"></i>
+                  {/if}
+                {/if}
+              {/each}
+              {#each plan.items.filter((x) => x.item === 'repair' && x.from === seat) as x, n (n)}
+                {#if x.item === 'repair'}
+                  {@const c = centre(x.cell, size, g)}
+                  <i class="flash weld-fx" style:left="{c.x}px" style:top="{c.y}px" style:--d="{x.at}ms"></i>
+                {/if}
+              {/each}
               {#each plan.shells.filter((s) => s.sea === seat) as s, n (n)}
                 {@const c = centre(s.cell, size, g)}
                 {@const [fx, fy] = FROM[s.side]}
@@ -959,7 +1288,7 @@
       {@const land = landing.get(`${t.sea} ${cell}`)}
       <i
         class="m-{m.mark}"
-        class:m-aim={!!aimAt(t.sea, cell)}
+        class:m-aim={!!aimOn(t.sea, cell)}
         class:m-out={!!sent.find((o) => o.at === t.sea && o.cell === cell)}
         class:m-mine={trickMarks.get(`${t.sea} ${cell}`)?.kind === 'mine' || (trickAimAt(t.sea, cell) && trickNow === 'mine')}
         class:m-splash={trickMarks.get(`${t.sea} ${cell}`)?.kind === 'splash' || (trickAimAt(t.sea, cell) && trickNow === 'splash')}
@@ -986,6 +1315,8 @@
       <p class="caption">
         {#if deploying}
           <span class="kicker">Your sea</span><span class="sub">place your fleet</span>
+        {:else if placingDecoy}
+          <span class="kicker">Your sea</span><span class="sub">lay a decoy · facing {decoyFacing} (R turns it)</span>
         {:else}
           <span class="kicker">{mainSea === me ? 'Your sea' : 'Target'}</span>
           {#if mainSea !== me}<span class="who-big" style:color={kindColor(mainSea)}>{handleOf(mainSea)}</span><span class="sub">'s sea · {afloatOf(mainSea)} afloat</span>{/if}
@@ -997,6 +1328,8 @@
     {/if}
     {#if deploying && ownCells && me}
       {@render sea(me, ownCells, mainCell, true, 'deploy', true)}
+    {:else if placingDecoy && ownCells && me}
+      {@render sea(me, ownCells, mainCell, true, 'decoy', true)}
     {:else if target && targetCells}
       {@render sea(target.sea, targetCells, mainCell, true, !live || !me || target.out ? 'view' : haunting ? 'trick' : !amOut ? 'fire' : 'view', false)}
       {#if target.out && view.winner !== target.sea && !settling}
@@ -1054,7 +1387,9 @@
                     >{#each { length: SHIPS.length } as _, i (i)}<i class:lost={i >= g}></i>{/each}</span
                   >{/if}</span
               >
-              <span class="stat">{afloatOf(seat)} afloat · {view.scrap[seat] ?? 0} scrap</span>
+              <span class="stat"
+                >{afloatOf(seat)} afloat · {view.scrap[seat] ?? 0} scrap{#if (view.holding?.[seat] ?? 0) > 0}{' · '}<span class="holding" data-testid="holding" data-n={view.holding[seat]} title="Holding {plural(view.holding[seat], 'item')}">📦×{view.holding[seat]}</span>{/if}</span
+              >
             </span>
             {#if on}<span class="badge">target</span>{/if}
             {#if st && !(on && st === 'aiming')}<span class="state {st}">{STATE_TEXT[st] ?? st}</span>{/if}
@@ -1069,8 +1404,12 @@
               data-seat={seat}
               data-ready={view.ready.includes(seat)}
               aria-pressed={on}
-              aria-label="{handleOf(seat)}'s sea, {afloatOf(seat)} afloat{view.guns?.[seat] !== undefined ? `, ${plural(view.guns[seat], 'gun')}` : ''}{aimedOn(seat) ? `, ${aimedOn(seat)} aimed` : ''}{st ? `, ${STATE_TEXT[st] ?? st}` : ''}"
-              onclick={() => (picked = seat)}>{@render card()}</button
+              aria-label="{handleOf(seat)}'s sea, {afloatOf(seat)} afloat{view.guns?.[seat] !== undefined ? `, ${plural(view.guns[seat], 'gun')}` : ''}{view.holding?.[seat] ? `, holding ${plural(view.holding[seat], 'item')}` : ''}{aimedOn(seat) ? `, ${aimedOn(seat)} aimed` : ''}{st ? `, ${STATE_TEXT[st] ?? st}` : ''}"
+              onclick={() => {
+                picked = seat;
+                // Picking a sea to look at puts the decoy back in the tray.
+                if (kind === 'decoy') kind = 'shell';
+              }}>{@render card()}</button
             >
           {:else}
             <div class="chip" class:gone={out(seat)} class:holdout={holdout === seat} data-seat={seat} data-ready={view.ready.includes(seat)}>{@render card()}</div>
@@ -1082,8 +1421,8 @@
     {#if !deploying && ownCells && me}
       <section class="fleet" aria-label="Your fleet" bind:this={ownEl}>
         <p class="head"><span>Your fleet</span><span class="count" class:sunk={amOut && !settling}>{amOut && !settling ? 'sunk' : `${afloatOf(me)} afloat`}</span></p>
-        <div class="ownbox">
-          {@render sea(me, ownCells, ownCell, false, 'view', true)}
+        <div class="ownbox" class:repairing={aimKind === 'repair' && !iAmReady}>
+          {@render sea(me, ownCells, ownCell, false, aimKind === 'repair' && !iAmReady ? 'repair' : 'view', true)}
           {#if amOut && !settling}
             <svg class="defeated small" viewBox="0 0 340 150" role="img" aria-label="Your fleet is sunk" data-testid="sunk">
               <g transform="rotate(-12 170 75)">
@@ -1128,8 +1467,8 @@
         <div class="salvo-head">
           <span class="head">Salvo: {plural(guns, 'shot')}</span>
           <span class="shots" data-testid="shots" aria-label="{sent.length} sent, {aims.length} aimed, {room} to aim">
-            {#each sent as o, i (i)}<i class="s-sent" class:b={o.fire === 'buoy'}></i>{/each}
-            {#each aims as a, i (i)}<i class="s-aimed" class:b={a.fire === 'buoy'}></i>{/each}
+            {#each sent as o, i (i)}<i class="s-sent" class:b={o.fire === 'buoy'} class:it={isItem(o.fire)}></i>{/each}
+            {#each aims as a, i (i)}<i class="s-aimed" class:b={a.fire === 'buoy'} class:it={isItem(a.fire)}></i>{/each}
             {#each { length: room } as _, i (i)}<i></i>{/each}
           </span>
         </div>
@@ -1150,6 +1489,32 @@
               >
             </div>
           {/if}
+          {#if tray.length > 0}
+            <div class="tray" role="group" aria-label="Your arsenal: one item a round, for one gun">
+              {#each tray as x (x.item)}
+                {@const why = itemWhy(x.item)}
+                <button
+                  type="button"
+                  class="item i-{x.item}"
+                  data-testid="item-{x.item}"
+                  aria-pressed={aimKind === x.item}
+                  class:aimed={itemAim?.fire === x.item || itemSent?.fire === x.item}
+                  disabled={!interactive || why !== null}
+                  title={why ?? ITEM_HINT[x.item]}
+                  onclick={() => setKind(aimKind === x.item ? 'shell' : x.item)}
+                  ><span class="ic" aria-hidden="true">{ITEM_ICON[x.item]}</span>{ITEM_NAME[x.item]}{#if x.n > 1}<span class="n">×{x.n}</span>{/if}</button
+                >
+              {/each}
+            </div>
+            {#if isItem(aimKind)}
+              <p class="hint item-hint" data-testid="item-hint">
+                {ITEM_HINT[aimKind]}
+                {#if aimKind === 'decoy'}<button type="button" class="linkbtn" onclick={turnDecoy}>Facing {decoyFacing} ⟳</button>{/if}
+              </p>
+            {:else if trayWhy}
+              <p class="hint why item-why" data-testid="item-why">{trayWhy}</p>
+            {/if}
+          {/if}
           {#if aims.length > 0}
             <button type="button" class="firebtn" class:buoy={aims.every((x) => x.fire === 'buoy')} data-testid="fire" disabled={!interactive || sending} onclick={() => void fire()}
               >{sending ? 'Firing…' : fireLabel}</button
@@ -1157,7 +1522,21 @@
             {#if room === 0}<p class="hint">Salvo aimed. Click an aim to take it back.</p>{/if}
           {:else}
             <button type="button" class="slot" data-testid="fire" disabled
-              >{target?.out ? 'That fleet is sunk: pick a living sea' : aimKind === 'buoy' ? 'Pick a centre for the buoy' : sent.length ? `Pick ${plural(room, 'more cell')}` : `Pick ${plural(room, 'cell')} to fire`}</button
+              >{aimKind === 'repair'
+                ? 'Pick a hit on your fleet to repair'
+                : aimKind === 'decoy'
+                  ? 'Pick a spot on your sea for the decoy'
+                  : target?.out
+                    ? 'That fleet is sunk: pick a living sea'
+                    : aimKind === 'buoy'
+                      ? 'Pick a centre for the buoy'
+                      : aimKind === 'cluster'
+                        ? 'Pick the centre for the cluster'
+                        : aimKind === 'torpedo'
+                          ? 'Pick a lane for the torpedo'
+                          : sent.length
+                            ? `Pick ${plural(room, 'more cell')}`
+                            : `Pick ${plural(room, 'cell')} to fire`}</button
             >
           {/if}
         {/if}
@@ -2333,6 +2712,238 @@
     display: none;
   }
 
+  /* ── The arsenal: gold, wherever an item shows ── */
+  .salvo {
+    --item: #ffc857;
+  }
+  .holding {
+    color: var(--item);
+    font-weight: 600;
+  }
+  .tray {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .tray .item {
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 8px;
+    border: 1px solid color-mix(in oklab, var(--item) 45%, var(--lattice));
+    border-radius: var(--r-control);
+    background: color-mix(in oklab, var(--item) 7%, #141829);
+    color: var(--chalk);
+    font: 600 13px var(--font-ui);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .tray .item:hover:not(:disabled) {
+    border-color: var(--item);
+  }
+  .tray .item[aria-pressed='true'] {
+    border-color: var(--item);
+    background: color-mix(in oklab, var(--item) 24%, var(--panel-2));
+    box-shadow: 0 0 14px color-mix(in oklab, var(--item) 35%, transparent);
+  }
+  .tray .item.aimed:not([aria-pressed='true']) {
+    border-style: dashed;
+  }
+  .tray .item:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .tray .ic {
+    color: var(--item);
+  }
+  .tray .n {
+    color: var(--fog);
+    font-weight: 500;
+  }
+  .hint.item-hint {
+    color: #ffe3a3;
+  }
+  .hint.item-why {
+    color: #e8c77a;
+  }
+  .linkbtn {
+    margin-left: 4px;
+    padding: 1px 6px;
+    border: 1px solid color-mix(in oklab, var(--item) 50%, transparent);
+    border-radius: 999px;
+    background: none;
+    color: var(--item);
+    font: 600 11px var(--font-ui);
+    cursor: pointer;
+  }
+  .shots i.it.s-aimed {
+    box-shadow: inset 0 0 0 2px var(--item);
+  }
+  .shots i.it.s-sent {
+    background: var(--item);
+  }
+  /* Repairing: your fleet's hits light up to be picked. */
+  .ownbox.repairing {
+    border-color: color-mix(in oklab, var(--item) 60%, transparent);
+    box-shadow: 0 0 16px color-mix(in oklab, var(--item) 25%, transparent);
+  }
+  .own [data-mode='repair'] > button[aria-disabled='false'],
+  .own [data-mode='decoy'] > button[aria-disabled='false'] {
+    cursor: pointer;
+  }
+  .own [data-mode='repair'] > button[data-legal='true'] .water {
+    box-shadow: inset 0 0 0 1.5px var(--item);
+    background: color-mix(in oklab, var(--item) 14%, transparent);
+  }
+  /* A decoy: yours afloat is a dashed hull; one found is driftwood. */
+  .hull.decoy {
+    background: color-mix(in oklab, var(--item) 16%, transparent);
+    border: 1.5px dashed var(--item);
+    box-shadow: none;
+  }
+  .hull.decoy.aim {
+    opacity: 0.85;
+    animation: sv-aim 1.1s ease-in-out infinite;
+  }
+  .hull.decoy.aim.sent {
+    animation: none;
+    opacity: 0.55;
+  }
+  .hull.drift {
+    inset: 22%;
+    background: repeating-linear-gradient(90deg, #6b4a2b 0 30%, #3b2717 30% 38%);
+    box-shadow: inset 0 0 0 1px rgba(255, 200, 120, 0.25);
+    opacity: 0.85;
+  }
+  .glow.drift {
+    background: radial-gradient(circle, rgba(200, 150, 90, 0.35), rgba(200, 150, 90, 0) 70%);
+  }
+  /* A found decoy's stamp: small and red, like SUNK, in its first cell. */
+  .dstamp {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    translate: -50% -50%;
+    rotate: -12deg;
+    padding: 0 2px;
+    border: 1.5px solid #ff3b4f;
+    border-radius: 2px;
+    background: rgba(40, 6, 12, 0.7);
+    color: #ff3b4f;
+    font: 800 clamp(6px, calc(var(--cell) * 0.19), 12px) / 1.2 var(--font-ui);
+    letter-spacing: 0.04em;
+  }
+  .dstamp.land {
+    animation: sv-stamp 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) var(--d) both;
+  }
+  /* A welding spark: a repaired cell, public until it's shot again. */
+  .weld {
+    position: absolute;
+    right: 8%;
+    top: 8%;
+    width: 30%;
+    height: 30%;
+    background: radial-gradient(circle, #fff 0 18%, var(--item) 30%, transparent 62%);
+    clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+    filter: drop-shadow(0 0 3px var(--item));
+  }
+  .weld.land {
+    animation: sv-pop 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) var(--d) both;
+  }
+  /* The repair you've picked: a gold ring round the hit. */
+  .weld.aim {
+    inset: 8%;
+    width: auto;
+    height: auto;
+    background: none;
+    clip-path: none;
+    filter: none;
+    border: 2px solid var(--item);
+    border-radius: 50%;
+    box-shadow: 0 0 10px color-mix(in oklab, var(--item) 60%, transparent);
+    animation: sv-aim 1.1s ease-in-out infinite;
+  }
+  .weld.aim.sent {
+    animation: none;
+    border-style: dashed;
+    opacity: 0.6;
+  }
+  .hull-preview.decoy {
+    border-style: dashed;
+    background: color-mix(in oklab, var(--item) 25%, transparent);
+    border-color: var(--item);
+  }
+  .hull-preview.decoy.bad {
+    background: color-mix(in oklab, var(--danger) 30%, transparent);
+    border-color: var(--danger);
+  }
+  .reticle.cluster {
+    border-color: var(--item);
+    box-shadow: 0 0 16px color-mix(in oklab, var(--item) 60%, transparent);
+  }
+  .reticle.cluster::before,
+  .reticle.cluster::after {
+    background: color-mix(in oklab, var(--item) 70%, transparent);
+  }
+  /* A cluster's plus: the pointer's faint, the pick bright, the one sent dashed. */
+  .plus {
+    position: absolute;
+    inset: 4%;
+    border-radius: 4px;
+    border: 1.5px solid color-mix(in oklab, var(--item) 55%, transparent);
+    background: color-mix(in oklab, var(--item) 12%, transparent);
+  }
+  .plus.centre {
+    border-width: 2px;
+  }
+  .plus.s-picked {
+    border-color: var(--item);
+    background: color-mix(in oklab, var(--item) 24%, transparent);
+  }
+  .plus.s-sent {
+    border-style: dashed;
+    opacity: 0.55;
+  }
+  /* A torpedo's lane: a band of chevrons pointing the way it runs. */
+  .lane {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: color-mix(in oklab, var(--item) 12%, transparent);
+  }
+  .lane i {
+    width: 34%;
+    height: 34%;
+    border-top: 2px solid color-mix(in oklab, var(--item) 70%, transparent);
+    border-right: 2px solid color-mix(in oklab, var(--item) 70%, transparent);
+    rotate: calc(var(--dir) + 45deg);
+    translate: calc(cos(var(--dir)) * -8%) calc(sin(var(--dir)) * -8%);
+  }
+  .lane.entry {
+    box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--item) 70%, transparent);
+  }
+  .lane.s-picked {
+    background: color-mix(in oklab, var(--item) 26%, transparent);
+  }
+  .lane.s-picked i {
+    border-color: var(--item);
+  }
+  .lane.s-sent {
+    opacity: 0.5;
+  }
+  .lane.bad {
+    background: color-mix(in oklab, var(--danger) 14%, transparent);
+  }
+  .lane.bad i {
+    border-color: color-mix(in oklab, var(--danger) 60%, transparent);
+  }
+  .mini .m-decoy {
+    background: #6b4a2b;
+  }
+
   /* ── Intel on the water: fog counts, sonar footprints, a buoy's aim (flat, under the pegs) ── */
   .marks {
     position: absolute;
@@ -2484,11 +3095,11 @@
     position: absolute;
     width: calc(var(--cell) * 3);
     height: calc(var(--cell) * 3);
-    translate: -50% -50%;
     border-radius: 50%;
     border: 2px solid var(--silicon);
     box-shadow: 0 0 16px rgba(79, 216, 238, 0.6), inset 0 0 16px rgba(79, 216, 238, 0.4);
-    transform: translateZ(3px);
+    /* Centred in the transform, not with `translate`: the CSS minifier drops a `translate` that sits beside a `transform`. */
+    transform: translate(-50%, -50%) translateZ(3px);
     animation: sv-sonar 1.2s ease-out var(--d) 2 both;
   }
   .flash.mine {
@@ -2504,11 +3115,60 @@
     position: absolute;
     width: calc(var(--cell) * 3.4);
     height: calc(var(--cell) * 3.4);
-    translate: -50% -50%;
     border-radius: 50%;
     background: radial-gradient(circle, rgba(255, 255, 255, 0.95), rgba(255, 190, 90, 0.8) 30%, rgba(255, 90, 40, 0.35) 55%, transparent 70%);
-    transform: translateZ(4px);
+    /* Centred in the transform (see .ping). */
+    transform: translate(-50%, -50%) translateZ(4px);
     animation: sv-flash 0.7s ease-out var(--d) both;
+  }
+
+  /* A cluster's shell is a bigger ball; its burst, a flash on each cell of the plus. */
+  .shell.big .ball {
+    scale: 1.35;
+  }
+  .flash.plus {
+    width: calc(var(--cell) * 1.5);
+    height: calc(var(--cell) * 1.5);
+  }
+  /* A torpedo: a glowing capsule running its lane, a wake behind it. */
+  .torp {
+    position: absolute;
+    width: 0;
+    height: 0;
+    transform: translateZ(2px);
+    animation:
+      sv-appear 1ms linear var(--d) both,
+      sv-run var(--run) linear var(--d) both,
+      sv-gone 0.15s linear calc(var(--d) + var(--run)) forwards;
+  }
+  .torp i {
+    position: absolute;
+    left: calc(var(--cell) * -0.5);
+    top: calc(var(--cell) * -0.09);
+    width: calc(var(--cell) * 0.7);
+    height: calc(var(--cell) * 0.18);
+    border-radius: 999px;
+    rotate: var(--dir);
+    transform-origin: 70% 50%;
+    background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--c) 40%, transparent) 40%, var(--c) 80%, #fff);
+    box-shadow: 0 0 10px var(--c);
+  }
+  .flash.torp-hit {
+    width: calc(var(--cell) * 1.8);
+    height: calc(var(--cell) * 1.8);
+  }
+  .flash.weld-fx {
+    width: calc(var(--cell) * 1.2);
+    height: calc(var(--cell) * 1.2);
+    background: radial-gradient(circle, #fff, rgba(255, 200, 87, 0.9) 30%, rgba(79, 216, 238, 0.35) 55%, transparent 70%);
+  }
+  @keyframes sv-run {
+    0% { transform: translateZ(2px) translate(0, 0); }
+    100% { transform: translateZ(2px) translate(var(--tx), var(--ty)); }
+  }
+  @keyframes sv-appear {
+    from { visibility: hidden; }
+    to { visibility: visible; }
   }
 
   @keyframes sv-fly {
@@ -2550,14 +3210,14 @@
     100% { transform: translateY(calc(var(--cell) * -0.6)) scale(1); opacity: 0; }
   }
   @keyframes sv-flash {
-    0% { transform: translateZ(4px) scale(0.2); opacity: 0; }
+    0% { transform: translate(-50%, -50%) translateZ(4px) scale(0.2); opacity: 0; }
     20% { opacity: 1; }
-    100% { transform: translateZ(4px) scale(1.1); opacity: 0; }
+    100% { transform: translate(-50%, -50%) translateZ(4px) scale(1.1); opacity: 0; }
   }
   @keyframes sv-sonar {
-    0% { transform: translateZ(3px) scale(0.1); opacity: 0; }
+    0% { transform: translate(-50%, -50%) translateZ(3px) scale(0.1); opacity: 0; }
     15% { opacity: 1; }
-    100% { transform: translateZ(3px) scale(1); opacity: 0; }
+    100% { transform: translate(-50%, -50%) translateZ(3px) scale(1); opacity: 0; }
   }
   @keyframes sv-pop {
     0% { transform: scale(0); opacity: 0; }
@@ -2597,6 +3257,10 @@
     .state.locked,
     .state.deployed,
     .chip.holdout,
+    .dstamp.land,
+    .weld.land,
+    .weld.aim,
+    .hull.decoy.aim,
     .banner,
     .ghostcard {
       animation: none;
