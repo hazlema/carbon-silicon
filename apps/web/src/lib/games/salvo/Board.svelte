@@ -520,6 +520,12 @@
       optSending = false;
     }
   }
+  /** Send the typed bid; the box clears only once the bid stands (a refused one stays to be fixed). */
+  async function bidCustom(ghost: string, cmd: BidCmd | undefined) {
+    if (!cmd) return;
+    await sendOptional(cmd);
+    if (view.myBids?.[ghost] === cmd.bid) customBid[ghost] = null;
+  }
   /** The wall clock, ticking while an auction is open (its close is an epoch time stamped by the server). */
   let now = $state(Date.now());
   $effect(() => {
@@ -1321,10 +1327,10 @@
             onkeydown={(e) => {
               if (e.key === 'Enter' && customCmd) {
                 e.preventDefault();
-                void sendOptional(customCmd).then(() => (customBid[a.ghost] = null));
+                void bidCustom(a.ghost, customCmd);
               }
             }}
-          /><button type="button" class="au-btn" data-testid="auction-bid-custom" disabled={!can || !customCmd} onclick={() => void sendOptional(customCmd).then(() => (customBid[a.ghost] = null))}>Bid</button>
+          /><button type="button" class="au-btn" data-testid="auction-bid-custom" disabled={!can || !customCmd} onclick={() => void bidCustom(a.ghost, customCmd)}>Bid</button>
         </span>
       </div>
     {/if}
@@ -1780,7 +1786,7 @@
     {/if}
   </div>
 
-  <aside class="side" class:ghosted={haunting && !!myAuction} class:au={auctionBand || truthsBand}>
+  <aside class="side" class:ghosted={haunting && !!myAuction} class:au={auctionBand}>
     <section class="opps" aria-label={me ? 'Opponents' : 'Fleets'}>
       <p class="head">{me ? 'Opponents' : 'Fleets'}</p>
       <div class="list">
@@ -1833,13 +1839,6 @@
       <section class="auctions" aria-label="Whisper auctions">
         {#if haunting && myAuction}{@render myWhisper(myAuction)}{/if}
         {#each otherAuctions as a (a.ghost)}{@render auctionCard(a)}{/each}
-      </section>
-    {:else if !live && !settling && truthLines.length > 0}
-      <section class="auctions told" aria-label="The whispers, and the truth" data-testid="truths">
-        <p class="head">👻 The whispers, and the truth</p>
-        {#each truthLines as x, i (i)}
-          <p class="truth" class:lie={x.t.state === 'sold' && x.t.said !== x.t.truth} data-testid="truth" data-ghost={x.t.ghost}>{x.text}</p>
-        {/each}
       </section>
     {/if}
 
@@ -2057,6 +2056,14 @@
         <p class="slot">{settling ? 'The volley is landing…' : 'Your fleet is sunk. Watch any sea: the others play on.'}</p>
       {:else if !live}
         <p class="slot">{settling ? 'The last volley is landing…' : 'Every fleet is shown.'}</p>
+        {#if truthsBand}
+        <section class="told" aria-label="The whispers, and the truth" data-testid="truths">
+          <p class="head">👻 The whispers, and the truth</p>
+          {#each truthLines as x, i (i)}
+            <p class="truth" class:lie={x.t.state === 'sold' && x.t.said !== x.t.truth} data-testid="truth" data-ghost={x.t.ghost}>{x.text}</p>
+          {/each}
+        </section>
+        {/if}
       {/if}
     </div>
   </aside>
@@ -2412,7 +2419,7 @@
       grid-template-rows: auto auto minmax(9.5rem, 1fr) auto;
       grid-template-areas: 'opps' 'auction' 'fleet' 'actions';
     }
-    .actions {
+    .side .actions {
       min-height: auto;
       overflow: visible;
     }
@@ -4105,13 +4112,10 @@
   .au-bids {
     display: flex;
     flex-wrap: wrap;
-    gap: 3px 4px;
+    gap: 1px 10px;
     margin: 0;
     padding: 0;
     list-style: none;
-  }
-  .au-bids {
-    gap: 1px 10px;
   }
   .au-bid {
     display: inline-flex;
@@ -4196,14 +4200,12 @@
     background: rgba(13, 16, 32, 0.8);
     color: var(--chalk);
     font: 500 13px var(--font-ui);
+    appearance: textfield;
   }
   .au-custom input::-webkit-inner-spin-button,
   .au-custom input::-webkit-outer-spin-button {
     appearance: none;
     margin: 0;
-  }
-  .au-custom input {
-    appearance: textfield;
   }
   .au-custom .au-btn {
     border-radius: 0 var(--r-control) var(--r-control) 0;
@@ -4259,10 +4261,12 @@
       grid-column-start: 2;
     }
   }
-  .auctions.told {
+  .told {
+    display: flex;
+    flex-direction: column;
     gap: 4px;
   }
-  .auctions.told .head {
+  .told .head {
     margin: 0;
   }
   .truth {
@@ -4324,14 +4328,18 @@
     border-color: rgba(176, 107, 255, 0.55);
     background: rgba(176, 107, 255, 0.06);
   }
-  .own .area {
-    border-width: 0;
+  /* Your own fleet's cells are small: a hairline outline, so the area still reads. */
+  .own .area.el {
+    border-left-width: 1px;
   }
-  .own .area.el,
-  .own .area.er,
-  .own .area.et,
+  .own .area.er {
+    border-right-width: 1px;
+  }
+  .own .area.et {
+    border-top-width: 1px;
+  }
   .own .area.eb {
-    border-width: 0;
+    border-bottom-width: 1px;
   }
   /* The ghost's word on its area: 👻 3? (a word, not a reading). */
   .wmark {
