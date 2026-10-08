@@ -105,6 +105,8 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-58.** A mine on a live decoy backfires it. Laying a decoy is told, but never where. A living fleet's afloat never reads below 1.
 - **R-59.** The turn clock is a ring of seconds by the salvo and on the crate card while you owe the round: calm, amber at 20, red and pulsing at 10, a tick for each of the last 5. It shows ✓ once you're locked in.
 - **R-60.** Residents pick crates in character and use all four items. Sim: median 10 rounds, 0% at the cap, early knockouts 8%, torpedoes rare. Covered end to end by e2e/salvo-arsenal.e2e.ts: sink, pick from the crate, fire the item through the board, the clock counts down.
+- **R-61.** (final review) The public `holding` count is capped at ITEM_LIMIT (2): hold 2, queue one, then take a crate card read 3 — impossible, and a mid-round tell that you'd committed an item.
+- **R-62.** (final review) Residents gloat about a decoy only once it's revealed (`fooled` fires on the public reveal on their sea). A hit on a live decoy plays like any hit (`gotHit` at its usual odds), so the chatter never gives the decoy away.
 
 ## Design signals from the build
 

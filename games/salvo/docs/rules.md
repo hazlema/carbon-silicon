@@ -193,11 +193,12 @@ afloat.
 
 Each round has a 90-second clock. If yours runs out, the autopilot sends the
 rest of your salvo for you, at random (shells, now and then a buoy or one of
-your items), answers any crate you owe at random, and the table hears that the autopilot moved for you, never where. Every absent seat is
-fired for at the same deadline, and the round resolves. **Three missed rounds in
-a row forfeit the match.** Any round where you send your whole salvo yourself
-resets the count. A [ghost](#ghosts) that misses three rounds in a row just
-fades away; its placement stays.
+your items), answers any crate you owe at random, and the table hears that the
+autopilot moved for you, never where. Every absent seat is fired for at the
+same deadline, and the round resolves. **Three missed rounds in a row forfeit
+the match.** Any round where you send your whole salvo yourself resets the
+count. A [ghost](#ghosts) that misses three rounds in a row just fades away; its
+placement stays.
 
 ### What a shell can do
 
@@ -1611,9 +1612,9 @@ other players committing never restarts it. At 0 the autopilot moves for every
 seat that still owes something: it places every ship still in port during
 deployment, and sends the rest of your salvo in a round, one random legal
 command at a time (shells, now and then a buoy or one of your items, and a
-random answer to any crate you owe), and a random trick for a ghost. Each counts as one miss, and
-three misses in a row forfeit the match (a ghost fades: its placement stays,
-its mines and splashes go).
+random answer to any crate you owe), and a random trick for a ghost. Each
+counts as one miss, and three misses in a row forfeit the match (a ghost fades:
+its placement stays, its mines and splashes go).
 
 ### Errors
 

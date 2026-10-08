@@ -670,7 +670,7 @@
         const sonar = buoys === 1 ? '1 sonar buoy' : `${buoys} sonar buoys`;
         const kinds = [...new Set(items)].map((x) => {
           const n = items.filter((y) => y === x).length;
-          return n === 1 ? `a ${x}` : `${n} ${x}s`;
+          return n === 1 ? `a ${x}` : `${n} ${x === 'torpedo' ? 'torpedoes' : `${x}s`}`;
         });
         const what = [...(count > 0 ? [`${count} ${count === 1 ? 'shell' : 'shells'}`] : []), ...kinds].join(' + ');
         announce(

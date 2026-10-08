@@ -65,7 +65,7 @@ The Foreman, after ten full games: "Needs some sort of reward when you sink a sh
 - **Crate pick by character:** GAME_OVER prefers cluster/torpedo, OLD IRON prefers repair, Sprocket picks at random. With 2 held, swap the least useful (a decoy once the fleet is mostly sunk, a repair with nothing hit).
 - **Use:** cluster centred next to an open hit (chance-weighted plus); torpedo down the lane with the most expected ship cells when hunting; repair the hit cell of a ship one hit from sinking; decoy early (rounds 1–4) on open water away from its ships.
 - **Doubt:** hard treats a lone two-cell hit pair with no sinking as maybe-decoy and buoys it before spending more shells.
-- Moments: `crate` ("pulls a crate from the wreck") and `fooled` (its decoy ate a shell) with lines per resident.
+- Moments: `crate` ("pulls a crate from the wreck") and `fooled` (its decoy was revealed; a hit on a live decoy plays like any hit, so the chatter never gives it away) with lines per resident.
 - Sim: four residents with items finish under the cap; early knockouts stay ≤ 15%.
 
 ## The board (`Board.svelte`)
