@@ -217,6 +217,12 @@ function assertNoLeaks(s: SalvoState, step: number): void {
         check(x.afloat === afloatAmong(s, t.sea, (c) => x.cells.includes(c)), `${where}: a reading miscounts`);
       });
     }
+    // A boomerang says its cell is water: no shot of that volley may read a hit there (only a decoy could make one).
+    for (const t of s.lastVolley?.tricks ?? []) {
+      if (t.kind !== 'mine' || t.result !== 'boomerang') continue;
+      check(s.shots[t.sea][t.cell]?.result !== 'hit', `${where}: a boomerang's cell ${t.sea} ${t.cell} recorded a hit`);
+      check(!s.lastVolley!.shells.some((x) => x.sea === t.sea && x.cell === t.cell && x.result !== 'miss'), `${where}: a boomerang's cell ${t.sea} ${t.cell} hit in its volley`);
+    }
     if (v.lastVolley) {
       // The fool's copy carries one fake shell per false splash first shown in this volley, dressed as a living shooter.
       const shown = fakes.filter((x) => x.round === v.lastVolley!.round);
@@ -260,10 +266,12 @@ function assertSummarySafe(before: SalvoState, after: SalvoState): void {
   }
   const v = after.lastVolley;
   const told = v ? v.tricks.flatMap((t) => [t.cell, ...(t.kind === 'mine' && t.result === 'boomerang' ? t.hits.map((h) => h.cell) : [])]) : [];
-  const used = v ? (v.items ?? []).flatMap((x) => (x.item === 'cluster' ? [x.cell, ...x.cells] : x.item === 'torpedo' ? x.path : x.item === 'repair' ? [x.cell] : x.cells)) : [];
+  const used = v ? (v.items ?? []).flatMap((x) => (x.item === 'cluster' ? [x.cell, ...x.cells] : x.item === 'torpedo' ? x.path : x.item === 'repair' ? [x.cell] : x.item === 'decoy-laid' ? [] : x.cells)) : [];
   const landed = new Set(v ? [...v.shells.map((x) => x.cell), ...v.buoys.map((x) => x.cell), ...v.blasts.flatMap((b) => b.cells), ...told, ...used] : []);
   const sunk = new Set<string>(v ? v.sunk.map((x) => x.ship) : []);
   for (const line of lines) {
+    // Laying a decoy is told, never where.
+    if (line.includes('slips a decoy')) check((line.match(CELL) ?? []).length === 0, `a decoy laid is placed: ${line}`);
     for (const cell of line.match(CELL) ?? []) check(landed.has(cell), `summary names ${cell}: ${line}`);
     for (const ship of line.match(SHIP_NAME) ?? []) check(sunk.has(ship), `summary names a ship afloat: ${line}`);
   }

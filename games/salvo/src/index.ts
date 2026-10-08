@@ -100,22 +100,27 @@ export interface Blast {
   cells: string[];
   hits: string[];
 }
-/** A trick revealed in a volley (public once it is). A boomerang's sinkings are in the volley's `sunk`, credited to the ghost. */
+/**
+ * A trick revealed in a volley (public once it is). A boomerang's sinkings are in the volley's `sunk`, credited to the ghost.
+ * A backfire's `ship` is 'decoy' when the mine sat on a live decoy: the decoy goes up with the shot (revealed in `items`).
+ */
 export type Trick =
   | { kind: 'mine'; ghost: SeatId; sea: SeatId; cell: string; shooters: SeatId[]; result: 'boomerang'; hits: { sea: SeatId; cell: string }[] }
-  | { kind: 'mine'; ghost: SeatId; sea: SeatId; cell: string; shooters: SeatId[]; result: 'backfire'; ship: ShipId }
+  | { kind: 'mine'; ghost: SeatId; sea: SeatId; cell: string; shooters: SeatId[]; result: 'backfire'; ship: ShipId | 'decoy' }
   | { kind: 'splash'; ghost: SeatId; fool: SeatId; sea: SeatId; cell: string };
 /**
  * An item used in a volley (public at the reveal). A cluster's `cells` are the cells it landed on (cells its
  * shooter had already shot are skipped), `hits` the new hits among them. A torpedo's `path` is every cell it
  * ran through, from its edge to `struck` (the first ship or live decoy cell unhit once repairs and decoys have
- * landed) or the whole lane. A repair is the cell it welded on its owner's sea. A decoy is listed only when it
- * is revealed (laying one is never told): `by` are the seats credited on the cells that finished it.
+ * landed) or the whole lane. A repair is the cell it welded on its owner's sea. Laying a decoy is told without
+ * its place ('decoy-laid'); a decoy is listed with its cells once revealed: `by` are the seats credited on the
+ * cells that finished it.
  */
 export type ItemUse =
   | { item: 'cluster'; from: SeatId; sea: SeatId; cell: string; cells: string[]; hits: string[] }
   | { item: 'torpedo'; from: SeatId; sea: SeatId; lane: string; path: string[]; struck: string | null }
   | { item: 'repair'; from: SeatId; cell: string }
+  | { item: 'decoy-laid'; from: SeatId }
   | { item: 'decoy'; sea: SeatId; cells: string[]; by: SeatId[] };
 export interface Volley {
   round: number;
@@ -666,6 +671,7 @@ function resolve(s: SalvoState): void {
       uses.push({ item: 'repair', from: o.from, cell: o.cell });
     } else if (o.kind === 'decoy') {
       s.decoys[o.sea].push({ cells: hullCells(o.cell, 2, o.facing!)!, hits: [], revealed: false });
+      uses.push({ item: 'decoy-laid', from: o.from }); // told, never where
     }
   }
   /** A cell a shot can land a hit on: a ship cell or a live decoy cell, not yet hit. */
@@ -759,6 +765,7 @@ function resolve(s: SalvoState): void {
 
   const tricks: Trick[] = [];
   const credit = (key: string, by: SeatId[]) => newHits.set(key, bySeatOrder(s, [...(newHits.get(key) ?? []), ...by]));
+  const creditDecoy = (key: string, by: SeatId[]) => decoyHits.set(key, bySeatOrder(s, [...(decoyHits.get(key) ?? []), ...by]));
   const hitNow = (sea: SeatId, c: string) => newHits.has(`${sea} ${c}`);
   const mark = (sea: SeatId, c: string, by: SeatId[]) => {
     s.shots[sea][c] = { result: 'hit', by: bySeatOrder(s, [...(s.shots[sea][c]?.by ?? []), ...by]) };
@@ -773,10 +780,19 @@ function resolve(s: SalvoState): void {
     });
   for (const m of fired) {
     const shooters = bySeatOrder(s, groups.get(`${m.sea} ${m.cell}`)!.map((x) => x.from));
-    // A mine on a live decoy's cell (a ghost may plant one there: it can't know) boomerangs as on open water:
-    // a decoy is no ship to backfire. The shell still hit the decoy.
     const ship = shipAt(s, m.sea, m.cell);
-    if (ship) {
+    // A mine on a live decoy's cell (a ghost may plant one there: it can't know) backfires the decoy: both its
+    // cells go up for the shooters, and it is revealed below. (A boomerang there would tell a hit on a cell the
+    // mine proves is water: the decoy's place.)
+    const decoy = liveDecoyAt(s, m.sea, m.cell);
+    if (decoy) {
+      for (const c of decoy.cells) {
+        if (decoy.hits.includes(c)) continue;
+        mark(m.sea, c, shooters);
+        creditDecoy(`${m.sea} ${c}`, shooters);
+      }
+      tricks.push({ kind: 'mine', ghost: m.ghost, sea: m.sea, cell: m.cell, shooters, result: 'backfire', ship: 'decoy' });
+    } else if (ship) {
       // Backfire: the hull goes up with the shot, every cell of it credited to the shooters.
       for (const c of ship.cells) {
         if (ship.hits.includes(c)) continue;
@@ -1064,7 +1080,8 @@ function targetView(s: SalvoState, sea: SeatId, you: SeatId | null, fakes: Splas
             return { cell: x.cell, round: x.round, cells, afloat: afloatIn(s, sea, (c) => cells.includes(c)) };
           })
       : [],
-    afloat: FLEET_CELLS - hits.length,
+    // Never below 1 while the fleet is living (decoy hits could push the bluff past its real cells); 0 once out.
+    afloat: isEliminated(s, sea) ? 0 : Math.max(1, FLEET_CELLS - hits.length),
     out: isEliminated(s, sea),
   };
   if (s.phase === 'over') {
@@ -1170,6 +1187,9 @@ const COUNT = ['No', 'One', 'Both', 'Three', 'Four'];
 function trickLine(t: Trick): string {
   if (t.kind === 'splash') return `Dirty trick! The hit {${t.fool}} saw on {${t.sea}} ${t.cell} was {${t.ghost}}'s false splash.`;
   const shell = `${who(t.shooters)}'s ${t.shooters.length === 1 ? 'shell' : 'shells'}`;
+  if (t.result === 'backfire' && t.ship === 'decoy') {
+    return `Backfire! {${t.ghost}}'s mine was sitting on {${t.sea}}'s DECOY. ${shell} ${t.shooters.length === 1 ? 'blows' : 'blow'} it out of the water.`;
+  }
   if (t.result === 'backfire') {
     return `Backfire! {${t.ghost}}'s mine was sitting on {${t.sea}}'s ${t.ship}. ${shell} ${t.shooters.length === 1 ? 'sends' : 'send'} it to the bottom. Thanks for the help, {${t.ghost}}.`;
   }
@@ -1222,8 +1242,16 @@ export function roundSummary(before: SalvoState, after: SalvoState): string[] {
         lines.push(`{${x.from}}'s torpedo runs down {${x.sea}}'s lane ${x.lane} and ${end}.`);
       } else if (x.item === 'repair') {
         lines.push(`{${x.from}} welds the hit at ${x.cell} back together.`);
+      } else if (x.item === 'decoy-laid') {
+        lines.push(`{${x.from}} slips a decoy into the water.`);
       } else {
-        lines.push(`${who(x.by)}'s ${x.by.length === 1 ? decoyFinder(v, x, x.by[0]) : 'shells'} ${x.by.length === 1 ? 'finds' : 'find'} {${x.sea}}'s DECOY — nothing but driftwood.`);
+        // A decoy a mine blew up is told by the backfire line.
+        if ((v.tricks ?? []).some((t) => t.kind === 'mine' && t.result === 'backfire' && t.ship === 'decoy' && t.sea === x.sea)) continue;
+        // Each shooter's weapon by name: one kind for all is that kind's plural; a mix is "shots".
+        const kinds = [...new Set(x.by.map((seat) => decoyFinder(v, x, seat)))];
+        const plural = { shell: 'shells', cluster: 'clusters', torpedo: 'torpedoes' };
+        const weapon = x.by.length === 1 ? kinds[0] : kinds.length === 1 ? plural[kinds[0]] : 'shots';
+        lines.push(`${who(x.by)}'s ${weapon} ${x.by.length === 1 ? 'finds' : 'find'} {${x.sea}}'s DECOY — nothing but driftwood.`);
       }
     }
     for (const x of v.sunk) {
