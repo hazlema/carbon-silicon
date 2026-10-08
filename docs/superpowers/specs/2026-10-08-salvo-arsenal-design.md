@@ -28,7 +28,7 @@ The Foreman, after ten full games: "Needs some sort of reward when you sink a sh
 - An item takes one gun of the salvo. At most **one item a round** (on top of the one-buoy rule). Using it removes it from your hand when the command is accepted (a queued item counts as used).
 - **Cluster** `{"fire":"cluster","at":"east","cell":"c4"}`: the cell and its four orthogonal neighbours on the sea (cells off the sea are dropped). Each covered cell lands as a shell from you. The centre must be a cell you haven't shot; covered cells you have shot are skipped. A cluster cell that another seat also hits this volley is **not** a Time on Target (only shells aimed at the same cell are).
 - **Torpedo** `{"fire":"torpedo","at":"east","lane":"c"}`: runs away from you. North fires down a column from row 8, south up a column from row 1, east along a row from column h going west, west along a row from column a going east (`lane` is a column letter for north/south shooters, a row number as a string for east/west). It stops at the first ship cell not yet hit (a hit, credited to you, like a shell); every cell it passed is marked a miss by you. A lane with no unhit ship cell is all misses. Legal: lanes with at least one cell you haven't shot. A decoy cell stops a torpedo like a ship cell.
-- **Repair** `{"use":"repair","cell":"d1"}`: on a hit cell of your own ship that's still afloat (never a sunk ship, never a decoy). The cell is unhit again, your afloat count rises by one (public), and the shooters who hit that cell see a welding spark there (their `mine` shows the cell as `repaired` until it's hit again). Repairs land at the reveal, **before** this volley's shells, so a repaired cell can be hit again the same volley.
+- **Repair** `{"use":"repair","cell":"d1"}`: on a hit cell of your own ship that's still afloat (never a sunk ship, never a decoy). The cell is unhit again and unshot (anyone may shoot it again), your afloat count rises by one, and everyone sees a welding spark there (`TargetView.repaired`) until it's shot again. It can't be hidden: hits are public, so a hit vanishing from the list names the cell anyway. Repairs land at the reveal, **before** this volley's shells, so a repaired cell can be hit again the same volley.
 - **Decoy** `{"use":"decoy","at":"c3","facing":"east"}`: a fake two-cell ship on your own sea: both cells unshot, on the sea, not overlapping a ship or another decoy. One decoy per sea at a time. Laid at the reveal, before this volley's shells.
 
 ### Decoys and what everyone sees
@@ -48,7 +48,7 @@ The Foreman, after ten full games: "Needs some sort of reward when you sink a sh
 
 - "{north}'s cluster lands on {east} around c4: 2 hits." / "…: all water."
 - "{west}'s torpedo runs down {north}'s lane c and strikes at c5." / "…and runs clean through."
-- "{east} welds a hit on their own fleet." (no cell)
+- "{east} welds the hit at d1 back together."
 - "{north}'s shell finds {east}'s DECOY — nothing but driftwood."
 - "{east} pulls a crate from the wreck." when a crate is earned (never which items).
 
