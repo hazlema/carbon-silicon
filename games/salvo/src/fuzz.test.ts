@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { createRng, type Rng } from '@cs/game-api';
 import {
+  AUCTION_MS,
+  BID_LEGAL_MAX,
   ITEMS,
   ITEM_LIMIT,
   SEATS,
@@ -17,6 +19,7 @@ import {
   type SalvoState,
   type SalvoView,
   type ItemId,
+  type Auction,
 } from './index';
 
 const turn = G.turn;
@@ -378,14 +381,45 @@ function assertNoLeaks(s: SalvoState, step: number, tally?: Tally): void {
   }
 }
 
+// ── Whisper: the copy the table may hear (written out here, not borrowed from the module) ──
+const areaText = (a: Auction) => `${a.cells[0]}–${a.cells.at(-1)}`;
+const listingText = (a: Auction) => `👻 {${a.ghost}} auctions a sonar reading on {${a.sea}}'s sea, ${areaText(a)} — 30 seconds.`;
+const closeText = (a: Auction) => (a.state === 'sold' ? `{${a.winner}} wins {${a.ghost}}'s whisper for ${a.price} scrap.` : `Nobody bids on {${a.ghost}}'s whisper.`);
+const fadeText = (a: Auction) => `{${a.ghost}}'s whisper fades with them.`;
+const truthText = (a: Auction) => {
+  const told = a.tell ?? a.truth;
+  return `{${a.ghost}} told {${a.winner}} ${told} in {${a.sea}}'s ${areaText(a)}. The truth was ${a.truth}.${told === a.truth ? ' An honest ghost!' : ''}`;
+};
+const WHISPER_LINE = /whisper|auctions a sonar|The truth was/;
+/** Auctions open before and sold or unsold after (pairs: before, after). */
+const closedAuctions = (before: SalvoState, after: SalvoState): [Auction, Auction][] =>
+  before.auctions.flatMap((a, i): [Auction, Auction][] => (a.state === 'open' && (after.auctions[i].state === 'sold' || after.auctions[i].state === 'unsold') ? [[a, after.auctions[i]]] : []));
+/** Every whisper line a change may tell: its listings, closes and fades, and the truths once the match ends. */
+function whisperTexts(before: SalvoState, after: SalvoState): Set<string> {
+  const out = new Set<string>(closedAuctions(before, after).map(([, a]) => closeText(a)));
+  for (const a of after.auctions.slice(before.auctions.length)) out.add(listingText(a));
+  for (const a of after.auctions) if (a.state === 'faded' && a.closedRound === before.round) out.add(fadeText(a));
+  if (before.phase !== 'over' && after.phase === 'over') for (const a of after.auctions) if (a.state === 'sold') out.add(truthText(a));
+  return out;
+}
+
 /** The round's story mentions only cells and ships of the volley that just landed (its tricks included, now told). */
 function assertSummarySafe(before: SalvoState, after: SalvoState): void {
   const lines = roundSummary(before, after);
   const changed = after.round !== before.round || after.phase !== before.phase;
+  const ended = before.phase !== 'over' && after.phase === 'over';
+  // Whispers: inside a round (a clock close) the summary is exactly the closes, and nothing at all when none
+  // closed; a resolution tells its closes, listings, fades and (at the end) truths, and no other whisper line.
+  const closes = closedAuctions(before, after).map(([, a]) => closeText(a));
   if (!changed) {
-    check(lines.length === 0, 'a summary inside a round');
+    check(JSON.stringify(lines) === JSON.stringify(closes), `a summary inside a round is not exactly its closes: ${JSON.stringify(lines)}`);
     return;
   }
+  const said = whisperTexts(before, after);
+  const must = [...closes, ...after.auctions.slice(before.auctions.length).map(listingText), ...(ended ? after.auctions.filter((a) => a.state === 'sold').map(truthText) : [])];
+  for (const line of must) check(lines.includes(line), `the summary misses a whisper line: ${line}`);
+  for (const line of lines) if (WHISPER_LINE.test(line)) check(said.has(line), `a whisper line not owed by this change: ${line}`);
+  if (!ended) for (const line of lines) check(!/truth|told/i.test(line), `a whisper's truth told while live: ${line}`);
   const v = after.lastVolley;
   const told = v ? v.tricks.flatMap((t) => [t.cell, ...(t.kind === 'mine' && t.result === 'boomerang' ? t.hits.map((h) => h.cell) : [])]) : [];
   const used = v ? (v.items ?? []).flatMap((x) => (x.item === 'cluster' ? [x.cell, ...x.cells] : x.item === 'torpedo' ? x.path : x.item === 'repair' ? [x.cell] : x.item === 'decoy-laid' ? [] : x.cells)) : [];
@@ -606,6 +640,224 @@ function checkGhostTurn(s: SalvoState, seat: string, legal: SalvoCommand[], rng:
   }
 }
 
+// ── Whisper: the auction's invariants, checked on every change ──
+
+const isOptionalCmd = (c: unknown) => typeof c === 'object' && c !== null && ('bid' in c || 'tell' in c);
+
+/** The same state with every open auction's bids withdrawn: whatever closes now moves no scrap. */
+function bidsStripped(s: SalvoState): SalvoState {
+  const t = structuredClone(s);
+  for (const a of t.auctions) if (a.state === 'open') a.bids = {};
+  return t;
+}
+
+/** The sale an auction's bids make among `alive` (the oracle): the highest bid its bidder can pay, ties to the earliest. */
+function expectedSale(s: SalvoState, a: Auction, alive: string[]): { winner: string; price: number } | null {
+  let best: { winner: string; price: number; at: number } | null = null;
+  for (const [x, b] of Object.entries(a.bids)) {
+    if (!b || !alive.includes(x) || b.n < 1 || b.n > s.scrap[x]) continue;
+    if (!best || b.n > best.price || (b.n === best.price && b.at < best.at)) best = { winner: x, price: b.n, at: b.at };
+  }
+  return best && { winner: best.winner, price: best.price };
+}
+
+/** Everything in a state but the auctions, the bid counter and the scrap: what a bid or a clock close may not touch. */
+const restOf = (s: SalvoState) => JSON.stringify({ ...s, auctions: null, bidSeq: null, scrap: null });
+
+/**
+ * How a state changed: by the clock at `now` (a wake-up, or the call after a move), by an optional bid or tell,
+ * or by an owed move or a forfeit (`redo` repeats it on another state).
+ */
+type Change = { kind: 'clock'; now: number } | { kind: 'optional' } | { kind: 'move' | 'forfeit'; redo: (t: SalvoState) => SalvoState };
+
+/**
+ * The auction's invariants across one change: one open auction per ghost, all a ghost's; wakeAt the earliest
+ * open close; a closed auction frozen; listings only at a resolution; a close by the clock at or after its
+ * closesAt, any other only when the round resolves (or the match ends); the winner the oracle's; and scrap
+ * conserved: a clock close or a bid moves only the price, winner to ghost, and a resolution's scrap is the
+ * same move on top of what the round would have paid with nobody bidding.
+ */
+function checkWhisper(before: SalvoState, after: SalvoState, change: Change, g: number, tally: Tally): void {
+  const where = `game ${g}, round ${before.round}, ${change.kind}`;
+  const open = openAuctionsOf(after);
+  check(new Set(open.map((a) => a.ghost)).size === open.length, `${where}: a ghost with two auctions open`);
+  check(open.every((a) => ghostsOf(after).includes(a.ghost)), `${where}: an auction open for a seat that is not a ghost at the table`);
+  const times = after.phase === 'fire' ? open.flatMap((a) => (a.closesAt === null ? [] : [a.closesAt])) : [];
+  check(turn.wakeAt!(after) === (times.length > 0 ? Math.min(...times) : null), `${where}: wakeAt ${turn.wakeAt!(after)} is not the earliest open close`);
+  check(after.auctions.length >= before.auctions.length, `${where}: an auction vanished`);
+  before.auctions.forEach((a, i) => check(a.state === 'open' || JSON.stringify(after.auctions[i]) === JSON.stringify(a), `${where}: a closed auction changed`));
+  const resolved = after.round !== before.round || after.phase !== before.phase;
+  for (const a of after.auctions.slice(before.auctions.length)) {
+    check(change.kind !== 'clock' && change.kind !== 'optional' && resolved, `${where}: a whisper listed outside a resolution`);
+    check(a.state === 'open' && a.opensRound === before.round + 1 && a.closesAt === null && a.tell === null && Object.keys(a.bids).length === 0, `${where}: a listing is not a fresh auction for next round`);
+    check(ghostsOf(before).includes(a.ghost) && a.truth >= 0 && a.truth <= 9 && a.sea !== a.ghost, `${where}: a listing by a non-ghost, or a truth out of range`);
+    bump(tally, 'whisper:listed');
+  }
+  // The seats alive when the close was decided: before the change, less any seat forfeited by it (never a sinking: shells land after).
+  const alive = before.seats.filter((x) => !isOut(before, x) && !after.eliminated.some((e) => e.seat === x && e.reason !== 'sunk'));
+  const moved: Record<string, number> = Object.fromEntries(after.seats.map((x) => [x, 0]));
+  const winners: string[] = [];
+  before.auctions.forEach((a, i) => {
+    const b = after.auctions[i];
+    if (a.state !== 'open' || b.state === 'open') return;
+    if (b.state === 'faded') {
+      check(change.kind === 'forfeit' && after.ghostsGone.includes(b.ghost) && !before.ghostsGone.includes(b.ghost) && b.winner === null, `${where}: a whisper faded with its ghost still here`);
+      bump(tally, 'whisper:faded');
+      return;
+    }
+    if (b.state === 'void') {
+      check(after.phase === 'over' && a.opensRound > before.round, `${where}: an open auction voided`);
+      return;
+    }
+    // Sold or unsold: by the clock at or after closesAt, or by the round resolving (or the match ending); never before.
+    if (change.kind === 'clock') check(a.closesAt !== null && change.now >= a.closesAt, `${where}: closed at ${change.now}, before its close at ${a.closesAt}`);
+    else check(change.kind !== 'optional' && resolved, `${where}: closed by a ${change.kind} that resolved nothing`);
+    bump(tally, change.kind === 'clock' ? 'whisper:closeByClock' : 'whisper:closeByResolution');
+    const want = expectedSale(before, a, alive);
+    check(
+      want ? b.state === 'sold' && b.winner === want.winner && b.price === want.price : b.state === 'unsold' && b.winner === null && b.price === 0,
+      `${where}: ${a.ghost}'s whisper went ${b.state} to ${b.winner} for ${b.price}, not ${JSON.stringify(want)}`,
+    );
+    bump(tally, `whisper:${b.state}`);
+    if (b.state !== 'sold') return;
+    moved[b.winner!] -= b.price;
+    moved[b.ghost] += b.price;
+    winners.push(b.winner!);
+    bump(tally, (b.tell ?? b.truth) === b.truth ? 'whisper:honest' : 'whisper:lie');
+    if (b.winner === b.sea) bump(tally, 'whisper:bury');
+    if (Object.entries(a.bids).filter(([k, x]) => x && x.n === b.price && alive.includes(k)).length > 1) bump(tally, 'whisper:tie');
+  });
+  // Scrap: transfers net 0, and nothing else moves scrap unless the round resolves.
+  check(Object.values(moved).reduce((x, y) => x + y, 0) === 0, `${where}: a transfer that does not net to 0`);
+  if (change.kind === 'clock' || change.kind === 'optional') {
+    for (const x of after.seats) check(after.scrap[x] === before.scrap[x] + moved[x], `${where}: ${x}'s scrap ${before.scrap[x]} → ${after.scrap[x]}, transfers ${moved[x]}`);
+    check(restOf(after) === restOf(before), `${where}: a ${change.kind} change touched more than the auctions and scrap`);
+    if (change.kind === 'optional') check(JSON.stringify(after.scrap) === JSON.stringify(before.scrap), `${where}: a bid moved scrap`);
+  } else if (winners.length > 0) {
+    // The same change with nobody bidding: every seat's scrap is that plus the transfers. (A winner sunk in this
+    // volley pays out half its scrap to its sinkers, after the price: that pay-out differs, so the check skips.)
+    const victims = after.lastVolley && after.lastVolley !== before.lastVolley ? after.lastVolley.eliminated : [];
+    if (winners.some((x) => victims.includes(x))) bump(tally, 'whisper:scrapSkipped');
+    else {
+      const bare = change.redo(bidsStripped(before));
+      for (const x of after.seats) check(after.scrap[x] === bare.scrap[x] + moved[x], `${where}: ${x}'s scrap is ${after.scrap[x]}, not ${bare.scrap[x]} + transfers ${moved[x]}`);
+      check(after.seats.reduce((n, x) => n + after.scrap[x], 0) === after.seats.reduce((n, x) => n + bare.scrap[x], 0), `${where}: scrap not conserved across a close`);
+      bump(tally, 'whisper:scrapConserved');
+    }
+  }
+}
+
+/**
+ * The engine's clock at `now`: its change checked (stamps at now + AUCTION_MS, closes only what is due, nothing
+ * due left behind, the same object when nothing is due), told safely, and leak-free.
+ */
+function clocked(s: SalvoState, now: number, g: number, step: number, tally: Tally, leaks: boolean): SalvoState {
+  const after = turn.clock!(s, now);
+  const where = `game ${g}, round ${s.round}, clock ${now}`;
+  if (after.phase === 'fire') {
+    for (const a of openAuctionsOf(after)) {
+      if (a.opensRound <= after.round) check(a.closesAt !== null && a.closesAt > now && a.closesAt <= now + AUCTION_MS, `${where}: an open auction unstamped, or due and still open`);
+      else check(a.closesAt === null, `${where}: an auction stamped before its round`);
+    }
+    for (const [i, a] of after.auctions.entries()) if (a.closesAt !== null && s.auctions[i].closesAt === null) check(a.closesAt === now + AUCTION_MS, `${where}: stamped at ${a.closesAt}`);
+  }
+  check(turn.clock!(after, now) === after, `${where}: the clock changed a state twice at one time`);
+  if (after === s) return s;
+  bump(tally, 'clock:changed');
+  checkWhisper(s, after, { kind: 'clock', now }, g, tally);
+  if (leaks) {
+    assertNoLeaks(after, step, tally);
+    assertSummarySafe(s, after);
+  }
+  return after;
+}
+
+/**
+ * A move that is never owed, before it is played: mayAct agrees with legal's optional entries for every seat;
+ * `optional` flags exactly the bids and tells; a sample of the optional legal applies cleanly and changes nobody's
+ * debt; random bids and tells apply exactly when legal lists them (refused with a code otherwise); a ghost, a gone
+ * ghost or a spectator never bids; a bid without its ghost, while one auction is open, is the same bid. Then
+ * one seat that may act bids, re-bids, abstains or tells. Null when nobody may act.
+ */
+function optionalMove(s: SalvoState, rng: Rng, g: number, tally: Tally): { seat: string; cmd: SalvoCommand } | null {
+  const open = openAuctionsOf(s);
+  const where = `game ${g}, round ${s.round}`;
+  const optionals: Record<string, SalvoCommand[]> = {};
+  for (const x of s.seats) {
+    const legal = turn.legal(s, x) as SalvoCommand[];
+    const opt = legal.filter(isOptionalCmd);
+    optionals[x] = opt;
+    check((opt.length > 0) === turn.mayAct!(s, x), `${where}: ${x}'s mayAct disagrees with its legal`);
+    check(legal.every((c) => turn.optional!(s, c) === isOptionalCmd(c)), `${where}: optional flags a command wrongly for ${x}`);
+    // Optional entries come after the owed ones (the autopilot reads the front).
+    check(legal.findIndex(isOptionalCmd) === -1 || legal.slice(legal.findIndex(isOptionalCmd)).every(isOptionalCmd), `${where}: an owed entry after the optional ones`);
+    const ghost = isOut(s, x);
+    if (ghost) {
+      check(opt.every(isTellCmd), `${where}: a ghost is offered a bid`);
+      for (const a of open) {
+        const code = codeOf(() => turn.apply(s, x, { bid: 1, ghost: a.ghost }));
+        check(code !== null && code !== 'NO_CODE', `${where}: ghost ${x} bid on ${a.ghost}'s whisper (${code})`);
+        bump(tally, 'whisper:ghostBidRefused');
+      }
+    } else check(opt.every((c) => 'bid' in c), `${where}: a living seat is offered a tell`);
+    if (!opt.some(isTellCmd)) {
+      const code = codeOf(() => turn.apply(s, x, { tell: 1 }));
+      check(code !== null && code !== 'NO_CODE', `${where}: ${x} told without an auction of its own (${code})`);
+    }
+  }
+  const nobody = codeOf(() => turn.apply(s, 'spectator', { bid: 1, ghost: open[0]?.ghost ?? s.seats[0] }));
+  check(nobody !== null && nobody !== 'NO_CODE', `${where}: a spectator bid`);
+  const actors = s.seats.filter((x) => optionals[x].length > 0);
+  if (actors.length === 0) return null;
+  const seat = rng.pick(actors);
+  const opt = optionals[seat];
+  const offered = new Set(opt.map((c) => JSON.stringify(c)));
+  const owes = JSON.stringify([turn.toMove(s), s.ready]);
+  for (let k = 0; k < 3; k++) {
+    const cmd = rng.pick(opt);
+    let t = s;
+    const code = codeOf(() => (t = turn.apply(s, seat, cmd)));
+    check(code === null, `${where}: ${seat}'s legal ${JSON.stringify(cmd)} was refused (${code})`);
+    check(JSON.stringify([turn.toMove(t), t.ready]) === owes, `${where}: ${seat}'s ${JSON.stringify(cmd)} changed who owes`);
+    bump(tally, 'apply:optional');
+  }
+  for (let k = 0; k < 3; k++) {
+    const cmd: SalvoCommand = rng.next() < 0.5 ? { bid: rng.int(BID_LEGAL_MAX + 4) - 1, ghost: rng.pick([...s.seats]) } : { tell: rng.int(13) - 1 };
+    const code = codeOf(() => turn.apply(s, seat, cmd));
+    if (offered.has(JSON.stringify(cmd))) check(code === null, `${where}: ${seat}'s legal ${JSON.stringify(cmd)} was refused (${code})`);
+    else if ('bid' in cmd && cmd.bid > BID_LEGAL_MAX && cmd.bid <= s.scrap[seat] && optionals[seat].some((c) => 'bid' in c && c.ghost === cmd.ghost)) continue; // legal lists bids up to BID_LEGAL_MAX; any up to your scrap is fine
+    else check(code !== null && code !== 'NO_CODE', `${where}: ${seat}'s ${JSON.stringify(cmd)} is not in legal but was ${code === null ? 'accepted' : 'refused without a code'}`);
+    bump(tally, code === null ? 'agree:optionalAccepted' : 'agree:optionalRefused');
+  }
+  // With one auction open, a bid may leave out its ghost: the same as naming it.
+  const bids = opt.filter((c): c is Extract<SalvoCommand, { bid: number }> => 'bid' in c);
+  if (open.length === 1 && bids.length > 0) {
+    const b = rng.pick(bids);
+    check(JSON.stringify(turn.apply(s, seat, { bid: b.bid } as SalvoCommand)) === JSON.stringify(turn.apply(s, seat, b)), `${where}: a bid without its ghost is not the same bid`);
+  }
+  // The move: a ghost tells the truth about a third of the time, else any number; a living seat abstains one
+  // time in five, re-bids its own amount sometimes (its place in the tiebreak kept), and otherwise bids a few
+  // scrap (the sea's owner, half the time, all it may: a bury).
+  const v = viewOf(s, seat);
+  if (isOut(s, seat)) {
+    const truth = v.myTricks!.whisper!.truth;
+    bump(tally, 'optional:tell');
+    return { seat, cmd: rng.next() < 0.35 ? { tell: truth } : (rng.pick(opt) as SalvoCommand) };
+  }
+  const a = rng.pick(v.auctions);
+  const on = bids.filter((c) => c.ghost === a.ghost);
+  const mine = v.myBids[a.ghost];
+  const r = rng.next();
+  bump(tally, 'optional:bid');
+  if (r < 0.2) return { seat, cmd: on[0] }; // { bid: 0 }
+  if (r < 0.35 && mine !== undefined) {
+    bump(tally, 'optional:rebid');
+    return { seat, cmd: { bid: mine, ghost: a.ghost } };
+  }
+  if (a.sea === seat && rng.next() < 0.5) return { seat, cmd: on.at(-1)! };
+  return { seat, cmd: on[Math.min(on.length - 1, 1 + rng.int(4))] };
+}
+
 /** One seeded game from setup to outcome, checking everything as it goes. */
 function playthrough(g: number, tally: Tally, leaks: boolean): void {
   const n = 2 + (g % 3);
@@ -615,13 +867,23 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
   const forfeitGhost = g % 12 === 1 || g % 12 === 5;
   let gone: { seat: string; round: number } | null = null;
   let guard = 0;
+  // A fake clock: 0–40 s pass between commands (mostly a few seconds, so some auctions run into the round's
+  // resolution and some close on the clock), with a wake-up before each command and the engine's call after it.
+  let now = 1_700_000_000_000;
   while (!G.outcome(s)) {
     if (++guard > 3000) throw new Error(`game ${g} did not finish`);
+    now += rng.next() < 0.7 ? rng.int(4_000) : rng.int(40_001);
+    s = clocked(s, now, g, guard, tally, leaks);
     const owing = turn.toMove(s);
     check(owing.length > 0, `game ${g}: nobody owes a move`);
     const before = s;
     const ghost = ghostsOf(s)[0];
+    let change: Change;
+    let optional: { seat: string; cmd: SalvoCommand } | null = null;
+    // A ghost with its whisper up for auction fades now and then (a forfeit) before the close.
+    const fader = openAuctionsOf(s).find((a) => a.opensRound <= s.round)?.ghost;
     if (forfeitGhost && !gone && ghost !== undefined) {
+      change = { kind: 'forfeit', redo: (t) => G.forfeit(t, ghost, 'timeout') };
       // Ghost forfeits keep placement: eliminated (and so outcome) untouched, its mischief gone with it.
       s = G.forfeit(s, ghost, 'timeout');
       tally.ghostForfeits += 1;
@@ -634,7 +896,21 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
       if (s.round === before.round) check(s.eliminated.length === before.eliminated.length, `game ${g}: a ghost forfeit added to eliminated`);
     } else if (rng.next() < 0.003) {
       const alive = s.seats.filter((x) => !isOut(s, x));
-      s = G.forfeit(s, rng.pick(alive), rng.pick(['resign', 'timeout', 'disconnect']));
+      const [who, why] = [rng.pick(alive), rng.pick(['resign', 'timeout', 'disconnect'])];
+      change = { kind: 'forfeit', redo: (t) => G.forfeit(t, who, why) };
+      s = G.forfeit(s, who, why);
+    } else if (fader !== undefined && rng.next() < 0.03) {
+      change = { kind: 'forfeit', redo: (t) => G.forfeit(t, fader, 'timeout') };
+      s = G.forfeit(s, fader, 'timeout');
+      check(s.auctions.some((a) => a.ghost === fader && a.state === 'faded'), `game ${g}: ${fader}'s whisper outlived it`);
+    } else if (openAuctionsOf(s).length > 0 && rng.next() < 0.3 && (optional = optionalMove(s, rng, g, tally)) !== null) {
+      // A bid, a re-bid, an abstention or a tell: owed by nobody, and it changes nobody's debt.
+      const { seat, cmd } = optional;
+      change = { kind: 'optional' };
+      s = turn.apply(s, seat, cmd);
+      check(JSON.stringify([turn.toMove(s), s.ready]) === JSON.stringify([turn.toMove(before), before.ready]), `game ${g}: ${seat}'s ${JSON.stringify(cmd)} changed who owes`);
+      check(SAFE_DESCRIBE.includes(turn.describe!(cmd)), `describe: ${turn.describe!(cmd)}`);
+      check(SAFE_NARRATE.includes(turn.narrate!(before, s, seat, cmd)), `narrate: ${turn.narrate!(before, s, seat, cmd)}`);
     } else {
       const seat = rng.pick(owing);
       const legal = turn.legal(s, seat) as SalvoCommand[];
@@ -675,7 +951,10 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
         // A seat with its salvo in owes only its crate.
         check(mine.myOrders.length < mine.guns[seat] || mine.myArsenal!.crate !== null, `game ${g}: ${seat} owes a shot with its salvo full`);
       }
-      const cmd = choose(mine, legal, rng);
+      // A ghost lists a whisper about one time in five it may (choose would pick one only now and then).
+      const whispers = legal.filter((c) => 'trick' in c && c.trick === 'whisper');
+      const cmd = whispers.length > 0 && rng.next() < 0.2 ? rng.pick(whispers) : choose(mine, legal, rng);
+      change = { kind: 'move', redo: (t) => turn.apply(t, seat, cmd) };
       if ('crate' in cmd) bump(tally, cmd.crate === 'pass' ? 'crate:pass' : 'drop' in cmd ? 'crate:swap' : 'crate:pick');
       s = turn.apply(s, seat, cmd);
       check(SAFE_DESCRIBE.includes(turn.describe!(cmd)), `describe: ${turn.describe!(cmd)}`);
@@ -691,13 +970,14 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
       }
       for (const x of s.lastVolley.items) bump(tally, `item:${x.item}`);
     }
-    // Whispers listed, and closed (by the round resolving: this fuzz runs no clock), sold or not.
-    bump(tally, 'whisper:listed', s.auctions.length - before.auctions.length);
-    for (const a of s.auctions.filter((x, i) => x.state !== 'open' && before.auctions[i]?.state === 'open')) bump(tally, `whisper:${a.state}`);
+    // Whispers listed, closed (sold or not) or faded, and scrap conserved across the change.
+    checkWhisper(before, s, change, g, tally);
     if (leaks) {
       assertNoLeaks(s, guard, tally);
       assertSummarySafe(before, s);
     }
+    // The engine calls the clock after every accepted move.
+    s = clocked(s, now, g, guard, tally, leaks);
   }
   const out = G.outcome(s)!;
   expect(out.winners).toHaveLength(1);
@@ -756,12 +1036,82 @@ describe('fuzz', () => {
     // under other seats' legal, under fog and sonar, a queued item counted, and every kind applied from legal.
     const walked = [
       ...['crate:pick', 'crate:swap', 'crate:pass', 'item:cluster', 'item:torpedo', 'item:repair', 'item:decoy-laid', 'item:decoy', 'decoyBackfire'],
-      ...['whisper:listed', 'whisper:sold', 'whisper:unsold'],
+      ...['whisper:listed', 'whisper:sold', 'whisper:unsold', 'whisper:faded', 'whisper:lie', 'whisper:honest', 'whisper:bury', 'whisper:tie'],
+      ...['whisper:closeByClock', 'whisper:closeByResolution', 'whisper:scrapConserved', 'whisper:ghostBidRefused', 'clock:changed'],
+      ...['optional:bid', 'optional:rebid', 'optional:tell', 'apply:optional', 'agree:optionalAccepted', 'agree:optionalRefused'],
       ...['decoyBlind', 'decoyUnderFog', 'decoyUnderSonar', 'heldQueued', 'splashOverDecoyHits', 'agree:accepted', 'agree:refused'],
       ...['pick', 'swap', 'pass', 'cluster', 'torpedo', 'repair', 'decoy', 'shell', 'buoy'].map((k) => `apply:${k}`),
     ];
     expect(walked.filter((k) => !((tally.paths[k] ?? 0) > 0))).toEqual([]);
   }, 60_000);
+
+  test('whisper closes never depend on bid order: highest bid, ties to the earliest placed, the same by the clock or by the round', () => {
+    const seen = { interleavings: 0, ties: 0, sold: 0, unsold: 0, orderDecides: 0 };
+    const T0 = 1_700_000_000_000;
+    for (let seed = 1; seed <= 30; seed++) {
+      const rng = createRng(seed * 71);
+      const n = 3 + (seed % 2);
+      const base = deployedAtRandom(n, 200 + seed);
+      // One fleet down: a ghost whose whisper on a living sea opens this round; every living seat holds a little scrap.
+      const ghost = base.seats[seed % n];
+      hitAllBut(base, ghost, [], base.seats.find((x) => x !== ghost)!);
+      base.eliminated.push({ seat: ghost, round: 0, reason: 'sunk' });
+      const alive = base.seats.filter((x) => x !== ghost);
+      const sea = alive[seed % alive.length];
+      for (const x of alive) base.scrap[x] = 1 + rng.int(4);
+      const cells = buoyCells('d4');
+      const truth = afloatAmong(base, sea, (c) => cells.includes(c));
+      base.auctions.push({ ghost, sea, centre: 'd4', cells, truth, tell: null, opensRound: base.round, closesAt: null, bids: {}, abstained: [], state: 'open', winner: null, price: 0, closedRound: null });
+      const s = turn.clock!(base, T0);
+      expect(s.auctions[0].closesAt).toBe(T0 + AUCTION_MS);
+      // Each living seat's bids, in its own order: 1–3 amounts of 0..min(scrap, 3) (small, so ties come often).
+      const scripts = alive.map((x) => Array.from({ length: 1 + rng.int(3) }, () => ({ seat: x, n: rng.int(Math.min(base.scrap[x], 3) + 1) })));
+      const winners = new Set<string>();
+      for (let k = 0; k < 6; k++) {
+        // An interleaving of the scripts (each seat's own bids keep their order).
+        const queues = scripts.map((q) => [...q]);
+        const events: { seat: string; n: number }[] = [];
+        while (queues.some((q) => q.length > 0)) events.push(rng.pick(queues.filter((q) => q.length > 0)).shift()!);
+        // The model: a new amount takes the next place; the same amount again keeps its place; 0 withdraws.
+        const held: Record<string, { n: number; at: number } | null> = {};
+        events.forEach((e, at) => (held[e.seat] = e.n === 0 ? null : held[e.seat]?.n === e.n ? held[e.seat] : { n: e.n, at }));
+        const top = Object.entries(held)
+          .filter((e): e is [string, { n: number; at: number }] => e[1] !== null)
+          .sort((x, y) => y[1].n - x[1].n || x[1].at - y[1].at);
+        const want: { state: 'sold' | 'unsold'; winner: string | null; price: number } = top[0] ? { state: 'sold', winner: top[0][0], price: top[0][1].n } : { state: 'unsold', winner: null, price: 0 };
+        if (top.length > 1 && top[0][1].n === top[1][1].n) seen.ties += 1;
+        let t = s;
+        for (const e of events) t = turn.apply(t, e.seat, { bid: e.n, ghost });
+        expect(turn.toMove(t)).toEqual(turn.toMove(s));
+        // Closed by the clock, at its close...
+        const byClock = turn.clock!(t, T0 + AUCTION_MS);
+        expect(turn.clock!(t, T0 + AUCTION_MS - 1)).toBe(t);
+        // ...or by the round resolving first (every seat plays what it owes; the close comes before the shells).
+        let byRound = t;
+        while (byRound.round === t.round && !G.outcome(byRound)) {
+          const seat = turn.toMove(byRound)[0];
+          const owed = (turn.legal(byRound, seat) as SalvoCommand[]).filter((c) => !turn.optional!(byRound, c));
+          byRound = turn.apply(byRound, seat, choose(viewOf(byRound, seat), owed, rng));
+        }
+        for (const end of [byClock, byRound]) {
+          const a = end.auctions[0];
+          expect({ state: a.state, winner: a.winner, price: a.price }).toEqual(want);
+        }
+        // Scrap moves only by the price, winner to ghost (a clock close changes nothing else).
+        const paid = Object.fromEntries(base.seats.map((x) => [x, x === want.winner ? -want.price : x === ghost ? want.price : 0]));
+        for (const x of base.seats) expect(byClock.scrap[x]).toBe(t.scrap[x] + paid[x]);
+        seen[want.state] += 1;
+        seen.interleavings += 1;
+        winners.add(String(want.winner));
+      }
+      if (winners.size > 1) seen.orderDecides += 1;
+    }
+    expect(seen.ties).toBeGreaterThan(0);
+    expect(seen.sold).toBeGreaterThan(0);
+    expect(seen.unsold).toBeGreaterThan(0);
+    // Ties are the only way order matters, and it does: the earliest placed wins.
+    expect(seen.orderDecides).toBeGreaterThan(0);
+  });
 
   test('same-volley knockouts always go through the tiebreak to one winner', () => {
     let forced = 0;
