@@ -110,8 +110,11 @@ function check(ok: boolean, what: string): void {
 function secretsStripped(s: SalvoState, seat: string | null): SalvoState {
   const t = structuredClone(s);
   for (const x of t.seats) {
+    if (x === seat) continue; // the viewer's own commits are its to know
+    // Another seat's queued item goes back in its hand, as if never committed: the table can't tell.
+    for (const o of t.pending[x]) if (o.kind === 'cluster' || o.kind === 'torpedo') t.arsenal[x].push(o.kind);
     t.pending[x] = [];
-    if (x !== seat) t.pendingTrick[x] = null;
+    t.pendingTrick[x] = null;
   }
   if (t.phase !== 'over') {
     t.mines = t.mines.filter((m) => m.ghost === seat);

@@ -416,7 +416,7 @@ function applyFire(s: SalvoState, seat: SeatId, command: Record<string, unknown>
   } else if (firedAt(s, seat, at, name)) {
     throw new GameRuleError('ALREADY_FIRED', `You have already shot ${at}'s ${name}.`);
   } else if (aimedAt(s, seat, at, name)) {
-    throw new GameRuleError('ALREADY_AIMED', `One of this round's shells is already on ${at}'s ${name}.`);
+    throw new GameRuleError('ALREADY_AIMED', `One of this round's shots is already on ${at}'s ${name}.`);
   }
   s.pending[seat].push({ kind: fire, from: seat, sea: at, cell: name });
   markReady(s, seat);
@@ -454,6 +454,7 @@ function applyItemFire(s: SalvoState, seat: SeatId, command: Record<string, unkn
     if (i === null) throw new GameRuleError('BAD_CELL', `There is no cell "${cell}" on an 8×8 sea (a1 to h8).`);
     const name = cellName(i);
     if (firedAt(s, seat, at, name)) throw new GameRuleError('ALREADY_FIRED', `You have already shot ${at}'s ${name}; centre your cluster on a cell you haven't.`);
+    if (aimedAt(s, seat, at, name)) throw new GameRuleError('ALREADY_AIMED', `One of this round's shots is already on ${at}'s ${name}.`);
     order = { kind: 'cluster', from: seat, sea: at, cell: name };
   } else {
     const cells = torpedoLane(seat, lane!);
@@ -500,7 +501,7 @@ function applyCrate(s: SalvoState, seat: SeatId, command: Record<string, unknown
 
 /** Is one of this seat's shells already aimed at that cell this round? */
 const aimedAt = (s: SalvoState, seat: SeatId, sea: SeatId, cell: string) =>
-  s.pending[seat].some((x) => x.kind === 'shell' && x.sea === sea && x.cell === cell);
+  s.pending[seat].some((x) => (x.kind === 'shell' || x.kind === 'cluster') && x.sea === sea && x.cell === cell);
 
 /** Who pulls a crate from this volley's sinkings, one entry per crate: each credited seat not out after the volley. */
 const crateEarners = (s: SalvoState, sunk: Volley['sunk']): SeatId[] => sunk.flatMap((x) => x.by.filter((seat) => !isEliminated(s, seat)));
@@ -805,7 +806,10 @@ function legal(s: SalvoState, seat: SeatId): SalvoCommand[] {
     for (const sea of living(s)) {
       if (sea === seat) continue;
       if (item === 'cluster') {
-        for (let i = 0; i < SIZE * SIZE; i++) if (!firedAt(s, seat, sea, cellName(i))) out.push({ fire: 'cluster', at: sea, cell: cellName(i) });
+        for (let i = 0; i < SIZE * SIZE; i++) {
+          const cell = cellName(i);
+          if (!firedAt(s, seat, sea, cell) && !aimedAt(s, seat, sea, cell)) out.push({ fire: 'cluster', at: sea, cell });
+        }
       } else if (item === 'torpedo') {
         for (const lane of lanesFor(seat)) if (torpedoLane(seat, lane)!.some((c) => !firedAt(s, seat, sea, c))) out.push({ fire: 'torpedo', at: sea, lane });
       }
@@ -943,7 +947,8 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
             pending: s.pendingTrick[you] ? { trick: s.pendingTrick[you]!.kind, at: s.pendingTrick[you]!.sea, cell: s.pendingTrick[you]!.cell, ...(s.pendingTrick[you]!.fool ? { fool: s.pendingTrick[you]!.fool } : {}) } : null,
           }
         : null,
-    holding: Object.fromEntries(living(s).map((x) => [x, s.arsenal[x].length])),
+    // A queued item still counts until the reveal: the table must not learn mid-round that someone committed one.
+    holding: Object.fromEntries(living(s).map((x) => [x, s.arsenal[x].length + s.pending[x].filter(isItemOrder).length])),
     myArsenal: you && !isEliminated(s, you) ? { items: [...s.arsenal[you]], crate: s.crates[you][0] ? [...s.crates[you][0]] : null } : null,
     mySea,
     targets: seas.map((x) => targetView(s, x, you, fakes)),

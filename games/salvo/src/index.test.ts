@@ -1579,11 +1579,15 @@ describe('cluster and torpedo', () => {
     expect(itemsOf(holding('west', ['torpedo']), 'west')).toContainEqual({ fire: 'torpedo', at: 'east', lane: '8' });
     s = use(s, 'north', { fire: 'cluster', at: 'east', cell: 'b3' });
     expect(s.arsenal.north).toEqual(['torpedo']);
-    expect(viewOf(s, 'east').holding.north).toBe(1);
+    expect(viewOf(s, 'north').myArsenal!.items).toEqual(['torpedo']); // spent, for its owner
+    expect(viewOf(s, 'east').holding.north).toBe(2); // the table can't tell until the reveal
+    expect(viewOf(s, null).holding.north).toBe(2);
     expect(viewOf(s, 'north').myOrders).toEqual([{ fire: 'cluster', at: 'east', cell: 'b3' }]);
     expect(viewOf(s, 'east').myOrders).toEqual([]);
     expect(itemsOf(s, 'north')).toEqual([]);
     expect(codeOf(() => use(s, 'north', { fire: 'torpedo', at: 'east', lane: 'e' }))).toBe('ONE_ITEM');
+    s = volley(s, {});
+    expect(viewOf(s, 'east').holding.north).toBe(1);
   });
 
   test('refusals carry precise codes', () => {
@@ -1604,6 +1608,17 @@ describe('cluster and torpedo', () => {
     expect(itemsOf(shot, 'north')).toContainEqual({ fire: 'torpedo', at: 'south', lane: 'e' });
     expect(itemsOf(shot, 'north')).not.toContainEqual({ fire: 'cluster', at: 'east', cell: 'b3' });
     expect(shot.arsenal.north).toEqual(['cluster', 'torpedo']); // a refused item stays in hand
+    // Two of your own guns on one cell: a cluster centre on your queued shell, a shell on your queued cluster centre.
+    let aimed = fire(holding('north', ['cluster']), 'north', 'east', 'b3');
+    expect(itemsOf(aimed, 'north')).not.toContainEqual({ fire: 'cluster', at: 'east', cell: 'b3' });
+    expect(codeOf(() => use(aimed, 'north', { fire: 'cluster', at: 'east', cell: 'b3' }))).toBe('ALREADY_AIMED');
+    aimed = use(holding('north', ['cluster']), 'north', { fire: 'cluster', at: 'east', cell: 'b3' });
+    expect(shellsOf(aimed, 'north')).not.toContainEqual({ fire: 'shell', at: 'east', cell: 'b3' });
+    expect(shellsOf(aimed, 'north')).toContainEqual({ fire: 'shell', at: 'east', cell: 'a3' }); // the plus around it is fine
+    expect(codeOf(() => fire(aimed, 'north', 'east', 'b3'))).toBe('ALREADY_AIMED');
+    // A lane over your own queued shell is fine.
+    const lane = fire(holding('north', ['torpedo']), 'north', 'east', 'e5');
+    expect(codeOf(() => use(lane, 'north', { fire: 'torpedo', at: 'east', lane: 'e' }))).toBeNull();
   });
 
   test('a cluster lands five cells as shells from its shooter: hits paid, a sinking, a crate', () => {
