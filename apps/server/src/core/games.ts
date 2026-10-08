@@ -447,8 +447,19 @@ export class GameManager {
     m.wake = null;
     if (this.closed || m.status !== 'live') return;
     const next = this.runClock(m);
-    // Nothing due after all: wait for the next change to ask again (never a busy loop).
-    if (next === m.state) return;
+    // Nothing due after all (the timer fired early, or clock and wakeAt disagree at the boundary):
+    // ask again only if the wake-up is still ahead; one already past waits for the next change,
+    // so a game whose clock never catches up can't spin.
+    if (next === m.state) {
+      let at: number | null = null;
+      try {
+        at = m.module.turn?.wakeAt?.(m.state) ?? null;
+      } catch {
+        /* scheduleWake would log it; nothing to schedule */
+      }
+      if (typeof at === 'number' && at > this.clock.now()) this.scheduleWake(m);
+      return;
+    }
     await this.advance(m, next, { keepTurn: true, clocked: true });
   }
 
@@ -903,7 +914,8 @@ export class GameManager {
     const m = this.require(matchId);
     const you = identityId ? this.seatOf(m, identityId) : null;
     const turn = m.module.turn;
-    const legal = you && m.status === 'live' && turn && turn.toMove(m.state).includes(you) ? turn.legal(m.state, you) : [];
+    // A seat that owes nothing still sees what it may optionally send (mayAct), e.g. a bid.
+    const legal = you && m.status === 'live' && turn && (turn.toMove(m.state).includes(you) || this.mayAct(m, you)) ? turn.legal(m.state, you) : [];
     const rt = m.module.realtime;
     const senses = (seat: SeatId) => {
       try {

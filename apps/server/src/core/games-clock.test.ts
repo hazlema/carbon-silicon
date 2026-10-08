@@ -51,7 +51,7 @@ function alarmGame(calls: number[], opts: { hooks?: boolean } = {}): GameModule<
       simultaneous: true,
       round: (s) => s.round,
       toMove: owing,
-      legal: () => [{ pick: 1 }],
+      legal: (s, seat) => (owing(s).includes(seat) ? [{ pick: 1 }] : s.rang ? [] : [{ bet: 1 }]),
       apply: (s, seat, command) => {
         const c = command as { pick?: number; bet?: number };
         const next = structuredClone(s);
@@ -90,8 +90,35 @@ function alarmGame(calls: number[], opts: { hooks?: boolean } = {}): GameModule<
   };
 }
 
+/**
+ * A FakeClock that remembers when each live timer is due (so a test can see a wake-up was cleared,
+ * not just harmless), and can fire the next timer it's given early.
+ */
+class WatchedClock extends FakeClock {
+  live = new Map<unknown, number>();
+  earlyNext = 0;
+  override setTimeout(fn: () => void, ms: number): unknown {
+    const early = this.earlyNext;
+    this.earlyNext = 0;
+    const id = super.setTimeout(() => {
+      this.live.delete(id);
+      fn();
+    }, ms - early);
+    this.live.set(id, this.now() + ms - early);
+    return id;
+  }
+  override clearTimeout(handle: unknown): void {
+    this.live.delete(handle);
+    super.clearTimeout(handle);
+  }
+  /** Is any timer still due at exactly this time? */
+  dueAt(at: number): boolean {
+    return [...this.live.values()].includes(at);
+  }
+}
+
 async function setup(module: GameModule<any>) {
-  const clock = new FakeClock();
+  const clock = new WatchedClock();
   const bus = new EventBus();
   const ids = new IdentityManager(database.db, clock, { houseKey: null });
   const comms = new CommunicationManager(database.db, bus, clock, ids, { publicChannels: PUBLIC_CHANNELS, guard: new Guard() });
@@ -184,6 +211,8 @@ describe('wake-ups (clock / wakeAt)', () => {
     const bySeat: Record<string, IdentityPublic> = { north: ctx.north, east: ctx.east, south: ctx.south, west: ctx.west };
     while (ctx.games.summary(ctx.id).status === 'live') await send(ctx, bySeat[ctx.games.summary(ctx.id).toMove[0]!]!, { pick: 1 });
     expect(ctx.games.summary(ctx.id).status).toBe('over');
+    const alarm = (view(ctx) as { stamp: number }).stamp + ALARM_MS;
+    expect(ctx.clock.dueAt(alarm)).toBe(false);
     const n = calls.length;
     const done = rev(ctx);
     ctx.clock.advance(ALARM_MS * 2);
@@ -193,12 +222,49 @@ describe('wake-ups (clock / wakeAt)', () => {
     expect(view(ctx).rang).toBe(false);
   });
 
+  test('a wake-up that fires early and finds nothing due asks again for the time still ahead', async () => {
+    const calls: number[] = [];
+    const ctx = await setup(alarmGame(calls));
+    // The round's deadline is already set, so the move's only new timer is the wake-up: it fires a second early.
+    ctx.clock.earlyNext = 1000;
+    await send(ctx, ctx.north, { pick: 1 });
+    const stamped = ctx.clock.now();
+    ctx.clock.advance(ALARM_MS - 1000);
+    await settle();
+    expect(calls).toEqual([stamped, stamped + ALARM_MS - 1000]);
+    expect(view(ctx).rang).toBe(false);
+    ctx.clock.advance(1000);
+    await settle();
+    expect(calls).toEqual([stamped, stamped + ALARM_MS - 1000, stamped + ALARM_MS]);
+    expect(view(ctx).rang).toBe(true);
+  });
+
+  test('a wake-up already past that finds nothing due waits for the next change (no spinning)', async () => {
+    const calls: number[] = [];
+    const game = alarmGame(calls);
+    // The clock rings a second after the time wakeAt names: they disagree at the boundary.
+    const ring = game.turn!.clock!;
+    game.turn!.clock = (s, now) => (s.stamp !== null && now < s.alarm! + 1000 ? (calls.push(now), s) : ring(s, now));
+    const ctx = await setup(game);
+    await send(ctx, ctx.north, { pick: 1 });
+    ctx.clock.advance(ALARM_MS + 5000);
+    await settle();
+    // One wake-up at the alarm, not a loop; the next move catches up.
+    expect(calls).toHaveLength(2);
+    expect(view(ctx).rang).toBe(false);
+    await send(ctx, ctx.east, { pick: 1 });
+    expect(view(ctx).rang).toBe(true);
+  });
+
   test('a match that ends by resignation clears its wake-up too', async () => {
     const calls: number[] = [];
     const ctx = await setup(alarmGame(calls));
     await send(ctx, ctx.north, { pick: 1 });
+    const alarm = view(ctx).stamp! + ALARM_MS;
+    expect(ctx.clock.dueAt(alarm)).toBe(true);
     await ctx.games.resign(ctx.id, ctx.east);
     expect(ctx.games.summary(ctx.id).status).toBe('over');
+    expect(ctx.clock.dueAt(alarm)).toBe(false);
     const n = calls.length;
     ctx.clock.advance(ALARM_MS * 2);
     await settle();
@@ -209,7 +275,10 @@ describe('wake-ups (clock / wakeAt)', () => {
     const calls: number[] = [];
     const ctx = await setup(alarmGame(calls));
     await send(ctx, ctx.north, { pick: 1 });
+    const alarm = view(ctx).stamp! + ALARM_MS;
+    expect(ctx.clock.dueAt(alarm)).toBe(true);
     ctx.games.close();
+    expect(ctx.clock.dueAt(alarm)).toBe(false);
     ctx.clock.advance(ALARM_MS * 2);
     await settle();
     expect(calls).toHaveLength(1);
@@ -237,6 +306,8 @@ describe('optional moves (mayAct)', () => {
     expect(view(ctx).bets).toEqual({ north: 3 });
     expect(ctx.games.summary(ctx.id).toMove).toEqual(['east', 'south', 'west']);
     expect(ctx.games.summary(ctx.id).deadline).toBe(deadline);
+    // Its legal list now offers what it may optionally send.
+    expect(ctx.games.envelope(ctx.id, ctx.north.id).legal).toEqual([{ bet: 1 }]);
     // The optional move isn't narrated: north was "ready" once.
     expect(recent(ctx).filter((r) => r.text.includes('is ready'))).toHaveLength(1);
   });
@@ -261,13 +332,14 @@ describe('optional moves (mayAct)', () => {
     expect(ctx.games.envelope(ctx.id, ctx.north.id).clock).not.toContain('missed');
   });
 
-  test('a seat that owes nothing and may not act is refused NOT_YOUR_TURN', async () => {
+  test('a seat that owes nothing and may not act is refused NOT_YOUR_TURN, and offered nothing', async () => {
     const calls: number[] = [];
     const ctx = await setup(alarmGame(calls));
     await send(ctx, ctx.north, { pick: 1 });
     ctx.clock.advance(ALARM_MS);
     await settle();
     expect(view(ctx).rang).toBe(true);
+    expect(ctx.games.envelope(ctx.id, ctx.north.id).legal).toEqual([]);
     expect((await errorOf(send(ctx, ctx.north, { bet: 3 }))).code).toBe('NOT_YOUR_TURN');
   });
 });
