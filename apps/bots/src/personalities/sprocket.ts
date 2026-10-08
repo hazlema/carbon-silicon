@@ -71,6 +71,10 @@ export const sprocket: Personality = {
       backfire: ['Oops! I helped! Sorry!', 'Well, that went the wrong way!', 'Whoopsie — that one was a gift!'],
       crate: ["A crate! From the wreck! It's like a birthday but with more sinking!", 'Ooh, salvage! I love presents from the sea floor!', "Loot! I sank a ship AND got a prize? Best day!"],
       fooled: ["Surprise! That was my decoy! Hee hee — you sank a plank!", 'Driftwood! You shot driftwood! I made it myself!', "Ta-da! Not a ship! Totally fooled you! Mm-hmm!"],
+      whisper: ["Ooh, a secret auction! I peeked at a sea and I'll tell you what I saw! Probably!", 'Thirty seconds! Bid on my ghostly secret! It is a very good secret!', "Psst! I know a thing! Who wants to know the thing?"],
+      wonWhisper: ['I won the secret! I love secrets! What does it mean?', 'Ooh, a ghost told me a number! I wrote it on my hand!', "Intel! I'm basically a spy now! A tiny captain spy!"],
+      buried: ["Ha! That secret was about MY boats! Nobody gets it but me!", 'I bought my own secret back! Is that allowed? It is allowed!', 'Shhh! My boats are hiding and now nobody knows where! Hee hee!'],
+      lied: ["Oops! I might've made that number up! Was it a big one?", 'Hee hee! I told you a fib! A ghostly fib!', "Surprise! The real number was different! I panicked!"],
     },
   },
 };

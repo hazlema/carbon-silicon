@@ -37,7 +37,7 @@ describe('every resident', () => {
       }
     });
     test(`${p.name}: Salvo has its own lines, at least three of each kind, all naval (no orbs, cells or chain reactions)`, () => {
-      for (const kind of ['hello', 'win', 'lose', 'draw', 'gotHit', 'ghost', 'trick', 'backfire', 'crate', 'fooled'] as const) expect((p.byGame?.salvo?.[kind] ?? []).length).toBeGreaterThanOrEqual(3);
+      for (const kind of ['hello', 'win', 'lose', 'draw', 'gotHit', 'ghost', 'trick', 'backfire', 'crate', 'fooled', 'whisper', 'wonWhisper', 'buried', 'lied'] as const) expect((p.byGame?.salvo?.[kind] ?? []).length).toBeGreaterThanOrEqual(3);
       for (const [kind, list] of Object.entries(p.byGame?.salvo ?? {})) for (const l of list ?? []) expect(`${kind}: ${l}`).not.toMatch(NEUTRAL_FORBIDDEN);
     });
     test(`${p.name}: Critical Mass keeps its cascade lines`, () => {

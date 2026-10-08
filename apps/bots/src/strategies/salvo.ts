@@ -1,4 +1,4 @@
-import { FLEET_CELLS, ITEMS, SHIPS, SIZE, buoyCells, cellIndex, cellName, clusterCells, hullCells, neighbours, torpedoLane, type ItemId, type SalvoCommand, type SalvoView, type TargetView } from '@cs/salvo';
+import { BID_LEGAL_MAX, FLEET_CELLS, ITEMS, TELL_MAX, SHIPS, SIZE, buoyCells, cellIndex, cellName, clusterCells, hullCells, neighbours, torpedoLane, type ItemId, type SalvoCommand, type SalvoView, type TargetView } from '@cs/salvo';
 
 export type SalvoStrength = 'easy' | 'medium' | 'hard';
 /**
@@ -353,25 +353,34 @@ function mineScores(view: SalvoView, odds: Map<string, Map<string, number>>): (m
   };
 }
 
+/** A bid or a tell: optional, never owed. */
+const isOptional = (c: SalvoCommand) => 'bid' in c || 'tell' in c;
+type Whisper = Extract<SalvoCommand, { trick: 'whisper' }>;
+const isWhisper = (c: SalvoCommand): c is Whisper => 'trick' in c && c.trick === 'whisper';
+/** A ghost with no auction open lists a whisper in about this share of its rounds. */
+const LISTING_SHARE = 0.25;
+
 /**
  * A ghost's one trick a round, from what it knows (public marks, its own past shots and sonar). Easy
  * plays any trick. Medium and hard mine where the living will shoot but a ship is unlikely (see
  * mineScores): hard the best cell, medium one of its best few. Now and then (always, once its mines are
  * all down) they play a false splash instead: on the living seat with the most cells afloat, at the
  * sea that seat fired at most in the last volley, in the coldest cell there, to waste its shots (never a
- * cell its own splash is still on show at).
+ * cell its own splash is still on show at). Every strength, in about LISTING_SHARE of the rounds it has
+ * no auction open (always, when whispers are all it has), lists a whisper instead (see chooseListing).
  */
-/** A bid or a tell: optional, never owed. */
-const isOptional = (c: SalvoCommand) => 'bid' in c || 'tell' in c;
-
 export function chooseGhostTrick(view: SalvoView, offered: SalvoCommand[], opts: SalvoStrategyOptions): SalvoCommand {
   const owed = offered.filter((c) => !isOptional(c));
   const legal = owed.length > 0 ? owed : offered;
+  // Now and then, with no auction of its own open, a whisper: where the living hunt (see chooseListing).
+  const whispers = legal.filter(isWhisper);
+  if (whispers.length > 0 && !view.myTricks?.whisper && opts.rng() < LISTING_SHARE) return chooseListing(view, whispers);
   const mines = legal.filter(isMine);
   // Never the same cell twice while its splash there is still on show: the reveal would be told twice.
   const shown = new Set((view.myTricks?.splashes ?? []).map((x) => `${x.sea} ${x.cell}`));
   const splashes = legal.filter(isSplash).filter((x) => !shown.has(`${x.at} ${x.cell}`));
-  if (mines.length + splashes.length === 0) return pick(legal, opts.rng);
+  // Nothing but whispers on offer (it owes a trick): list one where it pays.
+  if (mines.length + splashes.length === 0) return whispers.length > 0 ? chooseListing(view, whispers) : pick(legal, opts.rng);
   if (opts.strength === 'easy') return pick([...mines, ...splashes], opts.rng);
   const seas = [...new Set([...mines, ...splashes].map((x) => x.at))];
   const odds = new Map(view.targets.filter((t) => seas.includes(t.sea)).map((t) => [t.sea, chances(t)]));
@@ -391,6 +400,163 @@ export function chooseGhostTrick(view: SalvoView, offered: SalvoCommand[], opts:
   if (opts.strength === 'hard') return scored[0].m;
   const good = scored.filter((x) => x.s >= scored[0].s * MEDIUM_SPREAD).slice(0, MEDIUM_CHOICES);
   return pick(good, opts.rng).m;
+}
+
+// ── Whisper: listing, bids, burying, tells ──
+
+type Bid = Extract<SalvoCommand, { bid: number }>;
+type Tell = Extract<SalvoCommand, { tell: number }>;
+type AuctionView = SalvoView['auctions'][number];
+const isBid = (c: SalvoCommand): c is Bid => 'bid' in c;
+const isTell = (c: SalvoCommand): c is Tell => 'tell' in c;
+
+/** What a 3×3 on a target is worth to me: the chances of the cells I don't know yet (not shot, not under my sonar, not sure). */
+function unknownValue(t: TargetView, cells: string[]): number {
+  const odds = chances(t);
+  const heard = new Set((t.sonar ?? []).flatMap((x) => x.cells));
+  return cells.reduce((n, c) => {
+    const p = odds.get(c) ?? 0;
+    return n + (heard.has(c) || p >= 1 ? 0 : p);
+  }, 0);
+}
+
+/**
+ * A ghost's listing: on the sea the living hunted most in the last volley (ties to the fleet with fewest cells
+ * afloat, the one closest to sinking), over the 3×3 hottest with what nobody knows yet. Always an entry of `whispers`.
+ */
+function chooseListing(view: SalvoView, whispers: Whisper[]): Whisper {
+  const shells = view.lastVolley?.shells ?? [];
+  const hunted = (sea: string) => shells.filter((x) => x.sea === sea).length;
+  const afloat = (sea: string) => view.targets.find((t) => t.sea === sea)?.afloat ?? FLEET_CELLS;
+  const seas = [...new Set(whispers.map((w) => w.at))];
+  const sea = seas.reduce((a, b) => (hunted(b) > hunted(a) || (hunted(b) === hunted(a) && afloat(b) < afloat(a)) ? b : a));
+  const t = view.targets.find((x) => x.sea === sea);
+  const there = whispers.filter((w) => w.at === sea);
+  if (!t) return there[0];
+  return there.map((w) => ({ w, v: unknownValue(t, buoyCells(w.cell)) })).reduce((a, b) => (b.v > a.v ? b : a)).w;
+}
+
+/** Scrap a resident bids per ship cell it expects to learn about, by strength. */
+const BID_PER_CELL: Record<SalvoStrength, number> = { easy: 1, medium: 1.5, hard: 2 };
+/** At most this share of its scrap on someone else's sea, by style. */
+const BID_SHARE: Record<SalvoStyle | 'none', number> = { finisher: 0.5, grudge: 0.3, wanderer: 0.5, none: 0.4 };
+/** GAME_OVER (finisher) bids only when the area is worth at least this many unknown ship cells. */
+const SHARP = 0.75;
+/** OLD IRON (grudge) pays this share of what an area is worth; its grudge sea draws more (seaWeights). */
+const GRUDGING = 0.6;
+/** Sprocket (wanderer) bids high on nothing in about this share of auctions. */
+const IMPULSE = 0.3;
+
+/** My ship cells afloat (unhit) under a 3×3: what a reading there would give away. Decoys don't count (sonar can't hear them). */
+function myAfloatIn(view: SalvoView, cells: string[]): number {
+  const ships = view.mySea?.ships ?? [];
+  return ships.reduce((n, x) => n + x.cells.filter((c) => cells.includes(c) && !x.hits.includes(c)).length, 0);
+}
+
+/**
+ * How much a resident bids on an auction (0 = abstain), never above its scrap. Over its own sea it buries: when
+ * the 3×3 covers ship cells of its own still afloat, it bids up to half its scrap so no rival hears them
+ * (GAME_OVER the full half, OLD IRON half that, Sprocket on a whim); with nothing of its own there it lets it go.
+ * Elsewhere the area is worth the ship cells it expects there that it doesn't know yet (chances, less what it has
+ * heard or is sure of), weighted like its fire (seaWeights: OLD IRON leans on whoever hit it last), times its
+ * strength, capped at a share of its scrap. GAME_OVER ignores a poor area; OLD IRON pays grudgingly; Sprocket
+ * now and then bids high on nothing at all.
+ */
+export function chooseBid(view: SalvoView, auction: AuctionView, opts: SalvoStrategyOptions): number {
+  const me = view.you;
+  if (!me || auction.ghost === me) return 0;
+  const scrap = Math.min(view.scrap[me] ?? 0, BID_LEGAL_MAX);
+  if (scrap < 1) return 0;
+  const style = opts.style;
+  const whole = (n: number) => Math.max(0, Math.min(scrap, Math.round(n)));
+  if (auction.sea === me) {
+    if (myAfloatIn(view, auction.cells) === 0) return 0;
+    const half = Math.max(1, Math.floor(scrap / 2));
+    const k = style === 'finisher' ? 1 : style === 'grudge' ? 0.5 : style === 'wanderer' ? 0.25 + 0.75 * opts.rng() : 0.75;
+    return Math.min(half, Math.max(1, whole(half * k)));
+  }
+  const t = view.targets.find((x) => x.sea === auction.sea);
+  if (!t || t.out) return 0;
+  const share = whole(scrap * BID_SHARE[style ?? 'none']);
+  if (style === 'wanderer' && opts.rng() < IMPULSE) return Math.max(1, share);
+  const value = unknownValue(t, auction.cells) * seaWeights(view, style)(auction.sea);
+  if (style === 'finisher' && value < SHARP) return 0;
+  return Math.min(share, whole(value * BID_PER_CELL[opts.strength] * (style === 'grudge' ? GRUDGING : 1)));
+}
+
+/** GAME_OVER lies in about this share of its auctions; Sprocket in this one. */
+const FINISHER_LIES = 0.7;
+const WANDERER_LIES = 0.5;
+
+/**
+ * The number a ghost tells the winner of its open auction (null with none open). GAME_OVER often lies, plausibly:
+ * one to three off the truth, within 0–TELL_MAX. OLD IRON never lies. Sprocket lies badly half the time: 0 or 9
+ * (the truth by accident, now and then). With no style, the truth.
+ */
+export function chooseTell(view: SalvoView, opts: SalvoStrategyOptions): number | null {
+  const w = view.myTricks?.whisper;
+  if (!w) return null;
+  const truth = w.truth;
+  if (opts.style === 'finisher' && opts.rng() < FINISHER_LIES) {
+    const off = 1 + Math.floor(opts.rng() * 3);
+    const up = opts.rng() < 0.5;
+    const n = up ? truth + off : truth - off;
+    return n >= 0 && n <= TELL_MAX ? n : up ? truth - off : truth + off;
+  }
+  if (opts.style === 'wanderer' && opts.rng() < WANDERER_LIES) return opts.rng() < 0.5 ? 0 : TELL_MAX;
+  return truth;
+}
+
+/**
+ * The optional decisions `legal` offers me, one per auction (keyed by its ghost and the round, as an auction lives
+ * within one round): a bid on each open auction, or the tell on my own.
+ */
+export function whisperChoices(view: SalvoView, legal: SalvoCommand[]): { key: string; ghost: string }[] {
+  const ghosts = new Set<string>();
+  for (const c of legal) {
+    if (isBid(c)) ghosts.add(c.ghost);
+    else if (isTell(c) && view.you) ghosts.add(view.you);
+  }
+  return [...ghosts].map((ghost) => ({ key: `${ghost}@${view.round}`, ghost }));
+}
+
+/**
+ * One decision on `ghost`'s auction, as the very entry of `legal`: my tell when it is mine (see chooseTell), else
+ * my bid (see chooseBid; the highest legal amount at or below it, `{bid: 0}` to abstain). Null when legal has none.
+ */
+export function chooseWhisper(view: SalvoView, legal: SalvoCommand[], ghost: string, opts: SalvoStrategyOptions): SalvoCommand | null {
+  if (ghost === view.you) {
+    const n = chooseTell(view, opts);
+    return legal.filter(isTell).find((c) => c.tell === n) ?? null;
+  }
+  const bids = legal.filter(isBid).filter((c) => c.ghost === ghost);
+  const auction = view.auctions.find((a) => a.ghost === ghost);
+  if (bids.length === 0 || !auction) return null;
+  const n = chooseBid(view, auction, opts);
+  const within = bids.filter((c) => c.bid <= n);
+  return within.length > 0 ? within.reduce((a, b) => (b.bid > a.bid ? b : a)) : null;
+}
+
+/** A whisper moment at the table, the strongest first: I bought a reading on my own sea, won one, listed one. */
+export type WhisperMoment = 'buried' | 'wonWhisper' | 'whisper';
+
+/**
+ * What changed for me in the whispers since `prev` (null: the first look, nothing to tell): a whisper I won
+ * (`buried` when it was over my own sea), or my own auction newly up (not one already open in the same round).
+ */
+export function whisperMoment(prev: SalvoView | null, view: SalvoView): WhisperMoment | null {
+  if (!prev || !view.you) return null;
+  const won = (view.whispers ?? []).slice((prev.whispers ?? []).length);
+  if (won.some((w) => w.sea === view.you)) return 'buried';
+  if (won.length > 0) return 'wonWhisper';
+  const mine = (v: SalvoView) => (v.auctions ?? []).some((a) => a.ghost === view.you);
+  if (mine(view) && !(mine(prev) && prev.round === view.round)) return 'whisper';
+  return null;
+}
+
+/** At the end of the match: was a whisper of mine sold, and the number I told not the truth? */
+export function liedMoment(view: SalvoView): boolean {
+  return (view.truths ?? []).some((x) => x.ghost === view.you && x.state === 'sold' && x.said !== x.truth);
 }
 
 // ── The Arsenal: crates and items ──

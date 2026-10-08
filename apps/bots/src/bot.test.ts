@@ -6,13 +6,14 @@ import type { CMCommand } from '@cs/critical-mass';
 import { createCore } from '@cs/server/core';
 import { createApp } from '@cs/server/http';
 import { startServer } from '@cs/server/server';
-import { ambientDue, answersAtTable, CHAT_WATCH_MS, newestMatchAt, replyCooldownFor, TABLE_TALK_CHANCE, runBot, unansweredCandidate, type BotOptions } from './bot';
+import { ambientDue, answersAtTable, CHAT_WATCH_MS, newestMatchAt, nextWhisper, replyCooldownFor, TABLE_TALK_CHANCE, runBot, unansweredCandidate, type BotOptions } from './bot';
 import { Client } from './client';
 import { shout, linesFor } from './personality';
 import { oldIron } from './personalities/old-iron';
 import { sprocket } from './personalities/sprocket';
 import { gameOver } from './personalities/game-over';
-import type { ChatMessage } from '@cs/shared/protocol';
+import type { ChatMessage, MatchEnvelope } from '@cs/shared/protocol';
+import { buoyCells, type SalvoCommand, type SalvoView } from '@cs/salvo';
 import type { Moment, Voice } from './voice';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -814,6 +815,55 @@ describe('helpers', () => {
     expect(unansweredCandidate(msg('hey @Sprocket'), 'bot')).toBe(false);
     expect(unansweredCandidate(msg('hey', { ...human!, kind: 'agent' }), 'bot')).toBe(false);
     expect(unansweredCandidate(msg('frosty joined', null, true), 'bot')).toBe(false);
+  });
+});
+
+describe('Salvo whispers in the loop: one decision per auction, owing a move or not', () => {
+  const target = (sea: string) => ({ sea, mine: [], hits: [], misses: [], sunk: [], decoys: [], repaired: [], lifted: [], sonar: [], afloat: 12, out: false });
+  const auction = (ghost: string, sea: string, centre: string) => ({ ghost, sea, centre, cells: buoyCells(centre), closesAt: 30_000, bids: {} });
+  const bids = (ghost: string, max: number): SalvoCommand[] => Array.from({ length: max + 1 }, (_, n) => ({ bid: n, ghost }));
+  /** South has fired (owes nothing): its legal is only the bids the game lets it make. */
+  const envelope = (you: string, legal: SalvoCommand[], over: Partial<SalvoView> = {}, round = 4): MatchEnvelope =>
+    ({
+      match: { gameId: 'salvo', status: 'live', toMove: [], revision: 7 },
+      you,
+      legal,
+      view: { you, round, targets: [target('north'), target('east')], auctions: [auction('west', 'east', 'c3')], scrap: { south: 10, west: 3 }, myTricks: null, mySea: null, lastVolley: null, whispers: [], myBids: {}, ...over },
+    }) as unknown as MatchEnvelope;
+
+  test('decides once per auction, as an entry of legal; a new round is a new auction; other games and finished matches never', () => {
+    for (const p of [sprocket, gameOver]) {
+      const decided = new Set<string>();
+      const env = envelope('south', bids('west', 10));
+      const first = nextWhisper(env, p, decided, () => 0.5);
+      expect(first?.key).toBe('west@4');
+      expect((env.legal as SalvoCommand[]).includes(first!.command)).toBe(true);
+      expect(nextWhisper(env, p, decided, () => 0.5)).toBeNull();
+      expect(nextWhisper(envelope('south', bids('west', 10), {}, 5), p, decided, () => 0.5)?.key).toBe('west@5');
+    }
+    expect(nextWhisper({ ...envelope('south', bids('west', 3)), match: { gameId: 'checkers', status: 'live' } } as unknown as MatchEnvelope, sprocket, new Set(), Math.random)).toBeNull();
+    expect(nextWhisper({ ...envelope('south', bids('west', 3)), match: { gameId: 'salvo', status: 'finished' } } as unknown as MatchEnvelope, sprocket, new Set(), Math.random)).toBeNull();
+    expect(nextWhisper(envelope('south', []), sprocket, new Set(), Math.random)).toBeNull();
+  });
+
+  test('two auctions open: each decided in turn; the ghost decides its tell', () => {
+    const decided = new Set<string>();
+    const env = envelope('south', [...bids('west', 10), ...bids('north', 10)], { auctions: [auction('west', 'east', 'c3'), auction('north', 'east', 'f6')] });
+    const keys = [nextWhisper(env, gameOver, decided, () => 0.5)?.key, nextWhisper(env, gameOver, decided, () => 0.5)?.key, nextWhisper(env, gameOver, decided, () => 0.5)];
+    expect(keys).toEqual(['west@4', 'north@4', null]);
+    const tells: SalvoCommand[] = Array.from({ length: 10 }, (_, n) => ({ tell: n }));
+    const ghost = envelope('west', tells, { myTricks: { mines: [], splashes: [], pending: null, whisper: { truth: 2, tell: null } } });
+    const told = nextWhisper(ghost, sprocket, new Set(), () => 0.9);
+    expect(told).toEqual({ key: 'west@4', command: { tell: 2 } });
+    expect(tells.includes(told!.command)).toBe(true);
+  });
+
+  test('OLD IRON tells the truth, every time', () => {
+    const tells: SalvoCommand[] = Array.from({ length: 10 }, (_, n) => ({ tell: n }));
+    for (const r of [0, 0.3, 0.6, 0.99]) {
+      const ghost = envelope('west', tells, { myTricks: { mines: [], splashes: [], pending: null, whisper: { truth: 4, tell: null } } });
+      expect(nextWhisper(ghost, oldIron, new Set(), () => r)?.command).toEqual({ tell: 4 });
+    }
   });
 });
 

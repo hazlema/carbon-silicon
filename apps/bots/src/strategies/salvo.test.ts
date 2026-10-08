@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createRng } from '@cs/game-api';
 import { MINE_LIMIT, buoyCells, cellIndex, cellName, clusterCells, hullCells, isBuoyCentre, neighbours, salvoGame, torpedoLane, type ItemId, type SalvoCommand, type SalvoState, type SalvoView, type ShipId, type TargetView, type Volley } from '@cs/salvo';
-import { chances, chooseCrate, chooseGhostTrick, chooseSalvoMove, heatmap, seaWeights, volleyMoment, type SalvoStrategyOptions, type SalvoStrength, type SalvoStyle } from './salvo';
+import { chances, chooseBid, chooseCrate, chooseGhostTrick, chooseSalvoMove, chooseTell, chooseWhisper, heatmap, liedMoment, seaWeights, volleyMoment, whisperChoices, whisperMoment, type SalvoStrategyOptions, type SalvoStrength, type SalvoStyle } from './salvo';
 
 const turn = salvoGame.turn;
 const CELLS = Array.from({ length: 64 }, (_, i) => cellName(i));
@@ -560,9 +560,11 @@ describe('ghost tricks', () => {
     expect([east.hits, east.afloat]).toEqual([['d4', 'e4'], 10]);
     const odds = chances(east);
     // Hard plays a splash some rounds (three fleets afloat); every round it mines, the mine goes here.
+    // (A whisper is on offer too; this test is about the mine.)
+    const legal = legalOf(s, 'west').filter((c) => !('trick' in c && c.trick === 'whisper'));
     let mined = 0;
     for (let k = 0; k < 20; k++) {
-      const c = chooseGhostTrick(v, legalOf(s, 'west'), { strength: 'hard', rng: createRng(k).next });
+      const c = chooseGhostTrick(v, legal, { strength: 'hard', rng: createRng(k).next });
       if (!('trick' in c) || c.trick !== 'mine') continue;
       mined++;
       expect(c.at).toBe('east');
@@ -977,5 +979,259 @@ describe('optional commands are never a fallback', () => {
     for (const strength of ['easy', 'medium', 'hard'] as const) {
       for (let k = 0; k < 20; k++) expect(chooseSalvoMove(view([target('east')]), legal, { strength, rng: createRng(k).next })).toEqual({ use: 'repair', cell: 'a1' });
     }
+  });
+});
+
+// ── Whispers, on real module states ──
+
+const clock = salvoGame.turn.clock!;
+/** West is a ghost; it lists a whisper over `sea`'s 3×3 at `cell`; the round resolves and the auction opens (stamped at t=0). Everyone holds `scrap`. */
+function listed(sea: string, cell: string, scrap = 10, fleets: Record<string, [ShipId, string][]> = {}): SalvoState {
+  let s = withGhost(fleets);
+  s = turn.apply(s, 'west', { trick: 'whisper', at: sea, cell });
+  s = volleyOf(s, {});
+  for (const seat of s.seats) s.scrap[seat] = scrap;
+  return clock(s, 0);
+}
+const auctionOf = (s: SalvoState, seat: string) => viewOf(s, seat).auctions[0];
+const RESIDENTS: [SalvoStrength, SalvoStyle | undefined][] = [['hard', 'finisher'], ['easy', 'wanderer'], ['medium', undefined], ['medium', 'grudge']];
+
+describe('whispers: residents bid, bury, list and tell', () => {
+  test('every decision is an entry of legal: a bid (or abstain) per open auction for the living, the tell for the ghost', () => {
+    for (const [sea, cell] of [['east', 'b3'], ['south', 'f6'], ['north', 'c2']] as const) {
+      const s = listed(sea, cell);
+      expect(s.auctions[0].state).toBe('open');
+      for (const seat of s.seats) {
+        const legal = legalOf(s, seat);
+        const choices = whisperChoices(viewOf(s, seat), legal);
+        expect(choices).toEqual([{ key: `west@${s.round}`, ghost: 'west' }]);
+        for (const [strength, style] of RESIDENTS) {
+          for (let k = 0; k < 10; k++) {
+            const c = chooseWhisper(viewOf(s, seat), legal, 'west', { strength, style, rng: createRng(k).next });
+            expect(c).not.toBeNull();
+            expect(legal.includes(c!)).toBe(true);
+            expect(seat === 'west' ? 'tell' in c! : 'bid' in c! && c.ghost === 'west').toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  test('a seat owing nothing (it has fired) still has its auction to decide; no auction, no choices', () => {
+    let s = listed('east', 'b3');
+    for (const [sea, c] of [['east', 'h1'], ['east', 'h2'], ['east', 'h3'], ['east', 'h4']]) s = turn.apply(s, 'south', { fire: 'shell', at: sea, cell: c });
+    expect(turn.toMove(s)).not.toContain('south');
+    expect(whisperChoices(viewOf(s, 'south'), legalOf(s, 'south')).map((x) => x.ghost)).toEqual(['west']);
+    expect(whisperChoices(viewOf(withGhost(), 'south'), legalOf(withGhost(), 'south'))).toEqual([]);
+  });
+
+  test('bury: over its own ships a resident bids up to half its scrap (GAME_OVER the half); over open water of its own it abstains', () => {
+    // South's standard fleet: b3's 3×3 (a2–c4) holds its destroyer, a3–c3. f6's (e5–g7) is open water.
+    const over = listed('south', 'b3');
+    const water = listed('south', 'f6');
+    for (const [strength, style] of RESIDENTS) {
+      for (let k = 0; k < 10; k++) {
+        const o = { strength, style, rng: createRng(k).next };
+        const n = chooseBid(viewOf(over, 'south'), auctionOf(over, 'south'), o);
+        expect(n).toBeGreaterThanOrEqual(1);
+        expect(n).toBeLessThanOrEqual(5);
+        if (style === 'finisher') expect(n).toBe(5);
+        expect(chooseBid(viewOf(water, 'south'), auctionOf(water, 'south'), o)).toBe(0);
+      }
+    }
+    // Scrap is the cap: with 1, it buries for 1; with none, it can only abstain.
+    over.scrap.south = 1;
+    expect(chooseBid(viewOf(over, 'south'), auctionOf(over, 'south'), opts('hard', 'finisher'))).toBe(1);
+    over.scrap.south = 0;
+    expect(chooseWhisper(viewOf(over, 'south'), legalOf(over, 'south'), 'west', opts('hard', 'finisher'))).toEqual({ bid: 0, ghost: 'west' });
+  });
+
+  test('GAME_OVER bids on a hot area of a sea it hunts and abstains on one it already knows; never above its share of scrap', () => {
+    // East's destroyer (a3–c3) hit at a3 and b3: the 3×3 at c3 sits on the chase. A 3×3 shot through is known.
+    const hot = listed('east', 'c3');
+    preHit(hot, 'east', ['a3', 'b3']);
+    const known = listed('east', 'f6');
+    preHit(known, 'east', buoyCells('f6'));
+    for (let k = 0; k < 10; k++) {
+      const n = chooseBid(viewOf(hot, 'south'), auctionOf(hot, 'south'), opts('hard', 'finisher', k));
+      expect(n).toBeGreaterThanOrEqual(1);
+      expect(n).toBeLessThanOrEqual(5);
+      expect(chooseBid(viewOf(known, 'south'), auctionOf(known, 'south'), opts('hard', 'finisher', k))).toBe(0);
+    }
+  });
+
+  test('my own sonar there is something I know: the same area is worth less once I have heard it', () => {
+    const s = listed('east', 'c3');
+    preHit(s, 'east', ['a3', 'b3']);
+    const v = viewOf(s, 'south');
+    const a = auctionOf(s, 'south');
+    const heard: SalvoView = { ...v, targets: v.targets.map((t) => (t.sea === 'east' ? { ...t, sonar: [reading('c3', 1)] } : t)) };
+    expect(chooseBid(v, a, opts('hard', undefined))).toBeGreaterThan(chooseBid(heard, a, opts('hard', undefined)));
+  });
+
+  test('Sprocket bids on impulse: now and then high on an area worth nothing', () => {
+    const known = listed('east', 'f6');
+    preHit(known, 'east', buoyCells('f6'));
+    const bids = Array.from({ length: 40 }, (_, k) => chooseBid(viewOf(known, 'south'), auctionOf(known, 'south'), opts('easy', 'wanderer', k)));
+    expect(bids.filter((n) => n > 0).length).toBeGreaterThan(4);
+    expect(bids.filter((n) => n === 0).length).toBeGreaterThan(10);
+    expect(Math.max(...bids)).toBe(5);
+  });
+
+  test('a ghost lists a whisper in about a quarter of its rounds, on the sea the living hunted most, over its hottest 3×3', () => {
+    // Real legal: every strength lists now and then, always an entry of legal.
+    const s = withGhost();
+    const legal = legalOf(s, 'west');
+    for (const strength of ['easy', 'medium', 'hard'] as const) {
+      let lists = 0;
+      for (let k = 0; k < 200; k++) {
+        const c = chooseSalvoMove(viewOf(s, 'west'), legal, { strength, rng: createRng(k).next });
+        expect(legal.includes(c)).toBe(true);
+        if ('trick' in c && c.trick === 'whisper') lists++;
+      }
+      expect(lists).toBeGreaterThan(30);
+      expect(lists).toBeLessThan(80);
+    }
+    // The living fired three shells at east and one at north last volley: east it is, over the hits.
+    const shell = (sea: string, cell: string) => ({ from: 'north', sea, cell, result: 'miss' as const, ship: null, blast: false });
+    const v = view([target('north'), target('east', { hits: ['d4', 'e4'], afloat: 10 })], {
+      you: 'west',
+      myTricks: { mines: [], splashes: [], pending: null, whisper: null },
+      lastVolley: volley({ shells: [shell('east', 'a1'), shell('east', 'a2'), shell('east', 'a3'), shell('north', 'a1')] }),
+    });
+    const whispers: SalvoCommand[] = ['north', 'east'].flatMap((at) => CELLS.filter(isBuoyCentre).map((cell) => ({ trick: 'whisper' as const, at, cell })));
+    const odds = chances(v.targets[1]);
+    const worth = (cell: string) => buoyCells(cell).reduce((n, c) => n + (odds.get(c) ?? 0), 0);
+    const best = Math.max(...CELLS.filter(isBuoyCentre).map(worth));
+    let seen = 0;
+    for (let k = 0; k < 40; k++) {
+      const c = chooseGhostTrick(v, whispers, { strength: 'hard', rng: createRng(k).next }) as Extract<SalvoCommand, { trick: 'whisper' }>;
+      if (c.trick !== 'whisper') continue;
+      seen++;
+      expect(c.at).toBe('east');
+      expect(worth(c.cell)).toBeCloseTo(best, 9);
+      expect(buoyCells(c.cell).filter((x) => ['d4', 'e4'].includes(x)).length).toBeGreaterThan(0);
+    }
+    expect(seen).toBe(40); // Only whispers on offer: it lists (the quarter only gates a whisper over a mine or a splash).
+  });
+
+  test('a ghost with its auction open never lists again (legal holds none) and tells instead', () => {
+    const s = listed('east', 'b3');
+    const legal = legalOf(s, 'west');
+    expect(legal.some((c) => 'trick' in c && c.trick === 'whisper')).toBe(false);
+    expect(whisperChoices(viewOf(s, 'west'), legal)).toEqual([{ key: `west@${s.round}`, ghost: 'west' }]);
+  });
+
+  test('tells by character: GAME_OVER lies often and plausibly, Sprocket lies badly (0 or 9) about half the time', () => {
+    const s = listed('east', 'b3');
+    const v = viewOf(s, 'west');
+    const truth = v.myTricks!.whisper!.truth;
+    expect(truth).toBe(3); // East's destroyer, a3–c3.
+    const tells = (style: SalvoStyle) => Array.from({ length: 100 }, (_, k) => chooseTell(v, opts('hard', style, k))!);
+    const sharp = tells('finisher');
+    const lies = sharp.filter((n) => n !== truth);
+    expect(lies.length).toBeGreaterThan(50);
+    for (const n of lies) expect(Math.abs(n - truth)).toBeLessThanOrEqual(3);
+    for (const n of sharp) expect(n >= 0 && n <= 9).toBe(true);
+    const wild = tells('wanderer');
+    expect(wild.filter((n) => n !== truth).every((n) => n === 0 || n === 9)).toBe(true);
+    expect(wild.filter((n) => n !== truth).length).toBeGreaterThan(30);
+    expect(wild.filter((n) => n === truth).length).toBeGreaterThan(30);
+    // A plausible lie stays on the board at the edges: a truth of 0 or 9 is told 1–3 the right way.
+    for (const t of [0, 9]) {
+      const edge: SalvoView = { ...v, myTricks: { ...v.myTricks!, whisper: { truth: t, tell: null } } };
+      for (let k = 0; k < 40; k++) {
+        const n = chooseTell(edge, opts('hard', 'finisher', k))!;
+        expect(n >= 0 && n <= 9 && Math.abs(n - t) <= 3).toBe(true);
+      }
+    }
+    expect(chooseTell(viewOf(s, 'south'), opts('hard', 'finisher'))).toBeNull();
+  });
+
+  test('moments: my listing, a whisper won, a reading bought over my own sea; my lie told at the end', () => {
+    // West lists over east's destroyer: the next look at west's view is its listing (and only once that round).
+    const before = withGhost();
+    const s = listed('east', 'b3');
+    expect(whisperMoment(viewOf(before, 'west'), viewOf(s, 'west'))).toBe('whisper');
+    expect(whisperMoment(viewOf(s, 'west'), viewOf(s, 'west'))).toBeNull();
+    expect(whisperMoment(null, viewOf(s, 'west'))).toBeNull();
+    expect(whisperMoment(viewOf(before, 'south'), viewOf(s, 'south'))).toBeNull();
+    // South bids and wins at the close (the clock at 30 s): wonWhisper for south, nothing for north.
+    let won = turn.apply(s, 'south', { bid: 2, ghost: 'west' });
+    won = clock(won, 30_000);
+    expect(won.auctions[0].state).toBe('sold');
+    expect(whisperMoment(viewOf(s, 'south'), viewOf(won, 'south'))).toBe('wonWhisper');
+    expect(whisperMoment(viewOf(s, 'north'), viewOf(won, 'north'))).toBeNull();
+    // East buys the reading over its own fleet: buried.
+    let buried = turn.apply(s, 'east', { bid: 3, ghost: 'west' });
+    buried = clock(buried, 30_000);
+    expect(whisperMoment(viewOf(s, 'east'), viewOf(buried, 'east'))).toBe('buried');
+    // The end: a sold whisper whose word was not the truth is my lie; an honest one, or unsold, is not.
+    const truth = (said: number, state: 'sold' | 'unsold' = 'sold') => ({ ghost: 'west', sea: 'east', centre: 'b3', cells: buoyCells('b3'), truth: 3, said, state, winner: state === 'sold' ? 'south' : null, price: 2 });
+    expect(liedMoment(view([], { you: 'west', truths: [truth(5)] }))).toBe(true);
+    expect(liedMoment(view([], { you: 'west', truths: [truth(3)] }))).toBe(false);
+    expect(liedMoment(view([], { you: 'west', truths: [truth(5, 'unsold')] }))).toBe(false);
+    expect(liedMoment(view([], { you: 'south', truths: [truth(5)] }))).toBe(false);
+  });
+
+  test('four residents play whole games deciding every auction once: each choice legal, whispers listed, bid on and sold', () => {
+    let listedN = 0;
+    let bids = 0;
+    let sold = 0;
+    for (let g = 0; g < 6; g++) {
+      const rng = createRng(500 + g);
+      let s = salvoGame.setup({ seats: ['north', 'east', 'south', 'west'], seed: 40 + g });
+      let now = 0;
+      const decided = new Set<string>();
+      for (let guard = 0; s.phase !== 'over' && guard < 8000; guard++) {
+        // Optional first: any seat with an auction it hasn't decided, owing or not.
+        const undecided = s.seats.flatMap((seat) => whisperChoices(viewOf(s, seat), legalOf(s, seat)).filter((c) => !decided.has(`${seat} ${c.key}`)).map((c) => ({ seat, ...c })));
+        let seat: string;
+        let cmd: SalvoCommand;
+        if (undecided.length > 0) {
+          const u = undecided[0];
+          decided.add(`${u.seat} ${u.key}`);
+          seat = u.seat;
+          const legal = legalOf(s, seat);
+          const [strength, style] = RESIDENTS[s.seats.indexOf(seat)];
+          const c = chooseWhisper(viewOf(s, seat), legal, u.ghost, { strength, style, rng: rng.next });
+          if (!c) continue;
+          expect(legal.includes(c)).toBe(true);
+          cmd = c;
+          if ('bid' in cmd && cmd.bid > 0) bids++;
+        } else {
+          seat = turn.toMove(s)[0];
+          const legal = legalOf(s, seat);
+          const [strength, style] = RESIDENTS[s.seats.indexOf(seat)];
+          cmd = chooseSalvoMove(viewOf(s, seat), legal, { strength, style, rng: rng.next });
+          expect(legal.includes(cmd)).toBe(true);
+          expect('bid' in cmd || 'tell' in cmd).toBe(false);
+          if ('trick' in cmd && cmd.trick === 'whisper') listedN++;
+        }
+        s = clock(turn.apply(s, seat, cmd), (now += 2000));
+      }
+      expect(s.phase).toBe('over');
+      sold += s.auctions.filter((a) => a.state === 'sold').length;
+    }
+    expect(listedN).toBeGreaterThan(0);
+    expect(bids).toBeGreaterThan(0);
+    expect(sold).toBeGreaterThan(0);
+  });
+
+  test('OLD IRON never lies, buries for half of half, and bids more on whoever hit it last', () => {
+    const s = listed('east', 'b3');
+    const v = viewOf(s, 'west');
+    for (let k = 0; k < 50; k++) expect(chooseTell(v, opts('medium', 'grudge', k))).toBe(v.myTricks!.whisper!.truth);
+    expect(chooseWhisper(v, legalOf(s, 'west'), 'west', opts('medium', 'grudge'))).toEqual({ tell: 3 });
+    const over = listed('south', 'b3', 20);
+    expect(chooseBid(viewOf(over, 'south'), auctionOf(over, 'south'), opts('medium', 'grudge'))).toBe(5);
+    // The same hot area on east, with and without east's shell in south's fleet last volley.
+    const hot = listed('east', 'c3', 20);
+    preHit(hot, 'east', ['a3', 'b3']);
+    const calm = viewOf(hot, 'south');
+    const hitBy: SalvoView = { ...calm, lastVolley: volley({ shells: [{ from: 'east', sea: 'south', cell: 'a1', result: 'hit', ship: null, blast: false }] }) };
+    const a = auctionOf(hot, 'south');
+    expect(chooseBid(hitBy, a, opts('medium', 'grudge'))).toBeGreaterThan(chooseBid(calm, a, opts('medium', 'grudge')));
+    expect(chooseBid(calm, a, opts('medium', 'grudge'))).toBeLessThanOrEqual(chooseBid(calm, a, opts('hard', 'finisher')));
   });
 });

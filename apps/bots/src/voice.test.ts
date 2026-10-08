@@ -189,6 +189,17 @@ describe('LlmVoice request', () => {
     expect(users[0]).toContain('You just pulled a crate from the wreck of a ship you sank. Crow about it. One line.');
     expect(users[1]).toContain("Someone just blew up your decoy — they wasted their shots on driftwood. Gloat. One line.");
   });
+
+  test('Salvo whisper moments: listing, winning, burying, a lie told at the end', async () => {
+    const captured: Captured[] = [];
+    const { voice } = voiceWith(fakeFetch('NOTED.', captured));
+    for (const kind of ['whisper', 'wonWhisper', 'buried', 'lied'] as const) await voice.say(moment({ kind, channel: 'table:t1', opponent: 'frosty', gameId: 'salvo' }));
+    const users = captured.map((c) => c.body.messages[1].content);
+    expect(users[0]).toContain('silent 30-second auction');
+    expect(users[1]).toContain("You just won a ghost's whisper auction");
+    expect(users[2]).toContain('over your own fleet');
+    expect(users[3]).toContain('Own the lie');
+  });
 });
 
 describe('LlmVoice sanitizing', () => {

@@ -33,6 +33,11 @@ export interface Personality {
     /** Salvo: pulling a crate from a wreck I sank / my decoy revealed (someone wasted shots on driftwood). */
     crate?: string[];
     fooled?: string[];
+    /** Salvo whispers: I listed one (a ghost) / I won one / I bought the reading on my own sea / the end of the match tells my lie. */
+    whisper?: string[];
+    wonWhisper?: string[];
+    buried?: string[];
+    lied?: string[];
     mentioned: string[];
     /** Unprompted lobby chatter; only bots with a voice ever use it. May be empty. */
     ambient: string[];

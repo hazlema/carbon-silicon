@@ -4,7 +4,7 @@ import type { LlmConnection } from './llm-settings';
 import type { TableContext } from './table-context';
 
 /** What just happened that a bot might want to say something about. */
-export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ghost' | 'trick' | 'backfire' | 'crate' | 'fooled' | 'ambient' | 'unanswered' | 'busy' | 'dm';
+export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ghost' | 'trick' | 'backfire' | 'crate' | 'fooled' | 'whisper' | 'wonWhisper' | 'buried' | 'lied' | 'ambient' | 'unanswered' | 'busy' | 'dm';
 
 export interface ChatLine {
   author: string;
@@ -116,6 +116,14 @@ export function describeMoment(m: Moment): string {
       return 'You just pulled a crate from the wreck of a ship you sank. Crow about it. One line.';
     case 'fooled':
       return 'Someone just blew up your decoy — they wasted their shots on driftwood. Gloat. One line.';
+    case 'whisper':
+      return 'As a ghost you just put a sonar reading up for a silent 30-second auction among the living; the winner hears only the number you choose to tell. Tempt them to bid. One line.';
+    case 'wonWhisper':
+      return "You just won a ghost's whisper auction: a number of ship cells in one patch of a rival's sea, in the ghost's own word (it may lie). Crow about the intel. One line.";
+    case 'buried':
+      return 'You just bought the ghost\'s sonar reading over your own fleet, so no rival hears it. Gloat about burying the intel. One line.';
+    case 'lied':
+      return 'The match is over and the truth is out: as a ghost you told the winner of your whisper auction a false number. Own the lie, in character. One line.';
     case 'ambient':
       return `The lobby has been quiet; say something to liven it up: grumble, reminisce, or dare someone to play you.`;
     case 'dm':

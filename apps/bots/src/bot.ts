@@ -7,7 +7,7 @@ import { DmBudget } from './dm-budget';
 import { callName, DEFAULT_STRATEGY, line, linesFor, shout, type Personality } from './personality';
 import { chooseCriticalMassMove } from './strategies/critical-mass';
 import { chooseCheckersMove } from './strategies/checkers';
-import { chooseSalvoMove, volleyMoment } from './strategies/salvo';
+import { chooseSalvoMove, chooseWhisper, liedMoment, volleyMoment, whisperChoices, whisperMoment } from './strategies/salvo';
 import { ranksLine, type RankRow, tableContext } from './table-context';
 import { TableGames } from './table-games';
 import type { CheckersState } from '@cs/checkers';
@@ -91,6 +91,10 @@ const BANK: Record<MomentKind, keyof Personality['lines'] | null> = {
   backfire: 'backfire',
   crate: 'crate',
   fooled: 'fooled',
+  whisper: 'whisper',
+  wonWhisper: 'wonWhisper',
+  buried: 'buried',
+  lied: 'lied',
   ambient: 'ambient',
   unanswered: 'unanswered',
   busy: 'busy',
@@ -273,6 +277,25 @@ export async function connect(
   log(`registered as @${reg.identity.handle}`);
 }
 
+const salvoOptions = (personality: Personality, rng: () => number) => ({ strength: personality.salvo?.strength ?? 'easy', style: personality.salvo?.style, rng });
+
+/**
+ * Salvo's optional decisions: one per whisper auction `legal` offers that this resident hasn't settled yet (a bid,
+ * an abstain, or its own tell). Null when there is none to make, owed moves or not. Marks it decided.
+ */
+export function nextWhisper(env: MatchEnvelope, personality: Personality, decided: Set<string>, rng: () => number): { key: string; command: SalvoCommand } | null {
+  if (env.match.gameId !== 'salvo' || !env.you || env.match.status !== 'live') return null;
+  const view = env.view as SalvoView;
+  const legal = env.legal as SalvoCommand[];
+  for (const { key, ghost } of whisperChoices(view, legal)) {
+    if (decided.has(key)) continue;
+    decided.add(key);
+    const command = chooseWhisper(view, legal, ghost, salvoOptions(personality, rng));
+    if (command) return { key, command };
+  }
+  return null;
+}
+
 function chooseMove(env: MatchEnvelope, personality: Personality, think: { rng: () => number }): unknown {
   if (env.match.gameId === 'critical-mass' && env.you) {
     const { depth, randomness } = personality.strategy ?? DEFAULT_STRATEGY;
@@ -282,7 +305,7 @@ function chooseMove(env: MatchEnvelope, personality: Personality, think: { rng: 
     return chooseCheckersMove(env.view as CheckersState, env.you, { randomness: personality.checkers?.randomness ?? 0.5, rng: think.rng });
   }
   if (env.match.gameId === 'salvo' && env.you) {
-    return chooseSalvoMove(env.view as SalvoView, env.legal as SalvoCommand[], { strength: personality.salvo?.strength ?? 'easy', style: personality.salvo?.style, rng: think.rng });
+    return chooseSalvoMove(env.view as SalvoView, env.legal as SalvoCommand[], salvoOptions(personality, think.rng));
   }
   return env.legal[Math.floor(think.rng() * env.legal.length)];
 }
@@ -367,6 +390,9 @@ async function playMatch(
   } else {
     let lastSeenMove = -1;
     let lastSeenVolley = -1;
+    // Salvo whispers: the view last looked at (what changed since is a moment), and the auctions already decided.
+    let lastSalvo: SalvoView | null = null;
+    const decided = new Set<string>();
     while (!opts.signal?.aborted && (env.match.status === 'countdown' || env.match.status === 'live')) {
       const view = env.view as { lastMove?: { seat: string; waves: string[][] } | null; moveCount?: number };
       if (view.lastMove && view.moveCount !== lastSeenMove) {
@@ -380,13 +406,34 @@ async function playMatch(
       // trick landing, a mine backfiring. A sunk fleet keeps
       // playing (its tricks), since the loop moves whenever toMove includes it.
       const volley = env.match.gameId === 'salvo' ? (env.view as SalvoView).lastVolley : null;
+      let moment: MomentKind | null = null;
       if (volley && volley.round !== lastSeenVolley) {
         lastSeenVolley = volley.round;
-        const moment = volleyMoment(env.view as SalvoView);
-        // The ghost moments are rare and the heart of the show: the Foreman's rule, never ration table talk.
-        if ((moment === 'ghost' || moment === 'trick' || moment === 'backfire' || moment === 'crate' || moment === 'fooled') && Math.random() < 0.9) chatter(moment);
-        if (moment === 'bigCascade' && Math.random() < 0.6) chatter('bigCascade');
-        if (moment === 'gotHit' && Math.random() < 0.5) chatter('gotHit');
+        moment = volleyMoment(env.view as SalvoView);
+      }
+      // Whispers (listed, won, buried) rank below a ghost's own moments and above the rest of the volley's.
+      if (env.match.gameId === 'salvo') {
+        const whisper = whisperMoment(lastSalvo, env.view as SalvoView);
+        lastSalvo = env.view as SalvoView;
+        if (whisper && !(moment === 'ghost' || moment === 'backfire' || moment === 'trick')) moment = whisper;
+      }
+      // The ghost and whisper moments are rare and the heart of the show: the Foreman's rule, never ration table talk.
+      if (moment && moment !== 'bigCascade' && moment !== 'gotHit' && Math.random() < 0.9) chatter(moment);
+      if (moment === 'bigCascade' && Math.random() < 0.6) chatter('bigCascade');
+      if (moment === 'gotHit' && Math.random() < 0.5) chatter('gotHit');
+      // A whisper auction is optional: decide once on each (bid, abstain, or my tell), owing a move or not.
+      const optional = nextWhisper(env, opts.personality, decided, Math.random);
+      if (optional) {
+        await sleep(opts.thinkMs[0] + Math.random() * Math.max(0, opts.thinkMs[1] - opts.thinkMs[0]), opts.signal);
+        try {
+          env = await client.move(matchId, env.match.revision, optional.command);
+        } catch (e) {
+          if (!(e instanceof ApiError && (e.status === 409 || e.status === 400))) throw e;
+          // A stale revision is tried again on fresh news; a refusal (the auction closed) is let go.
+          if (e.status === 409) decided.delete(optional.key);
+          env = await client.match(matchId);
+        }
+        continue;
       }
       if (env.match.status === 'live' && env.you && env.match.toMove.includes(env.you) && env.legal.length > 0) {
         // A Salvo salvo thinks once: the rest of its shots follow in quick succession.
@@ -424,6 +471,8 @@ async function playMatch(
   if (!outcome || !env.you) return;
   if (outcome.winners.length === 0) await say('draw');
   else await say(outcome.winners.includes(env.you) ? 'win' : 'lose');
+  // Salvo: the truth is out, and my whisper was a lie. Own it.
+  if (env.match.gameId === 'salvo' && liedMoment(env.view as SalvoView) && Math.random() < 0.9) await say('lied');
   log(`match ${matchId} over: ${outcome.reason}`);
 }
 

@@ -55,6 +55,10 @@ export const gameOver: Personality = {
       backfire: ['…i meant to do that.', 'glitch in the afterlife. resetting.', 'friendly fire. from a ghost. embarrassing.'],
       crate: ['the wreck left me a present. it always does.', 'loot drop. your ship paid for it.', "a crate from the bottom. i'll put it to work on the rest of you."],
       fooled: ['driftwood. you spent real shells on driftwood.', 'you found my decoy. congratulations on sinking a plank.', 'all those shots and the sea gave you firewood. carry on.'],
+      whisper: ['a reading from beyond. thirty seconds. bid like it matters.', 'the dead hear everything. for a price.', "i know what's under there. you'd like to. make an offer."],
+      wonWhisper: ['bought a secret off a ghost. ghosts never lie. mostly.', 'intel acquired. someone just got a little more doomed.', 'the dead sold me a number. i know what to do with numbers.'],
+      buried: ['my fleet, my secret. paid in full.', 'that reading is going in the grave with me. eventually.', 'outbid you for my own sea. nobody hears my ships but me.'],
+      lied: ['i said a number. it was not the number. game over.', 'never trust a ghost. i did warn you. silently.', 'the truth was down there all along. i told you something prettier.'],
     },
   },
 };
