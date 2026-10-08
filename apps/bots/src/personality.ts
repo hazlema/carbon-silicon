@@ -14,7 +14,7 @@ export interface Personality {
   /** How often it plays a random legal march in Crown & Steel instead of its best (default 0.5). */
   checkers?: { randomness: number };
   /** How well it hunts fleets in Salvo (default easy). */
-  salvo?: { strength: 'easy' | 'medium' | 'hard' };
+  salvo?: { strength: 'easy' | 'medium' | 'hard'; style?: 'grudge' | 'finisher' | 'wanderer' };
   /** What it answers to besides its @handle, anywhere in a line (default: callName(handle)). */
   answersTo?: RegExp;
   /** Lines for one game, keyed by game id; a moment at that game's table uses them over the neutral bank. */

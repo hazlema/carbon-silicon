@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createRng } from '@cs/game-api';
 import { MINE_LIMIT, buoyCells, cellIndex, cellName, isBuoyCentre, neighbours, salvoGame, type SalvoCommand, type SalvoState, type SalvoView, type ShipId, type TargetView, type Volley } from '@cs/salvo';
-import { chances, chooseGhostTrick, chooseSalvoMove, heatmap, volleyMoment, type SalvoStrength } from './salvo';
+import { chances, chooseGhostTrick, chooseSalvoMove, heatmap, seaWeights, volleyMoment, type SalvoStrength } from './salvo';
 
 const turn = salvoGame.turn;
 const CELLS = Array.from({ length: 64 }, (_, i) => cellName(i));
@@ -479,6 +479,28 @@ function withGhost(fleets: Record<string, [ShipId, string][]> = {}): SalvoState 
 const viewOf = (s: SalvoState, seat: string) => salvoGame.view(s, seat) as SalvoView;
 const legalOf = (s: SalvoState, seat: string) => turn.legal(s, seat) as SalvoCommand[];
 type SplashCmd = Extract<SalvoCommand, { trick: 'splash' }>;
+
+describe('seaWeights: residents spread their fire', () => {
+  const shells = (from: string, sea: string, n: number) => Array.from({ length: n }, (_, i) => ({ from, sea, cell: `a${i + 1}`, result: 'miss' as const, ship: null, blast: false }));
+  test("a sea the others hammered last volley draws less; one they left alone draws in full", () => {
+    const v = view([target('east'), target('south'), target('west')], { you: 'north', lastVolley: volley({ shells: [...shells('east', 'west', 4), ...shells('south', 'west', 4)] }) });
+    const w = seaWeights(v);
+    expect(w('west')).toBeCloseTo(0.1);
+    expect(w('east')).toBe(1);
+  });
+  test('a grudge leans on whoever hit me; a finisher on the weakest fleet; a wanderer has a whim per round', () => {
+    const hitMe = volley({ shells: [{ from: 'east', sea: 'north', cell: 'a1', result: 'hit', ship: null, blast: false }] });
+    const v = view([target('east'), target('south', { afloat: 3 })], { you: 'north', lastVolley: hitMe });
+    expect(seaWeights(v, 'grudge')('east')).toBeCloseTo(1.6);
+    expect(seaWeights(v, 'grudge')('south')).toBe(1);
+    expect(seaWeights(v, 'finisher')('south')).toBeCloseTo(1.75);
+    expect(seaWeights(v, 'finisher')('east')).toBe(1);
+    const whims = [1, 2, 3].map((round) => seaWeights({ ...v, round }, 'wanderer')('east'));
+    for (const x of whims) expect(x).toBeGreaterThanOrEqual(0.6), expect(x).toBeLessThan(1.4);
+    expect(new Set(whims).size).toBeGreaterThan(1);
+    expect(seaWeights(v, 'wanderer')('east')).toBe(seaWeights(v, 'wanderer')('east'));
+  });
+});
 
 describe('ghost tricks', () => {
   test('a ghost always returns an entry of legal', () => {

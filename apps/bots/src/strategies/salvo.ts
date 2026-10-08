@@ -1,9 +1,16 @@
-import { SHIPS, SIZE, buoyCells, cellIndex, cellName, hullCells, neighbours, type SalvoCommand, type SalvoView, type TargetView } from '@cs/salvo';
+import { FLEET_CELLS, SHIPS, SIZE, buoyCells, cellIndex, cellName, hullCells, neighbours, type SalvoCommand, type SalvoView, type TargetView } from '@cs/salvo';
 
 export type SalvoStrength = 'easy' | 'medium' | 'hard';
+/**
+ * Who a resident would rather shoot, on top of the odds: `grudge` leans on whoever hit it last,
+ * `finisher` on the fleet closest to sinking, `wanderer` on a different whim each round. Without a
+ * style it reads the odds alone (still never piling on a sea the others just hammered).
+ */
+export type SalvoStyle = 'grudge' | 'finisher' | 'wanderer';
 export interface SalvoStrategyOptions {
   strength: SalvoStrength;
   rng: () => number;
+  style?: SalvoStyle;
 }
 
 type Fire = Extract<SalvoCommand, { fire: 'shell' }>;
@@ -161,15 +168,24 @@ export function whoHitMe(view: SalvoView): string[] {
   return [...out];
 }
 
-/** Easy never drops a buoy: it chases any hit it sees, else shoots a fresh cell at random. */
-function easy(view: SalvoView, seas: Map<string, Fire[]>, rng: () => number): Fire {
+/** Easy never drops a buoy: it picks a sea by weight and chases a hit there if any sea has one, else shoots a fresh cell at random. */
+function easy(view: SalvoView, seas: Map<string, Fire[]>, rng: () => number, weight: (sea: string) => number = () => 1): Fire {
   const targets = view.targets.filter((t) => seas.has(t.sea));
-  const near = targets.flatMap((t) => chases(t, seas.get(t.sea)!, false));
+  // A sea by weight (so it wanders and doesn't pile on), among those with something to chase if any.
+  const bySea = (cands: { sea: string; shells: Fire[] }[]): Fire[] => {
+    const live = cands.filter((c) => c.shells.length > 0);
+    const total = live.reduce((n, c) => n + weight(c.sea), 0);
+    let r = rng() * total;
+    return (live.find((c) => (r -= weight(c.sea)) < 0) ?? live[0])?.shells ?? [];
+  };
+  const near = bySea(targets.map((t) => ({ sea: t.sea, shells: chases(t, seas.get(t.sea)!, false) })));
   if (near.length > 0) return pick(near, rng);
-  const fresh = targets.flatMap((t) => {
-    const shot = new Set([...t.hits, ...t.misses]);
-    return seas.get(t.sea)!.filter((s) => !shot.has(s.cell));
-  });
+  const fresh = bySea(
+    targets.map((t) => {
+      const shot = new Set([...t.hits, ...t.misses]);
+      return { sea: t.sea, shells: seas.get(t.sea)!.filter((x) => !shot.has(x.cell)) };
+    }),
+  );
   return pick(fresh.length > 0 ? fresh : [...seas.values()].flat(), rng);
 }
 
@@ -209,12 +225,46 @@ export function chances(target: TargetView): Map<string, number> {
   return new Map(open.map((c) => [c, sure.has(c) ? 1 : total > 0 ? Math.min(1, (heat.get(c)! / total) * left) : 0]));
 }
 
-/** Every legal shell with its chance of a hit, best first (ties in legal order). */
-function ranked(view: SalvoView, seas: Map<string, Fire[]>): { s: Fire; p: number }[] {
+/** How much less a sea draws when the others' whole last volley went into it (a share of it, that much of this). */
+const PILE_ON = 0.9;
+/** How much more the grudge sea draws, and at most how much more the weakest fleet draws for a finisher. */
+const GRUDGE = 1.6;
+const FINISH = 1;
+/** A wanderer's whims run from 1 − WANDER to 1 + WANDER. */
+const WANDER = 0.4;
+
+/**
+ * Each target sea's weight on top of the odds. Everyone eases off a sea the others hammered in the last
+ * volley (three residents reading the same public hits would otherwise pour every shell into one fleet
+ * and sink it in a few rounds); then the style leans. A wanderer's whim is fixed for the round (from the
+ * round and the sea), so every shot of one salvo agrees.
+ */
+export function seaWeights(view: SalvoView, style?: SalvoStyle): (sea: string) => number {
+  const me = view.you;
+  const others = (view.lastVolley?.shells ?? []).filter((x) => x.from !== me && x.sea !== me);
+  const grudges = new Set(style === 'grudge' ? whoHitMe(view) : []);
+  return (sea) => {
+    let w = others.length > 0 ? 1 - PILE_ON * (others.filter((x) => x.sea === sea).length / others.length) : 1;
+    const t = view.targets.find((x) => x.sea === sea);
+    if (style === 'grudge' && grudges.has(sea)) w *= GRUDGE;
+    if (style === 'finisher' && t) w *= 1 + FINISH * (1 - t.afloat / FLEET_CELLS);
+    if (style === 'wanderer') w *= 1 - WANDER + 2 * WANDER * whim(`${view.round} ${sea}`);
+    return w;
+  };
+}
+/** A number in [0, 1) from a string: the same string, the same whim. */
+function whim(key: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+  return (h >>> 0) / 2 ** 32;
+}
+
+/** Every legal shell with its chance of a hit times its sea's weight, best first (ties in legal order). */
+function ranked(view: SalvoView, seas: Map<string, Fire[]>, weight: (sea: string) => number = () => 1): { s: Fire; p: number }[] {
   const odds = new Map(view.targets.filter((t) => seas.has(t.sea)).map((t) => [t.sea, chances(t)]));
   return [...seas.values()]
     .flat()
-    .map((s) => ({ s, p: odds.get(s.at)?.get(s.cell) ?? 0 }))
+    .map((s) => ({ s, p: (odds.get(s.at)?.get(s.cell) ?? 0) * weight(s.at) }))
     .sort((a, b) => b.p - a.p);
 }
 
@@ -239,8 +289,8 @@ function scan(target: TargetView, drops: Buoy[]): Buoy | null {
  * after round 2, about one round in five (never two running); with a salvo, the round's first shot
  * about every other round.
  */
-function medium(view: SalvoView, seas: Map<string, Fire[]>, buoys: Map<string, Buoy[]>, salvo: Salvo, rng: () => number): Order {
-  const shells = ranked(view, seas);
+function medium(view: SalvoView, seas: Map<string, Fire[]>, buoys: Map<string, Buoy[]>, salvo: Salvo, rng: () => number, weight?: (sea: string) => number): Order {
+  const shells = ranked(view, seas, weight);
   const top = shells[0]?.p ?? 0;
   const due =
     salvo.guns > 1
@@ -264,8 +314,8 @@ function medium(view: SalvoView, seas: Map<string, Fire[]>, buoys: Map<string, B
  * buoy where its best guess lies: with one gun instead of its shell, no more than once in three
  * rounds; with a salvo as the round's first shot, once in two.
  */
-function hard(view: SalvoView, seas: Map<string, Fire[]>, buoys: Map<string, Buoy[]>, salvo: Salvo, rng: () => number): Order {
-  const shells = ranked(view, seas);
+function hard(view: SalvoView, seas: Map<string, Fire[]>, buoys: Map<string, Buoy[]>, salvo: Salvo, rng: () => number, weight?: (sea: string) => number): Order {
+  const shells = ranked(view, seas, weight);
   if (shells.length === 0) return pick([...seas.values()].flat(), rng);
   const due = salvo.guns > 1 ? salvo.first && view.round - lastBuoyRound(view) > HARD_SALVO_BUOY_GAP : view.round - lastBuoyRound(view) > HARD_BUOY_GAP;
   if (due && !chasing(view, seas)) {
@@ -354,14 +404,15 @@ export function chooseSalvoMove(view: SalvoView, legal: SalvoCommand[], opts: Sa
   const salvo = salvoOf(view);
   // Belt and braces: one buoy a round, whatever legal offers.
   if ((view.myOrders ?? []).some((o) => o.fire === 'buoy')) buoys.clear();
+  const weight = seaWeights(view, opts.style);
   let choice: Order;
   try {
     choice =
       opts.strength === 'hard'
-        ? hard(view, seas, buoys, salvo, opts.rng)
+        ? hard(view, seas, buoys, salvo, opts.rng, weight)
         : opts.strength === 'medium'
-          ? medium(view, seas, buoys, salvo, opts.rng)
-          : easy(view, seas, opts.rng);
+          ? medium(view, seas, buoys, salvo, opts.rng, weight)
+          : easy(view, seas, opts.rng, weight);
   } catch {
     return pick([...seas.values()].flat(), opts.rng);
   }

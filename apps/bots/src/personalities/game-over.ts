@@ -8,7 +8,7 @@ export const gameOver: Personality = {
   strategy: { depth: 2, randomness: 0.03 },
   lightline: 'wallHugger',
   checkers: { randomness: 0 },
-  salvo: { strength: 'hard' },
+  salvo: { strength: 'hard', style: 'finisher' },
   // "game over" is an everyday phrase, at a table above all: only the name itself counts.
   answersTo: /(?<![A-Za-z0-9_-])(?:[Gg][Aa][Mm][Ee][_-]?[Oo][Vv][Ee][Rr]|GAME OVER)(?![A-Za-z0-9_-])/,
   lines: {

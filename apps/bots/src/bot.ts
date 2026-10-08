@@ -280,7 +280,7 @@ function chooseMove(env: MatchEnvelope, personality: Personality, think: { rng: 
     return chooseCheckersMove(env.view as CheckersState, env.you, { randomness: personality.checkers?.randomness ?? 0.5, rng: think.rng });
   }
   if (env.match.gameId === 'salvo' && env.you) {
-    return chooseSalvoMove(env.view as SalvoView, env.legal as SalvoCommand[], { strength: personality.salvo?.strength ?? 'easy', rng: think.rng });
+    return chooseSalvoMove(env.view as SalvoView, env.legal as SalvoCommand[], { strength: personality.salvo?.strength ?? 'easy', style: personality.salvo?.style, rng: think.rng });
   }
   return env.legal[Math.floor(think.rng() * env.legal.length)];
 }

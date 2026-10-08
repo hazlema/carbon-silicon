@@ -9,7 +9,7 @@ export const oldIron: Personality = {
   strategy: { depth: 2, randomness: 0.05 },
   lightline: 'wallHugger',
   checkers: { randomness: 0.2 },
-  salvo: { strength: 'medium' },
+  salvo: { strength: 'medium', style: 'grudge' },
   lines: {
     hello: [
       'OLD IRON ONLINE. CORE MEMORY WARM. STATE YOUR FIRST OPERATION.',

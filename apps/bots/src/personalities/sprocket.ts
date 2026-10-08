@@ -7,7 +7,7 @@ export const sprocket: Personality = {
   model: null,
   lightline: 'survivor',
   checkers: { randomness: 0.45 },
-  salvo: { strength: 'easy' },
+  salvo: { strength: 'easy', style: 'wanderer' },
   lines: {
     hello: [
       "Oh good, a challenger! I've been warming up my circuits all day.",
