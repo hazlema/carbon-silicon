@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { cellIndex, cellName, clusterCells, hullCells, ITEM_LIMIT, MINE_LIMIT, SHIPS, SIZE, torpedoLane, TURN_SECONDS, type Facing, type ItemId, type SalvoCommand, type SalvoView, type ShipId, type TargetView, type Trick, type Volley } from '@cs/salvo';
+  import { AUCTION_MS, buoyCells, cellIndex, cellName, clusterCells, hullCells, ITEM_LIMIT, MINE_LIMIT, SHIPS, SIZE, TELL_MAX, torpedoLane, TURN_SECONDS, type Facing, type ItemId, type SalvoCommand, type SalvoView, type ShipId, type TargetView, type Trick, type Volley } from '@cs/salvo';
   import type { TableColors } from '$lib/seats';
   import { clampTilt, DRAG_THRESHOLD, fitScale, nearestTurn } from '../critical-mass/iso';
   import CountdownRing from '$lib/components/CountdownRing.svelte';
@@ -19,6 +19,7 @@
     settling = $bindable(false),
     secondsLeft = null,
     toMove,
+    canAct = false,
   }: {
     view: SalvoView;
     /** Kept for the table page's call; Salvo draws people in their identity colours (orange carbon, cyan silicon). */
@@ -38,6 +39,8 @@
     secondsLeft?: number | null;
     /** The seats the match still waits on (the page's match.toMove): exact, where the view can only guess about ghosts. */
     toMove?: string[];
+    /** The match is live and no move is in flight: optional commands (a bid, a tell) may go now, owed or not. */
+    canAct?: boolean;
   } = $props();
 
   /** The resting isometric view, and the flat one. */
@@ -76,7 +79,13 @@
   type SplashCmd = Extract<SalvoCommand, { trick: 'splash' }>;
   const isMine = (l: unknown): l is MineCmd => typeof l === 'object' && l !== null && (l as MineCmd).trick === 'mine';
   const isSplash = (l: unknown): l is SplashCmd => typeof l === 'object' && l !== null && (l as SplashCmd).trick === 'splash';
-  const isTrick = (l: unknown): l is MineCmd | SplashCmd => isMine(l) || isSplash(l);
+  type WhisperCmd = Extract<SalvoCommand, { trick: 'whisper' }>;
+  const isWhisper = (l: unknown): l is WhisperCmd => typeof l === 'object' && l !== null && (l as WhisperCmd).trick === 'whisper';
+  const isTrick = (l: unknown): l is MineCmd | SplashCmd | WhisperCmd => isMine(l) || isSplash(l) || isWhisper(l);
+  type BidCmd = Extract<SalvoCommand, { bid: number }>;
+  type TellCmd = Extract<SalvoCommand, { tell: number }>;
+  const isBid = (l: unknown): l is BidCmd => typeof l === 'object' && l !== null && typeof (l as BidCmd).bid === 'number';
+  const isTell = (l: unknown): l is TellCmd => typeof l === 'object' && l !== null && typeof (l as TellCmd).tell === 'number';
   type ClusterCmd = Extract<SalvoCommand, { fire: 'cluster' }>;
   type TorpedoCmd = Extract<SalvoCommand, { fire: 'torpedo' }>;
   type RepairCmd = Extract<SalvoCommand, { use: 'repair' }>;
@@ -362,8 +371,9 @@
     return text[0].toUpperCase() + text.slice(1);
   });
 
-  // ── A ghost's trick: one a round, a mine or a false splash. Click a cell (a splash then picks its fool); the button sends it ──
-  type TrickKind = 'mine' | 'splash';
+  // ── A ghost's trick: one a round, a mine, a false splash or a whisper. Click a cell (a splash then picks its fool; a whisper's is a 3×3's centre); the button sends it ──
+  type TrickKind = 'mine' | 'splash' | 'whisper';
+  const TRICK_KINDS: readonly TrickKind[] = ['mine', 'splash', 'whisper'];
   let trickKind = $state<TrickKind>('mine');
   /** The cell picked for this round's trick (a mine's, or a splash's before and after its fool). */
   let trickAim = $state<{ at: string; cell: string } | null>(null);
@@ -373,6 +383,7 @@
   const ghostTricks = $derived(legal.filter(isTrick));
   const minesLegal = $derived(ghostTricks.some(isMine));
   const splashLegal = $derived(ghostTricks.some(isSplash));
+  const whispersLegal = $derived(ghostTricks.some(isWhisper));
   /** Why a trick is greyed out, said on the board rather than in a tooltip nobody hovers. */
   const afloatSeats = $derived(view.seats.filter((x) => !out(x)).length);
   const mineWhy = $derived(minesLegal ? null : `All ${MINE_LIMIT} of your mines are down: one has to go off before you plant another.`);
@@ -383,11 +394,16 @@
         ? `False splash needs three fleets afloat; only ${afloatSeats === 1 ? 'one is' : `${['no', 'one', 'two'][afloatSeats] ?? afloatSeats} are`} left.`
         : 'False splash needs a sea with at least two ship cells afloat.',
   );
-  /** The trick the next click is for: the one you picked, unless only the other is on offer. */
-  const trickNow = $derived<TrickKind>(trickKind === 'splash' ? (splashLegal || !minesLegal ? 'splash' : 'mine') : minesLegal || !splashLegal ? 'mine' : 'splash');
+  const whisperWhy = $derived(
+    whispersLegal ? null : me && (view.auctions ?? []).some((a) => a.ghost === me) ? 'Your whisper is still up for auction: one at a time.' : 'No living sea to whisper about.',
+  );
+  const trickOk = (k: TrickKind) => (k === 'mine' ? minesLegal : k === 'splash' ? splashLegal : whispersLegal);
+  /** The trick the next click is for: the one you picked, unless it's off the table and another is on offer. */
+  const trickNow = $derived<TrickKind>(trickOk(trickKind) ? trickKind : (TRICK_KINDS.find(trickOk) ?? trickKind));
+  const trickTest = (k: TrickKind) => (k === 'mine' ? isMine : k === 'splash' ? isSplash : isWhisper);
   const pendingTrick = $derived(view.myTricks?.pending ?? null);
   /** The cells of the shown sea this trick may go on. */
-  const trickCells = $derived(new Set(ghostTricks.filter((l) => (trickNow === 'mine' ? isMine(l) : isSplash(l)) && l.at === targetSea).map((l) => l.cell)));
+  const trickCells = $derived(new Set(ghostTricks.filter((l) => trickTest(trickNow)(l) && l.at === targetSea).map((l) => l.cell)));
   const trickAimAt = (sea: string | null, cell: string) => !!trickAim && trickAim.at === sea && trickAim.cell === cell;
   /** The living seats a splash on the picked cell may fool (never the sea's owner). */
   const fools = $derived.by(() => {
@@ -400,6 +416,7 @@
     const a = trickAim;
     if (!a) return undefined;
     if (trickNow === 'mine') return legal.find((l) => isMine(l) && l.at === a.at && l.cell === a.cell);
+    if (trickNow === 'whisper') return legal.find((l) => isWhisper(l) && l.at === a.at && l.cell === a.cell);
     return fool ? legal.find((l) => isSplash(l) && l.at === a.at && l.cell === a.cell && l.fool === fool) : undefined;
   });
   function setTrickKind(k: TrickKind) {
@@ -437,7 +454,7 @@
   const pendingText = $derived.by(() => {
     const t = pendingTrick;
     if (!t) return '';
-    if (t.trick === 'whisper') return `whisper on @${handleOf(t.at)} ${t.cell}`;
+    if (t.trick === 'whisper') return `whisper on @${handleOf(t.at)}'s ${areaOf(t.cell)}`;
     return t.trick === 'mine' ? `mine at @${handleOf(t.at)} ${t.cell}` : `false splash for @${handleOf(t.fool ?? '')} on @${handleOf(t.at)} ${t.cell}`;
   });
   /** The mines and false splashes to mark, by `sea cell`: your own live ones and this round's trick (a ghost), every mine left once it's over. */
@@ -468,6 +485,124 @@
     const back = t.hits.length === 0 ? 'but there was nothing left to hit' : t.hits.map((h) => `it comes back on ${handleOf(h.sea)}'s own sea at ${h.cell}, a hit`).join('; ');
     return `Dirty trick! ${handleOf(t.ghost)}'s mine at ${handleOf(t.sea)} ${t.cell} goes off under ${shell} — ${back}.`;
   }
+
+  // ── Whisper: a ghost's sonar reading, sold in a silent 30-second auction among the living ──
+  /** "c3–e5": a whisper's 3×3 by its corners. */
+  const areaName = (cells: string[]) => `${cells[0]}–${cells.at(-1)}`;
+  const areaOf = (centre: string) => areaName(buoyCells(centre));
+  const auctions = $derived(view.auctions ?? []);
+  /** The auctions you may bid on (or watch): every open one but your own (a ghost runs its own from its controls). */
+  const otherAuctions = $derived(auctions.filter((a) => a.ghost !== me));
+  /** Your own open auction, as its ghost. */
+  const myAuction = $derived(me ? (auctions.find((a) => a.ghost === me) ?? null) : null);
+  const myScrap = $derived(me ? (view.scrap?.[me] ?? 0) : 0);
+  const mayBid = (ghost: string) => legal.some((l) => isBid(l) && l.ghost === ghost);
+  /**
+   * The bid of `n` on a ghost's auction: the entry of `legal` (it lists 0 up to your scrap, capped at 20); above
+   * the cap, the same command for any amount you can pay (the rules take any bid up to your scrap).
+   */
+  const bidCmd = (ghost: string, n: number): BidCmd | undefined =>
+    legal.find((l): l is BidCmd => isBid(l) && l.ghost === ghost && l.bid === n) ??
+    (mayBid(ghost) && Number.isInteger(n) && n >= 1 && n <= myScrap ? { bid: n, ghost } : undefined);
+  const tellCmd = (n: number) => legal.find((l): l is TellCmd => isTell(l) && l.tell === n);
+  /** The number your whisper tells the winner (the truth until you set one). */
+  const told = $derived(view.myTricks?.whisper ? (view.myTricks.whisper.tell ?? view.myTricks.whisper.truth) : null);
+  /** The custom amount typed into each auction's box, by ghost. */
+  let customBid = $state<Record<string, number | null>>({});
+  let optSending = $state(false);
+  /** Send an optional move (a bid or a tell): never owed, so it goes whether or not you're locked in. */
+  async function sendOptional(cmd: unknown) {
+    if (!canAct || optSending || !cmd) return;
+    optSending = true;
+    try {
+      await onMove($state.snapshot(cmd));
+    } finally {
+      optSending = false;
+    }
+  }
+  /** The wall clock, ticking while an auction is open (its close is an epoch time stamped by the server). */
+  let now = $state(Date.now());
+  $effect(() => {
+    if (auctions.length === 0) return;
+    now = Date.now();
+    const t = setInterval(() => (now = Date.now()), 500);
+    return () => clearInterval(t);
+  });
+  /** Seconds left in an auction: the full 30 until the server stamps its close. */
+  const auctionSecs = (closesAt: number | null) => (closesAt === null ? AUCTION_MS / 1000 : Math.max(0, Math.ceil((closesAt - now) / 1000)));
+  const auctionTone = (secs: number): 'ready' | 'warn' | 'urgent' => (secs <= 5 ? 'urgent' : secs <= 10 ? 'warn' : 'ready');
+  const BID_TEXT = { bid: 'bid', abstained: 'abstained' } as const;
+  /** Every whisper with its truth, once the match is over, as the summary tells them (handles for seats). */
+  const truthLines = $derived(
+    (view.truths ?? []).map((t) => {
+      const where = `${handleOf(t.sea)}'s ${areaName(t.cells)}`;
+      const truth = `The truth was ${t.truth}.`;
+      if (t.state === 'sold' && t.winner)
+        return { t, text: `${handleOf(t.ghost)} told ${handleOf(t.winner)} ${t.said} in ${where}. ${truth}${t.said === t.truth ? ' An honest ghost!' : ''}` };
+      if (t.state === 'faded') return { t, text: `${handleOf(t.ghost)}'s whisper on ${where} faded with them. ${truth}` };
+      return { t, text: `Nobody bid on ${handleOf(t.ghost)}'s whisper on ${where}. ${truth}` };
+    }),
+  );
+  /** The side column's whisper band: the auctions under way (your own, as a ghost, first), or the truths once it's over. */
+  const auctionBand = $derived.by(() => live && (otherAuctions.length > 0 || (haunting && !!myAuction)));
+  const truthsBand = $derived(!live && !settling && truthLines.length > 0);
+  /**
+   * The 3×3s to outline, by `sea cell`, with the sides of each cell on the area's edge: your whisper's pick and
+   * the one under the pointer, this round's listing, open auctions, and the whispers you bought.
+   */
+  type AreaState = 'hover' | 'picked' | 'pending' | 'auction' | 'bought';
+  const areaMarks = $derived.by(() => {
+    const at = new Map<string, { state: AreaState; edges: string }>();
+    const put = (sea: string, cells: string[], state: AreaState) => {
+      const set = new Set(cells.map((c) => cellIndex(c) ?? -1));
+      for (const c of cells) {
+        const i = cellIndex(c) ?? 0;
+        const edges = [
+          i % SIZE === 0 || !set.has(i - 1) ? 'l' : '',
+          i % SIZE === SIZE - 1 || !set.has(i + 1) ? 'r' : '',
+          !set.has(i + SIZE) ? 't' : '',
+          !set.has(i - SIZE) ? 'b' : '',
+        ].join('');
+        const key = `${sea} ${c}`;
+        if (!at.has(key)) at.set(key, { state, edges });
+      }
+    };
+    if (trickAim && trickNow === 'whisper') put(trickAim.at, buoyCells(trickAim.cell), 'picked');
+    if (haunting && trickNow === 'whisper' && !pendingTrick && aimHover && targetSea && trickCells.has(aimHover)) put(targetSea, buoyCells(aimHover), 'hover');
+    if (pendingTrick?.trick === 'whisper') put(pendingTrick.at, buoyCells(pendingTrick.cell), 'pending');
+    if (live) for (const a of auctions) put(a.sea, a.cells, 'auction');
+    for (const w of view.whispers ?? []) put(w.sea, w.cells, 'bought');
+    return at;
+  });
+  /** The words you bought, by `sea centre`: a 👻 3? on the area's middle cell. */
+  const whisperMarks = $derived.by(() => {
+    const at = new Map<string, { ghost: string; said: number; area: string }[]>();
+    for (const w of view.whispers ?? []) {
+      const key = `${w.sea} ${w.cells[4] ?? w.cells[0]}`;
+      at.set(key, [...(at.get(key) ?? []), { ghost: w.ghost, said: w.said, area: areaName(w.cells) }]);
+    }
+    return at;
+  });
+  // A whisper you win is told once its volley has landed (or at once, when it closes on the clock).
+  let seenWhispers: number | undefined;
+  let wonQueue = $state<string[]>([]);
+  $effect(() => {
+    const list = view.whispers ?? [];
+    const before = seenWhispers;
+    seenWhispers = list.length;
+    if (before === undefined || list.length <= before) return;
+    untrack(() => (wonQueue = [...wonQueue, ...list.slice(before).map((w) => `👻 You win ${handleOf(w.ghost)}'s whisper: ${handleOf(w.ghost)} says ${w.said} in ${w.sea === me ? 'your' : `${handleOf(w.sea)}'s`} ${areaName(w.cells)}.`)]));
+  });
+  $effect(() => {
+    if (wonQueue.length === 0 || settling) return;
+    const lines = wonQueue;
+    untrack(() => {
+      wonQueue = [];
+      // After a volley, the round's own call ("Round 7 — fire!") goes first.
+      const wait = view.lastVolley && taken === volleyRound && plan ? 1800 : 0;
+      lines.forEach((text, i) => announce({ tone: 'calm', text }, wait + i * TRICK_MS, TRICK_MS));
+    });
+  });
 
   // ── Deploy: pick a ship, R rotates, click a cell; Random for the lot ──
   let shipPick = $state<ShipId | null>(null);
@@ -1014,8 +1149,9 @@
     if (rest.tilt === 0 && turnsFrom360(rest.spin, 0)) return Math.max(16, Math.floor(Math.min(room.w, room.h) / span));
     return Math.max(16, Math.floor(REF * fitScale({ w: span * REF, h: span * REF }, room, rest.spin, rest.tilt, 0)));
   });
-  /** Your fleet fills the room its section has (the section's height, less the heading and the legend). */
-  const ownCell = $derived(Math.max(12, Math.min(34, Math.floor(((wide ? ownBox.w : Math.min(ownBox.w, ownBox.h - 52)) - 14) / SIZE) || 24)));
+  /** Your fleet fills the room its section has (the section's height, less the heading and the legend): in the
+   *  wide column its row takes what the others leave, so an auction above it shrinks it rather than the controls. */
+  const ownCell = $derived(Math.max(12, Math.min(34, Math.floor((Math.min(ownBox.w, ownBox.h - (wide && auctionBand ? 30 : 52)) - 14) / SIZE) || 24)));
 
   /** Arrow keys move focus within a sea; every cell is focusable, enabled or not. */
   function step(e: KeyboardEvent, k: number) {
@@ -1116,6 +1252,111 @@
   {/if}
 {/snippet}
 
+{#snippet auctionClock(a: SalvoView['auctions'][number], id: string)}
+  {@const secs = auctionSecs(a.closesAt)}
+  <span class="au-clock" data-testid={id} data-secs={secs}>
+    {#if secs > 0}
+      <CountdownRing remaining={secs / (AUCTION_MS / 1000)} {secs} size={26} tone={auctionTone(secs)} label="{secs} seconds left in {handleOf(a.ghost)}'s auction" />
+    {:else}
+      <span class="au-closing">closing…</span>
+    {/if}
+  </span>
+{/snippet}
+
+{#snippet bidders(a: SalvoView['auctions'][number])}
+  <ul class="au-bids" aria-label="Who has bid">
+    {#each Object.entries(a.bids) as [seat, st] (seat)}
+      {@const mine = seat === me ? view.myBids?.[a.ghost] : undefined}
+      <li class="au-bid st-{st ?? 'none'}" data-testid="auction-status" data-seat={seat} data-status={st ?? 'none'}>
+        <span class="name" class:human={humanSeat(seat)} title={handleOf(seat)}>{seat === me ? 'you' : handleOf(seat)}</span>
+        <span class="st">{mine ? `bid ${mine}` : st ? BID_TEXT[st] : '—'}</span>
+      </li>
+    {/each}
+  </ul>
+{/snippet}
+
+{#snippet auctionCard(a: SalvoView['auctions'][number])}
+  {@const mine = me ? (view.myBids?.[a.ghost] ?? 0) : 0}
+  {@const status = me ? a.bids[me] : undefined}
+  {@const bidder = !!me && status !== undefined}
+  {@const can = canAct && !optSending && mayBid(a.ghost)}
+  {@const custom = customBid[a.ghost] ?? null}
+  {@const customCmd = custom !== null && custom !== mine ? bidCmd(a.ghost, custom) : undefined}
+  <div class="auction" class:onsea={targetSea === a.sea} data-testid="auction" data-ghost={a.ghost} data-sea={a.sea}>
+    <div class="au-head">
+      <p class="au-title">👻 30-second ghost intel auction</p>
+      {@render auctionClock(a, 'auction-clock')}
+    </div>
+    <p class="au-what" data-testid="auction-what">
+      <span class="who-g">@{handleOf(a.ghost)}</span>'s reading on
+      {#if a.sea === me}<strong>your</strong> sea{:else}<button type="button" class="au-sea" class:human={humanSeat(a.sea)} aria-pressed={targetSea === a.sea} title="Show this sea" onclick={() => (picked = a.sea)}>@{handleOf(a.sea)}</button>'s sea{/if}, <strong>{areaName(a.cells)}</strong>
+    </p>
+    {#if bidder}
+      <div class="au-mine">
+        <span data-testid="auction-mybid">{#if mine > 0}Your sealed bid: <strong>{mine}</strong>{:else if status === 'abstained'}You abstained.{:else}No bid yet{a.sea === me ? ': bid to bury it' : '.'}{/if}</span>
+        {#if mine > 0}
+          <button type="button" class="au-btn quiet" data-testid="auction-withdraw" disabled={!can || !bidCmd(a.ghost, 0)} onclick={() => void sendOptional(bidCmd(a.ghost, 0))}>Withdraw</button>
+        {:else if status !== 'abstained'}
+          <button type="button" class="au-btn quiet" data-testid="auction-abstain" disabled={!can || !bidCmd(a.ghost, 0)} onclick={() => void sendOptional(bidCmd(a.ghost, 0))}>Abstain</button>
+        {/if}
+      </div>
+      <div class="au-ctl" role="group" aria-label="Your bid on {handleOf(a.ghost)}'s whisper">
+        {#each [1, 2, 5] as n (n)}
+          {@const cmd = bidCmd(a.ghost, mine + n)}
+          <button type="button" class="au-btn" data-testid="auction-bid-{n}" disabled={!can || !cmd} title={cmd ? `Bid ${mine + n}` : `You have ${myScrap} scrap`} onclick={() => void sendOptional(cmd)}>+{n}</button>
+        {/each}
+        <span class="au-custom">
+          <input
+            type="number"
+            min="1"
+            max={myScrap}
+            placeholder="≤{myScrap}"
+            aria-label="Custom bid, up to your {myScrap} scrap"
+            data-testid="auction-custom"
+            value={custom ?? ''}
+            oninput={(e) => {
+              const v = (e.currentTarget as HTMLInputElement).valueAsNumber;
+              customBid[a.ghost] = Number.isFinite(v) ? v : null;
+            }}
+            onkeydown={(e) => {
+              if (e.key === 'Enter' && customCmd) {
+                e.preventDefault();
+                void sendOptional(customCmd).then(() => (customBid[a.ghost] = null));
+              }
+            }}
+          /><button type="button" class="au-btn" data-testid="auction-bid-custom" disabled={!can || !customCmd} onclick={() => void sendOptional(customCmd).then(() => (customBid[a.ghost] = null))}>Bid</button>
+        </span>
+      </div>
+    {/if}
+    {@render bidders(a)}
+  </div>
+{/snippet}
+
+{#snippet myWhisper(a: SalvoView['auctions'][number])}
+  {@const w = view.myTricks?.whisper}
+  <div class="auction mine" class:onsea={targetSea === a.sea} data-testid="my-auction" data-sea={a.sea}>
+    <div class="au-head">
+      <p class="au-title">👻 Your whisper is up for auction</p>
+      {@render auctionClock(a, 'my-auction-clock')}
+    </div>
+    <p class="au-what">
+      <button type="button" class="au-sea" class:human={humanSeat(a.sea)} aria-pressed={targetSea === a.sea} title="Show this sea" onclick={() => (picked = a.sea)}>@{handleOf(a.sea)}</button>'s sea, <strong>{areaName(a.cells)}</strong>
+      {#if w}· <span class="au-truth" data-testid="whisper-truth">Truth: {w.truth}</span>{/if}
+    </p>
+    {#if w}
+      <div class="tells" role="group" aria-label="The number you tell the winner">
+        <span class="au-tell-head" aria-hidden="true">Tell</span>
+        {#each { length: TELL_MAX + 1 } as _, n (n)}
+          {@const cmd = tellCmd(n)}
+          <button type="button" class="tell" class:truth={n === w.truth} data-testid="tell-{n}" aria-pressed={told === n} disabled={!canAct || optSending || !cmd} onclick={() => void sendOptional(cmd)}>{n}</button>
+        {/each}
+      </div>
+      <p class="hint au-lie" data-testid="tell-note">{told === w.truth ? 'The truth.' : 'A lie: the truth comes out at the end.'}</p>
+    {/if}
+    {@render bidders(a)}
+  </div>
+{/snippet}
+
 {#snippet sea(seat: string, model: Map<string, CellModel>, size: number, main: boolean, mode: Mode, own: boolean)}
   {@const g = main ? Math.round(size * GUTTER) : 0}
   {@const intel = main && !own}
@@ -1155,6 +1396,8 @@
           {@const sparkAt = itemAt.get(`${seat} ${cell}`)}
           {@const reading = intel ? sonarAt.get(cell) : undefined}
           {@const tm = trickMarks.get(`${seat} ${cell}`)}
+          {@const am = areaMarks.get(`${seat} ${cell}`)}
+          {@const wm = whisperMarks.get(`${seat} ${cell}`)}
           {#if main && k % SIZE === 0}<span class="tag row" aria-hidden="true">{SIZE - Math.floor(k / SIZE)}</span>{/if}
           <button
             type="button"
@@ -1163,9 +1406,11 @@
             aria-label={label(cell, m, own) +
               (reading ? `, sonar buoy: ${reading.afloat} afloat around it` : '') +
               (tm ? (tm.kind === 'mine' ? ', mine' : ', false splash') : '') +
+              (wm ? wm.map((w) => `, 👻 ${handleOf(w.ghost)} says ${w.said} ship cells in ${w.area}`).join('') : '') +
               (spark ? ', repaired' : '') +
               (om ? `, ${om.kind} ${om.state === 'sent' ? 'sent' : 'aimed'}` : '')}
             aria-disabled={!ok}
+            title={wm ? wm.map((w) => `👻 @${handleOf(w.ghost)} says ${w.said}`).join('\n') : undefined}
             aria-pressed={mode === 'fire'
               ? !!aimOn(seat, cell) || (lm?.state === 'picked')
               : mode === 'trick'
@@ -1182,10 +1427,10 @@
                   : undefined}
             onclick={() => press(mode, cell)}
             onkeydown={(e) => keydown(e, mode, cell, k)}
-            onpointerenter={() => (mode === 'deploy' || mode === 'decoy' ? (hover = cell) : mode === 'fire' && (aimHover = cell))}
+            onpointerenter={() => (mode === 'deploy' || mode === 'decoy' ? (hover = cell) : (mode === 'fire' || mode === 'trick') && (aimHover = cell))}
             onpointerleave={() => (mode === 'deploy' || mode === 'decoy' ? hover === cell && (hover = null) : aimHover === cell && (aimHover = null))}
-            onfocus={() => (mode === 'deploy' || mode === 'decoy' ? (hover = cell) : mode === 'fire' && (aimHover = cell))}
-            onblur={() => mode === 'fire' && aimHover === cell && (aimHover = null)}
+            onfocus={() => (mode === 'deploy' || mode === 'decoy' ? (hover = cell) : (mode === 'fire' || mode === 'trick') && (aimHover = cell))}
+            onblur={() => (mode === 'fire' || mode === 'trick') && aimHover === cell && (aimHover = null)}
           >
             <span class="water" class:up={intel && liftedHere.has(Number(cell.slice(1)))}></span>
             {#if m.hull}
@@ -1239,6 +1484,17 @@
             {:else if mode === 'fire' && sentAt(seat, cell)}<span class="reticle sent" data-testid="sent"></span>
             {:else if mode === 'trick' && trickAimAt(seat, cell)}<span class="reticle trick" data-testid="trick-aim"></span>{/if}
             {#if tm}<span class="tmark m-{tm.kind}" class:pending={tm.pending} data-testid="mark-{tm.kind}">{tm.kind === 'mine' ? '💀' : '👻'}</span>{/if}
+            {#if am}
+              <span
+                class="area s-{am.state}"
+                class:el={am.edges.includes('l')}
+                class:er={am.edges.includes('r')}
+                class:et={am.edges.includes('t')}
+                class:eb={am.edges.includes('b')}
+                data-area={am.state}
+              ></span>
+            {/if}
+            {#each wm ?? [] as w, i (i)}<span class="wmark" data-testid="whisper-mark" data-ghost={w.ghost} data-said={w.said}>👻 {w.said}?</span>{/each}
           </button>
         {/each}
         {#if main}
@@ -1464,6 +1720,7 @@
         <ul>
           <li><span class="gc-li" aria-hidden="true">💀</span><span><strong>Mine:</strong> hide it on a cell. Whoever shoots there gets hit on their own sea… unless a ship is under it, then you've just sunk that ship for them.</span></li>
           <li><span class="gc-li" aria-hidden="true">💦</span><span><strong>False splash:</strong> show one player a fake hit, to waste their shots (while three fleets are still afloat).</span></li>
+          <li><span class="gc-li" aria-hidden="true">🤫</span><span><strong>Whisper:</strong> scan a 3×3 and auction the reading to the living for 30 seconds. Tell the winner any number you like.</span></li>
         </ul>
         <p class="gc-sub">You can't win now, but you can decide who does. Idle three rounds and your ghost fades away.</p>
         {#if secondsLeft !== null && !pendingTrick}<p class="gc-clock" data-testid="ghost-clock">Round {view.round}: {secondsLeft} s to play your first trick</p>{/if}
@@ -1523,7 +1780,7 @@
     {/if}
   </div>
 
-  <aside class="side">
+  <aside class="side" class:ghosted={haunting && !!myAuction} class:au={auctionBand || truthsBand}>
     <section class="opps" aria-label={me ? 'Opponents' : 'Fleets'}>
       <p class="head">{me ? 'Opponents' : 'Fleets'}</p>
       <div class="list">
@@ -1571,6 +1828,20 @@
         {/each}
       </div>
     </section>
+
+    {#if auctionBand}
+      <section class="auctions" aria-label="Whisper auctions">
+        {#if haunting && myAuction}{@render myWhisper(myAuction)}{/if}
+        {#each otherAuctions as a (a.ghost)}{@render auctionCard(a)}{/each}
+      </section>
+    {:else if !live && !settling && truthLines.length > 0}
+      <section class="auctions told" aria-label="The whispers, and the truth" data-testid="truths">
+        <p class="head">👻 The whispers, and the truth</p>
+        {#each truthLines as x, i (i)}
+          <p class="truth" class:lie={x.t.state === 'sold' && x.t.said !== x.t.truth} data-testid="truth" data-ghost={x.t.ghost}>{x.text}</p>
+        {/each}
+      </section>
+    {/if}
 
     {#if !deploying && ownCells && me}
       <section class="fleet" aria-label="Your fleet" bind:this={ownEl}>
@@ -1734,8 +2005,20 @@
               title={splashWhy ?? undefined}
               onclick={() => setTrickKind('splash')}>👻 False splash</button
             >
+            <button
+              type="button"
+              aria-pressed={trickNow === 'whisper'}
+              data-testid="trick-whisper"
+              disabled={!whispersLegal}
+              title={whisperWhy ?? 'Scan a 3×3 and auction the reading to the living'}
+              onclick={() => setTrickKind('whisper')}>🤫 Whisper</button
+            >
           </div>
-          {#if splashWhy || mineWhy}<p class="hint why" data-testid="trick-why">{splashWhy ?? mineWhy}</p>{/if}
+          {#if trickNow === 'whisper'}
+            <p class="hint" data-testid="whisper-hint">You see the true count in a 3×3; the living bid 30 seconds for your word.</p>
+          {:else if splashWhy || mineWhy || whisperWhy}
+            <p class="hint why" data-testid="trick-why">{splashWhy ?? mineWhy ?? whisperWhy}</p>
+          {/if}
           {#if trickNow === 'splash' && trickAim}
             <p class="hint">Who do you fool?</p>
             <div class="fools" role="group" aria-label="Who to fool">
@@ -1746,7 +2029,13 @@
           {/if}
           {#if trickCmd}
             <button type="button" class="firebtn haunt" data-testid="play-trick" disabled={!interactive || trickSending} onclick={() => void playTrick()}
-              >{trickSending ? 'Sending…' : trickNow === 'mine' ? 'Plant mine' : `Splash @${handleOf(fool ?? '')}`}</button
+              >{trickSending
+                ? 'Sending…'
+                : trickNow === 'mine'
+                  ? 'Plant mine'
+                  : trickNow === 'whisper' && trickAim
+                    ? `Auction ${areaOf(trickAim.cell)}`
+                    : `Splash @${handleOf(fool ?? '')}`}</button
             >
           {:else}
             <button type="button" class="slot" data-testid="play-trick" disabled
@@ -1754,6 +2043,8 @@
                 ? 'That fleet is sunk: pick a living sea'
                 : trickNow === 'mine'
                   ? 'Pick a cell for your mine'
+                  : trickNow === 'whisper'
+                    ? 'Pick the centre of a 3×3 to scan'
                   : trickAim
                     ? 'Pick who to fool'
                     : trickCells.size === 0
@@ -2082,6 +2373,18 @@
   .salvo.deploying .side {
     grid-template-areas: 'opps opps' 'actions actions';
   }
+  /* A whisper auction (or, at the end, the whispers told) gets a band of its own under the opponents. */
+  /* Narrow: the whisper band takes your fleet's place beside the controls while it lasts (30 seconds), so the salvo keeps its room. */
+  .side.au {
+    grid-template-areas: 'opps opps' 'auction actions';
+  }
+  .side.au .fleet {
+    display: none;
+  }
+  .side.au .auctions {
+    min-height: 0;
+    overflow-y: auto;
+  }
   .stage {
     padding: 34px 2px 50px;
   }
@@ -2092,7 +2395,7 @@
     .side,
     .salvo.deploying .side {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: auto auto minmax(auto, 1fr);
+      grid-template-rows: auto minmax(9.5rem, 1fr) auto;
       grid-template-areas: 'opps' 'fleet' 'actions';
       align-content: start;
       gap: 14px;
@@ -2104,6 +2407,40 @@
     .salvo.deploying .side {
       grid-template-rows: auto auto;
       grid-template-areas: 'opps' 'actions';
+    }
+    .side.au {
+      grid-template-rows: auto auto minmax(9.5rem, 1fr) auto;
+      grid-template-areas: 'opps' 'auction' 'fleet' 'actions';
+    }
+    .actions {
+      min-height: auto;
+      overflow: visible;
+    }
+    /* A ghost running its auction: its sunk fleet steps aside for the tell and the tricks. */
+    .side.ghosted {
+      grid-template-rows: auto auto;
+      grid-template-areas: 'opps' 'actions';
+    }
+    .side.ghosted.au {
+      grid-template-rows: auto auto auto;
+      grid-template-areas: 'opps' 'auction' 'actions';
+    }
+    .side.au .fleet {
+      display: flex;
+    }
+    .side.ghosted .fleet {
+      display: none;
+    }
+    .side.au .auctions {
+      min-height: auto;
+      overflow: visible;
+    }
+    /* While an auction runs the column is tight: closer rows, and the fleet's legend steps out (the fleet shrinks, the salvo keeps its room). */
+    .side.au {
+      row-gap: 10px;
+    }
+    .side.au .legend {
+      display: none;
     }
   }
   .head {
@@ -2369,13 +2706,18 @@
     grid-area: actions;
     display: flex;
     flex-direction: column;
-    justify-content: flex-end;
     gap: 6px;
     min-width: 0;
+    /* Bottom-aligned, yet scrollable from the top when the controls outgrow a phone's band (justify-content: flex-end can't scroll back up). */
+    min-height: 0;
+    overflow-y: auto;
     font-size: var(--step--1);
   }
   .actions p {
     margin: 0;
+  }
+  .actions > :first-child {
+    margin-top: auto;
   }
   .hint {
     color: var(--fog);
@@ -3682,6 +4024,343 @@
     }
     .bubbles {
       display: none;
+    }
+  }
+
+  /* ── Whisper: the auction cards, the ghost's tell, the areas and the words bought. Violet, as every ghost thing ── */
+  .auctions {
+    grid-area: auction;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .auction {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px 7px;
+    border: 1px solid color-mix(in oklab, #b06bff 55%, transparent);
+    border-radius: var(--r-control);
+    background: linear-gradient(160deg, rgba(176, 107, 255, 0.14), rgba(13, 16, 32, 0.7) 70%);
+    box-shadow: 0 0 22px rgba(176, 107, 255, 0.16);
+    font-size: 13px;
+    animation: sv-au-in 0.5s ease-out;
+  }
+  .auction.onsea {
+    border-color: #b06bff;
+  }
+  .auction p {
+    margin: 0;
+  }
+  .au-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .au-title {
+    color: #cfa6ff;
+    font: 600 12px var(--font-ui);
+  }
+  .au-clock {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    min-width: 26px;
+    height: 26px;
+  }
+  .au-closing {
+    color: var(--dust);
+    font-size: 11px;
+  }
+  .au-what {
+    color: var(--fog);
+    line-height: 1.35;
+  }
+  .au-what strong {
+    color: var(--chalk);
+    font-weight: 600;
+  }
+  .who-g {
+    color: #cfa6ff;
+    font-family: var(--font-silicon);
+  }
+  .au-sea {
+    padding: 0 2px;
+    border: 0;
+    border-bottom: 1px dashed currentColor;
+    background: none;
+    color: var(--silicon);
+    font: inherit;
+    font-family: var(--font-silicon);
+    cursor: pointer;
+  }
+  .au-sea.human {
+    color: var(--carbon);
+  }
+  .au-sea[aria-pressed='true'] {
+    border-bottom-style: solid;
+  }
+  .au-bids {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .au-bids {
+    gap: 1px 10px;
+  }
+  .au-bid {
+    display: inline-flex;
+    gap: 4px;
+    align-items: baseline;
+    min-width: 0;
+    font-size: 11.5px;
+  }
+  .au-bid .name {
+    max-width: 6.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--silicon);
+    font-family: var(--font-silicon);
+  }
+  .au-bid .name.human {
+    color: var(--carbon);
+  }
+  .au-bid .st {
+    color: var(--dust);
+  }
+  .au-bid.st-bid .st {
+    color: #cfa6ff;
+    font-weight: 600;
+  }
+  .au-bid.st-abstained .st {
+    font-style: italic;
+  }
+  .au-mine {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2px 8px;
+    color: var(--chalk);
+  }
+  .au-mine .au-btn {
+    padding: 2px 8px;
+    font-size: 12px;
+  }
+  .au-mine strong {
+    color: #cfa6ff;
+  }
+  .au-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .au-btn {
+    min-width: 1.9rem;
+    padding: 4px 6px;
+    border: 1px solid color-mix(in oklab, #b06bff 60%, transparent);
+    border-radius: var(--r-control);
+    background: color-mix(in oklab, #b06bff 18%, var(--panel-2));
+    color: var(--chalk);
+    font: 600 12.5px var(--font-ui);
+    cursor: pointer;
+  }
+  .au-btn:hover:not(:disabled) {
+    background: color-mix(in oklab, #b06bff 32%, var(--panel-2));
+  }
+  .au-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .au-btn.quiet {
+    border-color: var(--lattice);
+    background: none;
+    color: var(--fog);
+    font-weight: 500;
+  }
+  .au-custom {
+    display: inline-flex;
+  }
+  .au-custom input {
+    width: 3.3rem;
+    padding: 3px 5px;
+    border: 1px solid var(--lattice);
+    border-right: 0;
+    border-radius: var(--r-control) 0 0 var(--r-control);
+    background: rgba(13, 16, 32, 0.8);
+    color: var(--chalk);
+    font: 500 13px var(--font-ui);
+  }
+  .au-custom input::-webkit-inner-spin-button,
+  .au-custom input::-webkit-outer-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+  .au-custom input {
+    appearance: textfield;
+  }
+  .au-custom .au-btn {
+    border-radius: 0 var(--r-control) var(--r-control) 0;
+  }
+  .au-truth {
+    color: var(--chalk);
+    font-weight: 600;
+  }
+  .au-tell-head {
+    margin-right: 4px;
+    color: var(--fog);
+    font-size: 12px;
+  }
+  .tells {
+    display: grid;
+    grid-template-columns: auto repeat(10, minmax(0, 1fr));
+    align-items: center;
+    gap: 2px;
+  }
+  .tell {
+    min-width: 0;
+    padding: 3px 0;
+    border: 1px solid var(--lattice);
+    border-radius: 6px;
+    background: var(--panel-2);
+    color: var(--fog);
+    font: 600 13px var(--font-silicon);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+  }
+  .tell.truth {
+    border-color: color-mix(in oklab, var(--ready) 50%, transparent);
+  }
+  .tell[aria-pressed='true'] {
+    border-color: #b06bff;
+    background: #b06bff;
+    color: #12051f;
+  }
+  .tell:disabled {
+    cursor: default;
+  }
+  .tell:disabled:not([aria-pressed='true']) {
+    opacity: 0.5;
+  }
+  .au-lie {
+    font-size: 12px;
+  }
+  @container salvo (max-width: 520px) {
+    .tells {
+      grid-template-columns: auto repeat(5, minmax(0, 1fr));
+    }
+    .tells .tell:nth-of-type(6) {
+      grid-column-start: 2;
+    }
+  }
+  .auctions.told {
+    gap: 4px;
+  }
+  .auctions.told .head {
+    margin: 0;
+  }
+  .truth {
+    margin: 0;
+    padding: 6px 8px;
+    border-left: 2px solid color-mix(in oklab, #b06bff 50%, transparent);
+    color: var(--fog);
+    font-size: 13px;
+  }
+  .truth.lie {
+    border-left-color: #b06bff;
+    color: var(--chalk);
+  }
+  /* The three tricks share the ghost's toggle. */
+  .kind.haunt {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .kind.haunt button {
+    flex: 1 1 auto;
+    padding: 6px 5px;
+    font-size: 12.5px;
+  }
+  /* A 3×3 drawn cell by cell (an overlay would be clipped on the tilted sea): only the area's outer sides are lined. */
+  .area {
+    position: absolute;
+    inset: 0;
+    background: rgba(176, 107, 255, 0.1);
+    border: 0 dashed #b06bff;
+  }
+  .area.el {
+    border-left-width: 2px;
+  }
+  .area.er {
+    border-right-width: 2px;
+  }
+  .area.et {
+    border-top-width: 2px;
+  }
+  .area.eb {
+    border-bottom-width: 2px;
+  }
+  .area.s-hover {
+    border-color: rgba(176, 107, 255, 0.6);
+    background: rgba(176, 107, 255, 0.07);
+  }
+  .area.s-picked,
+  .area.s-auction {
+    border-style: solid;
+    background: rgba(176, 107, 255, 0.16);
+  }
+  .area.s-auction {
+    animation: sv-au-glow 1.6s ease-in-out infinite;
+  }
+  .area.s-pending {
+    opacity: 0.75;
+  }
+  .area.s-bought {
+    border-color: rgba(176, 107, 255, 0.55);
+    background: rgba(176, 107, 255, 0.06);
+  }
+  .own .area {
+    border-width: 0;
+  }
+  .own .area.el,
+  .own .area.er,
+  .own .area.et,
+  .own .area.eb {
+    border-width: 0;
+  }
+  /* The ghost's word on its area: 👻 3? (a word, not a reading). */
+  .wmark {
+    position: absolute;
+    inset: 12% 2%;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    background: rgba(18, 5, 31, 0.82);
+    box-shadow: 0 0 0 1.5px #b06bff, 0 0 calc(var(--cell) * 0.3) rgba(176, 107, 255, 0.6);
+    color: #e7d4ff;
+    font: 700 calc(var(--cell) * 0.26) var(--font-silicon);
+    white-space: nowrap;
+    line-height: 1;
+  }
+  @keyframes sv-au-in {
+    from {
+      box-shadow: 0 0 0 3px #b06bff, 0 0 40px rgba(176, 107, 255, 0.6);
+    }
+  }
+  @keyframes sv-au-glow {
+    50% {
+      background: rgba(176, 107, 255, 0.26);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .auction,
+    .area.s-auction {
+      animation: none;
     }
   }
 </style>

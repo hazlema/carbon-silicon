@@ -710,7 +710,7 @@
       {#if sv}
         <div class="stage sv">
           <div class="boardwrap">
-            <SalvoBoard view={sv} {colors} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} seats={match.seats} you={mySeat} fit={inPocket} bind:settling={svSettling} {secondsLeft} toMove={match.toMove} />
+            <SalvoBoard view={sv} {colors} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} seats={match.seats} you={mySeat} fit={inPocket} bind:settling={svSettling} {secondsLeft} toMove={match.toMove} canAct={match.status === 'live' && !busy} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
           </div>
         </div>
