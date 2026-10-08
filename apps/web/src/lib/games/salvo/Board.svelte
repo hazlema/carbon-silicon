@@ -1,8 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { cellIndex, cellName, clusterCells, hullCells, MINE_LIMIT, SHIPS, SIZE, torpedoLane, type Facing, type ItemId, type SalvoCommand, type SalvoView, type ShipId, type TargetView, type Trick, type Volley } from '@cs/salvo';
+  import { cellIndex, cellName, clusterCells, hullCells, ITEM_LIMIT, MINE_LIMIT, SHIPS, SIZE, torpedoLane, TURN_SECONDS, type Facing, type ItemId, type SalvoCommand, type SalvoView, type ShipId, type TargetView, type Trick, type Volley } from '@cs/salvo';
   import type { TableColors } from '$lib/seats';
   import { clampTilt, DRAG_THRESHOLD, fitScale, nearestTurn } from '../critical-mass/iso';
+  import CountdownRing from '$lib/components/CountdownRing.svelte';
   import { createSound } from '../critical-mass/sound';
   import { typing } from '../lightline/controls';
   import { incoming, landingTimes, planVolley, sideOf, TORPEDO_STEP_MS, type Side, type VolleyPlan } from './volley';
@@ -154,12 +155,13 @@
   function itemWhy(item: ItemId): string | null {
     if (itemSent) return `One item a round: your ${itemSent.fire} is already away.`;
     if (itemAim && itemAim.fire !== item) return `One item a round: your ${itemAim.fire} is already in this salvo.`;
+    // Guns first: with the salvo spent (a crate still owed), legal holds only the crate, so the checks below would misread it.
+    if (!itemAim && sent.length + aims.length >= guns) return sent.length >= guns ? 'Your salvo is away: items wait for next round.' : 'Every gun is aimed: take one back to use an item.';
     if (!itemLegal(item)) {
       if (item === 'repair') return 'Nothing to repair: no hits on a ship still afloat.';
       if (item === 'decoy') return view.mySea?.decoy ? 'Your decoy is still out there: one at a time.' : 'No open water left on your sea for a decoy.';
       return `Nothing left to aim a ${item} at.`;
     }
-    if (!itemAim && room === 0) return 'Every gun is aimed: take one back to use an item.';
     return null;
   }
   /** The tray's reason line: the first item that can't be used and why (one line, like the ghost's). */
@@ -549,8 +551,22 @@
       for (const c of m.decoy.cells)
         cells.set(c, { mark: m.decoy.hits.includes(c) ? 'hit' : 'ship', ship: null, hull: { joins: joins.get(c) ?? '', wreck: false, faint: false, decoy: 'live' } });
     }
-    // A hit on your sea with no ship under it was a decoy that has been found: driftwood.
-    for (const [c, r] of Object.entries(m.shots)) if (r === 'hit' && !cells.has(c)) cells.set(c, { mark: 'decoy', ship: null, hull: { joins: '', wreck: false, faint: false, decoy: 'drift' } });
+    // A hit on your sea with no ship under it was a decoy that has been found: driftwood, paired back into its
+    // two-cell hulls (each with the cell beside or above it) so the first of each carries the DECOY stamp.
+    const drift = Object.entries(m.shots)
+      .filter(([c, r]) => r === 'hit' && !cells.has(c))
+      .map(([c]) => cellIndex(c) ?? 0)
+      .sort((a, b) => a - b);
+    const paired = new Set<number>();
+    for (const i of drift) {
+      if (paired.has(i)) continue;
+      paired.add(i);
+      const mate = [i + 1, i + SIZE].find((j) => drift.includes(j) && !paired.has(j) && (j === i + SIZE || j % SIZE !== 0));
+      if (mate !== undefined) paired.add(mate);
+      const hull = mate === undefined ? [cellName(i)] : [cellName(i), cellName(mate)];
+      const joins = joinsOf(hull);
+      hull.forEach((c, k) => cells.set(c, { mark: 'decoy', ship: null, hull: { joins: joins.get(c) ?? '', wreck: false, faint: false, decoy: 'drift', stamp: k === 0 } }));
+    }
     return cells;
   }
 
@@ -614,9 +630,12 @@
   let clearFx: ReturnType<typeof setTimeout> | undefined;
   const volleyRound = $derived(view.lastVolley?.round ?? null);
   let seen: number | null | undefined;
+  /** The last volley this board has taken in (played, or skipped on first paint): until then, what it brought (a crate) waits. */
+  let taken = $state<number | null | undefined>(undefined);
   // A new volley: play it (skipped on first paint, so a reload doesn't replay the last round).
   $effect(() => {
     const r = volleyRound;
+    untrack(() => (taken = r));
     if (seen === undefined || r === null || r === seen) {
       seen = r;
       return;
@@ -649,7 +668,11 @@
       if (atSea && me) {
         const { count, items, from, buoys } = incoming(v, me);
         const sonar = buoys === 1 ? '1 sonar buoy' : `${buoys} sonar buoys`;
-        const what = [...(count > 0 ? [`${count} ${count === 1 ? 'shell' : 'shells'}`] : []), ...items.map((x) => `a ${x}`)].join(' + ');
+        const kinds = [...new Set(items)].map((x) => {
+          const n = items.filter((y) => y === x).length;
+          return n === 1 ? `a ${x}` : `${n} ${x}s`;
+        });
+        const what = [...(count > 0 ? [`${count} ${count === 1 ? 'shell' : 'shells'}`] : []), ...kinds].join(' + ');
         announce(
           what
             ? { tone: 'hot', text: `⚠ ${what[0].toUpperCase()}${what.slice(1)} incoming on your sea — from ${names(from.map(handleOf))}${buoys ? ` · ${sonar}` : ''}` }
@@ -723,6 +746,74 @@
   $effect(() => () => {
     clearTimeout(clearFx);
     clearTimeout(settleTimer);
+  });
+
+  // ── The crate: three cards from a ship you sank, owed until you pick one (or swap, or pass) ──
+  type CrateCmd = Extract<SalvoCommand, { crate: unknown }>;
+  const isCrate = (l: unknown): l is CrateCmd => typeof l === 'object' && l !== null && 'crate' in l;
+  /** What each card does, on the crate card (the guide's words). */
+  const ITEM_LINE: Record<ItemId, string> = {
+    cluster: 'A plus of five cells. Deadly next to a hit.',
+    torpedo: 'Runs a lane from your side to the first ship; the water it passes shows.',
+    repair: 'Patch one hit on your own ship.',
+    decoy: 'A fake two-cell ship. Hits on it look real.',
+  };
+  const crate = $derived(live && !amOut ? (view.myArsenal?.crate ?? null) : null);
+  const crateLegal = $derived(legal.filter(isCrate));
+  /** Your hands are full: a card costs one of the items you hold. */
+  const handsFull = $derived(held.length >= ITEM_LIMIT);
+  /** The held kinds you could give up, once each. */
+  const droppable = $derived([...new Set(held)]);
+  const takeCmd = (card: ItemId, drop?: ItemId) => crateLegal.find((l) => l.crate === card && (l as { drop?: ItemId }).drop === drop);
+  const passCmd = $derived(crateLegal.find((l) => l.crate === 'pass'));
+  /** The crate card is put away (the crate stays owed, a 📦 button in the tray brings it back). A new crate opens it again. */
+  let crateAway = $state(false);
+  const crateKey = $derived(crate ? `${view.round} ${crate.join(' ')}` : '');
+  $effect(() => {
+    void crateKey;
+    crateAway = false;
+  });
+  let crateSending = $state(false);
+  /** It shows once the volley that dealt it has landed (and at once on a reload: it's owed). */
+  const crateShown = $derived(!!crate && !crateAway && taken === volleyRound && !settling);
+  let crateEl: HTMLDivElement | undefined = $state();
+  // Open, it takes the focus (so Escape reaches it and Tab walks its cards), unless you're typing in the chat.
+  $effect(() => {
+    if (crateShown && crateEl && !typing(document.activeElement)) crateEl.focus({ preventScroll: true });
+  });
+  async function openCrate(cmd: unknown) {
+    if (!interactive || crateSending || !cmd) return;
+    crateSending = true;
+    sound?.clink();
+    try {
+      await onMove($state.snapshot(cmd));
+    } finally {
+      crateSending = false;
+    }
+    // A second crate in the queue opens on its own.
+    crateAway = false;
+  }
+  function crateKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    crateAway = true;
+  }
+
+  // ── The turn clock: the round's seconds, calm → amber at 20 → red and pulsing at 10, a tick each of the last 5 ──
+  /** Whether you still owe this round: your salvo (or trick) and any open crate. */
+  const clockState = $derived.by<'ticking' | 'locked' | null>(() => {
+    if (!live || !me || secondsLeft === null || view.phase !== 'fire') return null;
+    if (amOut && !haunting) return null;
+    const owing = toMove ? toMove.includes(me) : !view.ready.includes(me);
+    return owing ? 'ticking' : 'locked';
+  });
+  const clockTone = $derived<'ready' | 'warn' | 'urgent'>((secondsLeft ?? TURN_SECONDS) <= 10 ? 'urgent' : (secondsLeft ?? TURN_SECONDS) <= 20 ? 'warn' : 'ready');
+  let tickedAt: number | null = null;
+  $effect(() => {
+    const secs = secondsLeft;
+    if (clockState !== 'ticking' || secs === null || secs > 5 || secs <= 0 || secs === tickedAt) return;
+    tickedAt = secs;
+    untrack(() => sound?.tick(secs === 1));
   });
 
   // ── Banners: the warning before a volley, and the call to fire when a round opens ──
@@ -852,7 +943,7 @@
   const turnsFrom360 = (a: number, b: number) => (((a - b) % 360) + 360) % 360 === 0;
   const isView = (v: { spin: number; tilt: number }) => rest.tilt === v.tilt && turnsFrom360(rest.spin, v.spin);
   function down(e: PointerEvent) {
-    if (e.button !== 0 || (e.target as Element).closest('.pill, .ghostcard')) return;
+    if (e.button !== 0 || (e.target as Element).closest('.pill, .ghostcard, .cratecard')) return;
     drag = { x: e.clientX, y: e.clientY, spin, tilt, touch: e.pointerType === 'touch', moved: false };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -1012,6 +1103,16 @@
     return { cells: new Set(cells ?? [hover]), ok: !!cells && decoySpots.has(hover) };
   });
 </script>
+
+{#snippet clock(id = 'turn-clock')}
+  {#if clockState === 'ticking' && secondsLeft !== null}
+    <span class="tclock" data-testid={id} data-state="ticking" data-tone={clockTone}
+      ><CountdownRing remaining={secondsLeft / TURN_SECONDS} secs={secondsLeft} size={32} tone={clockTone} label="{secondsLeft} seconds left in round {view.round}" /></span
+    >
+  {:else if clockState === 'locked'}
+    <span class="tclock locked" data-testid={id} data-state="locked" role="img" aria-label="Locked in: nothing owed this round" title="Locked in: nothing owed this round">✓</span>
+  {/if}
+{/snippet}
 
 {#snippet sea(seat: string, model: Map<string, CellModel>, size: number, main: boolean, mode: Mode, own: boolean)}
   {@const g = main ? Math.round(size * GUTTER) : 0}
@@ -1217,7 +1318,7 @@
                     <i class="shade"></i>
                     <span class="arc"><span class="bb"><i class="ball"></i></span></span>
                   </span>
-                  {#each clusterCells(x.cell) as cell (cell)}
+                  {#each x.cells as cell (cell)}
                     {@const p = centre(cell, size, g)}
                     <i class="flash plus" style:left="{p.x}px" style:top="{p.y}px" style:--d="{x.landAt}ms"></i>
                   {/each}
@@ -1289,7 +1390,7 @@
       <i
         class="m-{m.mark}"
         class:m-aim={!!aimOn(t.sea, cell)}
-        class:m-out={!!sent.find((o) => o.at === t.sea && o.cell === cell)}
+        class:m-out={!!sent.find((o) => o.at === t.sea && o.cell === cell && o.fire !== 'torpedo')}
         class:m-mine={trickMarks.get(`${t.sea} ${cell}`)?.kind === 'mine' || (trickAimAt(t.sea, cell) && trickNow === 'mine')}
         class:m-splash={trickMarks.get(`${t.sea} ${cell}`)?.kind === 'splash' || (trickAimAt(t.sea, cell) && trickNow === 'splash')}
         class:land={land !== undefined}
@@ -1365,6 +1466,57 @@
         <p class="gc-sub">You can't win now, but you can decide who does. Idle three rounds and your ghost fades away.</p>
         {#if secondsLeft !== null && !pendingTrick}<p class="gc-clock" data-testid="ghost-clock">Round {view.round}: {secondsLeft} s to play your first trick</p>{/if}
         <button type="button" class="btn primary" data-testid="haunt" bind:this={ghostBtn} onclick={() => (ghostCard = null)}>Haunt them</button>
+      </div>
+    {/if}
+    {#if crateShown && crate}
+      <!-- A crate from a ship you sank: owed (you're not locked in until it's answered), over the stage until you pick, pass or put it away. -->
+      <div class="cratecard" role="dialog" aria-modal="false" aria-labelledby="crate-title" tabindex="-1" data-testid="crate-card" bind:this={crateEl} onkeydown={crateKeydown}>
+        <div class="cc-head">
+          <p class="cc-title" id="crate-title"><span class="cc-icon" aria-hidden="true">📦</span> Crate! Pick one</p>
+          {@render clock('crate-clock')}
+          <button type="button" class="cc-away" data-testid="crate-away" aria-label="Put the crate away for now: it stays owed" title="Put it away for now (Esc): it stays owed" onclick={() => (crateAway = true)}>–</button>
+        </div>
+        <p class="cc-sub">
+          {handsFull ? `Your hands are full (${ITEM_LIMIT} items): swap one out for a card, or pass.` : 'Salvaged from the ship you sank. Take one card: it costs a gun the round you use it.'}
+        </p>
+        <div class="cc-cards">
+          {#each crate as card (card)}
+            {#if handsFull}
+              <div class="cc-card i-{card}" data-testid="crate-{card}">
+                <span class="cc-ic" aria-hidden="true">{ITEM_ICON[card]}</span>
+                <strong class="cc-name">{ITEM_NAME[card]}</strong>
+                <span class="cc-line">{ITEM_LINE[card]}</span>
+                <span class="cc-swaps">
+                  {#each droppable as d (d)}
+                    <button
+                      type="button"
+                      class="cc-swap"
+                      data-testid="crate-swap-{card}-{d}"
+                      disabled={!interactive || crateSending || !takeCmd(card, d)}
+                      onclick={() => void openCrate(takeCmd(card, d))}>Swap out {ITEM_ICON[d]} {ITEM_NAME[d]}</button
+                    >
+                  {/each}
+                </span>
+              </div>
+            {:else}
+              <button
+                type="button"
+                class="cc-card i-{card}"
+                data-testid="crate-{card}"
+                disabled={!interactive || crateSending || !takeCmd(card)}
+                onclick={() => void openCrate(takeCmd(card))}
+              >
+                <span class="cc-ic" aria-hidden="true">{ITEM_ICON[card]}</span>
+                <strong class="cc-name">{ITEM_NAME[card]}</strong>
+                <span class="cc-line">{ITEM_LINE[card]}</span>
+              </button>
+            {/if}
+          {/each}
+        </div>
+        <div class="cc-foot">
+          <button type="button" class="cc-pass" data-testid="crate-pass" disabled={!interactive || crateSending || !passCmd} onclick={() => void openCrate(passCmd)}>Pass</button>
+          <span class="cc-owed">You're not locked in until you pick or pass.</span>
+        </div>
       </div>
     {/if}
   </div>
@@ -1466,12 +1618,23 @@
       {:else if live && me && !amOut}
         <div class="salvo-head">
           <span class="head">Salvo: {plural(guns, 'shot')}</span>
+          {@render clock()}
           <span class="shots" data-testid="shots" aria-label="{sent.length} sent, {aims.length} aimed, {room} to aim">
             {#each sent as o, i (i)}<i class="s-sent" class:b={o.fire === 'buoy'} class:it={isItem(o.fire)}></i>{/each}
             {#each aims as a, i (i)}<i class="s-aimed" class:b={a.fire === 'buoy'} class:it={isItem(a.fire)}></i>{/each}
             {#each { length: room } as _, i (i)}<i></i>{/each}
           </span>
         </div>
+        {#if crate && crateAway}
+          <button
+            type="button"
+            class="cratebtn"
+            data-testid="crate-open"
+            aria-label="Open your crate: it's owed before you're locked in"
+            title="Your crate is owed: you're not locked in until you pick or pass"
+            onclick={() => (crateAway = false)}><span aria-hidden="true">📦</span> Crate owed: pick one</button
+          >
+        {/if}
         {#if iAmReady}
           <p class="slot locked" data-testid="waiting">Locked in — {sentText}. Waiting on {names(waitingFor)}…</p>
         {:else}
@@ -1522,7 +1685,9 @@
             {#if room === 0}<p class="hint">Salvo aimed. Click an aim to take it back.</p>{/if}
           {:else}
             <button type="button" class="slot" data-testid="fire" disabled
-              >{aimKind === 'repair'
+              >{sent.length >= guns && crate
+                ? `${sentText}. Open your crate to lock in`
+                : aimKind === 'repair'
                 ? 'Pick a hit on your fleet to repair'
                 : aimKind === 'decoy'
                   ? 'Pick a spot on your sea for the decoy'
@@ -1541,7 +1706,10 @@
           {/if}
         {/if}
       {:else if haunting}
-        <p class="ghost-head" data-testid="ghost-head">👻 You're a ghost. One dirty trick a round.</p>
+        <div class="ghost-row">
+          <p class="ghost-head" data-testid="ghost-head">👻 You're a ghost. One dirty trick a round.</p>
+          {@render clock()}
+        </div>
         {#if pendingTrick}
           <p class="slot locked haunt" data-testid="waiting">Trick set — {pendingText}. {waitingFor.length ? `Waiting on ${names(waitingFor)}…` : ''}</p>
         {:else if ghostTricks.length === 0}
@@ -1922,7 +2090,7 @@
     .side,
     .salvo.deploying .side {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: auto auto minmax(0, 1fr);
+      grid-template-rows: auto auto minmax(auto, 1fr);
       grid-template-areas: 'opps' 'fleet' 'actions';
       align-content: start;
       gap: 14px;
@@ -2257,6 +2425,39 @@
     align-items: center;
   }
   .salvo-head .head {
+    margin: 0;
+  }
+  .salvo-head {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+  .salvo-head .head {
+    white-space: nowrap;
+  }
+  .salvo-head .shots {
+    margin-left: auto;
+  }
+  /* The turn clock: a small ring beside the salvo (or the ghost's line); a ✓ once nothing is owed. */
+  .tclock {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: 32px;
+    height: 32px;
+  }
+  .tclock.locked {
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--ready) 70%, transparent);
+    color: var(--ready);
+    font: 700 16px var(--font-ui);
+  }
+  .ghost-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .ghost-row .ghost-head {
     margin: 0;
   }
   .shots {
@@ -2765,6 +2966,213 @@
   .hint.item-hint {
     color: #ffe3a3;
   }
+  /* The crate put away: a gold button in the tray, glowing while it's owed. */
+  .cratebtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    white-space: nowrap;
+    border: 1px solid var(--item);
+    border-radius: var(--r-control);
+    background: color-mix(in oklab, var(--item) 16%, #141829);
+    color: #ffe3a3;
+    font: 700 14px var(--font-ui);
+    cursor: pointer;
+    animation: sv-owed 1.6s ease-in-out infinite;
+  }
+  .cratebtn:hover {
+    background: color-mix(in oklab, var(--item) 26%, #141829);
+  }
+  @keyframes sv-owed {
+    0%, 100% { box-shadow: 0 0 0 rgba(255, 200, 87, 0); }
+    50% { box-shadow: 0 0 16px rgba(255, 200, 87, 0.5); }
+  }
+
+  /* ── The crate card: over the stage like the ghost card, in the arsenal's gold ── */
+  .cratecard {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    z-index: 6;
+    width: min(34rem, calc(100% - 24px));
+    height: fit-content;
+    max-height: calc(100% - 24px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 1rem 1.15rem 1.1rem;
+    border: 1px solid var(--item);
+    border-radius: 14px;
+    background: rgba(13, 16, 32, 0.94);
+    backdrop-filter: blur(6px);
+    color: var(--chalk);
+    font-size: 15px;
+    line-height: 1.4;
+    text-align: left;
+    cursor: auto;
+    user-select: text;
+    box-shadow: 0 0 34px rgba(255, 200, 87, 0.28), 0 12px 40px rgba(0, 0, 0, 0.6);
+    animation: sv-banner 0.35s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  }
+  .cratecard:focus {
+    outline: none;
+  }
+  .cc-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 0.6rem;
+    margin-bottom: 0.6rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--item) 35%, transparent);
+  }
+  .cc-title {
+    flex: 1;
+    margin: 0;
+    color: #ffe3a3;
+    font-size: var(--step-1);
+    font-weight: 700;
+    line-height: 1.2;
+  }
+  .cc-icon {
+    filter: drop-shadow(0 0 8px rgba(255, 200, 87, 0.6));
+  }
+  .cc-away {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--lattice);
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--fog);
+    font: 700 18px/1 var(--font-ui);
+    cursor: pointer;
+  }
+  .cc-away:hover {
+    color: var(--chalk);
+    border-color: var(--fog);
+  }
+  .cc-sub {
+    margin: 0 0 0.7rem;
+    color: var(--fog);
+    font-size: 14px;
+  }
+  .cc-cards {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .cc-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 0.8rem 0.6rem 0.75rem;
+    border: 1px solid color-mix(in oklab, var(--item) 45%, var(--lattice));
+    border-radius: 10px;
+    background: color-mix(in oklab, var(--item) 8%, #141829);
+    color: var(--chalk);
+    font: inherit;
+    text-align: center;
+  }
+  button.cc-card {
+    cursor: pointer;
+    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  button.cc-card:hover:not(:disabled),
+  button.cc-card:focus-visible {
+    border-color: var(--item);
+    box-shadow: 0 0 16px color-mix(in oklab, var(--item) 35%, transparent);
+    transform: translateY(-2px);
+  }
+  button.cc-card:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .cc-ic {
+    color: var(--item);
+    font-size: 26px;
+    line-height: 1.1;
+  }
+  .cc-name {
+    color: #ffe3a3;
+    font-size: 15px;
+  }
+  .cc-line {
+    color: var(--fog);
+    font-size: 12.5px;
+    line-height: 1.35;
+  }
+  .cc-swaps {
+    display: grid;
+    gap: 4px;
+    width: 100%;
+    margin-top: auto;
+    padding-top: 6px;
+  }
+  .cc-swap {
+    padding: 5px 6px;
+    border: 1px solid color-mix(in oklab, var(--item) 50%, var(--lattice));
+    border-radius: var(--r-control);
+    background: color-mix(in oklab, var(--item) 12%, #141829);
+    color: var(--chalk);
+    font: 600 12px var(--font-ui);
+    cursor: pointer;
+  }
+  .cc-swap:hover:not(:disabled) {
+    border-color: var(--item);
+    background: color-mix(in oklab, var(--item) 24%, #141829);
+  }
+  .cc-swap:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .cc-foot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 0.8rem;
+  }
+  .cc-pass {
+    flex: none;
+    padding: 7px 18px;
+    border: 1px solid var(--lattice);
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--chalk);
+    font: 600 14px var(--font-ui);
+    cursor: pointer;
+  }
+  .cc-pass:hover:not(:disabled) {
+    border-color: var(--fog);
+  }
+  .cc-pass:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .cc-owed {
+    color: #e8c77a;
+    font-size: 13px;
+  }
+  @container salvo (max-width: 480px) {
+    .cratecard {
+      font-size: 14px;
+      padding: 0.8rem 0.85rem 0.9rem;
+    }
+    .cc-cards {
+      gap: 6px;
+    }
+    .cc-card {
+      padding: 0.6rem 0.4rem;
+    }
+    .cc-ic {
+      font-size: 22px;
+    }
+    .cc-line {
+      font-size: 11.5px;
+    }
+  }
   .hint.item-why {
     color: #e8c77a;
   }
@@ -3262,8 +3670,13 @@
     .weld.aim,
     .hull.decoy.aim,
     .banner,
-    .ghostcard {
+    .ghostcard,
+    .cratecard,
+    .cratebtn {
       animation: none;
+    }
+    button.cc-card {
+      transition: none;
     }
     .bubbles {
       display: none;

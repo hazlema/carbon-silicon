@@ -1,15 +1,23 @@
 <script lang="ts">
-  import { arcPath, ringColor, ringTone } from '$lib/invite-ring';
+  import { arcPath, ringTone, toneColor, type RingTone } from '$lib/invite-ring';
 
   // `remaining` is the fraction of the invite's life left (1 = just arrived, 0 = expiring).
   // The sweep draws the elapsed part, so it fills clockwise from the top as time runs out.
-  let { remaining, secs, size = 84 }: { remaining: number; secs: number; size?: number } = $props();
+  // `tone` overrides the fraction's tone, for a clock whose warnings come at fixed seconds; `label` its spoken name.
+  let {
+    remaining,
+    secs,
+    size = 84,
+    tone: toneIn,
+    label,
+  }: { remaining: number; secs: number; size?: number; tone?: RingTone; label?: string } = $props();
 
   const R = 44;
   const elapsed = $derived(1 - Math.max(0, Math.min(1, remaining)));
   const d = $derived(arcPath(elapsed, 50, 50, R));
-  const color = $derived(ringColor(remaining));
-  const urgent = $derived(ringTone(remaining) === 'urgent');
+  const tone = $derived(toneIn ?? ringTone(remaining));
+  const color = $derived(toneColor[tone]);
+  const urgent = $derived(tone === 'urgent');
 </script>
 
 <div
@@ -19,7 +27,7 @@
   style:height="{size}px"
   style:--num-size="{Math.round(size * 0.34)}px"
   role="timer"
-  aria-label="{secs} seconds left to answer"
+  aria-label={label ?? `${secs} seconds left to answer`}
 >
   <svg viewBox="0 0 100 100" aria-hidden="true">
     <circle class="track" cx="50" cy="50" r={R} />

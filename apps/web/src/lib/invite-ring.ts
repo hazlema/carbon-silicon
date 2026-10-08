@@ -38,7 +38,7 @@ export function ringTone(remaining: number): RingTone {
   return 'urgent';
 }
 
-const toneColor: Record<RingTone, string> = {
+export const toneColor: Record<RingTone, string> = {
   ready: 'var(--ready)',
   warn: 'var(--afk)',
   urgent: 'var(--danger)',

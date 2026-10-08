@@ -108,6 +108,23 @@ export function createSound(key = 'cm_sound', makeContext: () => AudioContext = 
     osc.start(t);
     osc.stop(t + 0.25);
   }
+  /** A clock tick: a dry, quiet wood-block click (a short sine dropping an octave). `high` for the last second. */
+  function tick(high = false, delay = 0) {
+    const a = audio();
+    if (!a) return;
+    const t = a.currentTime + delay;
+    const osc = a.createOscillator();
+    const gain = a.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(high ? 1760 : 1320, t);
+    osc.frequency.exponentialRampToValueAtTime(high ? 880 : 660, t + 0.04);
+    gain.gain.setValueAtTime(0.09, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    osc.connect(gain);
+    gain.connect(out(a));
+    osc.start(t);
+    osc.stop(t + 0.06);
+  }
   return {
     get enabled() {
       return enabled;
@@ -129,6 +146,7 @@ export function createSound(key = 'cm_sound', makeContext: () => AudioContext = 
     clink,
     pop,
     thud,
+    tick,
     close() {
       void ctx?.close();
     },
