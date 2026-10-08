@@ -504,12 +504,14 @@ export class GameManager {
       throw conflict('STALE_REVISION', `The match is at revision ${m.revision}; you sent ${JSON.stringify(revision)}. Fetch it and try again.`);
     }
     if (!turn) throw badRequest('NOT_TURN_BASED', 'This game uses doctrine, not moves.');
-    // A seat that owes nothing may still send what the game allows it (mayAct), e.g. a bid.
+    // A seat that owes nothing may still send what the game allows it (mayAct), e.g. a bid; only an
+    // optional command, though (TurnRules.optional): a late owed-kind move gets the same 409 as ever.
+    const notYourTurn = () => conflict('NOT_YOUR_TURN', turn.simultaneous ? `${seat} owes nothing more this round.` : `It is not ${seat}'s turn.`);
     const owes = turn.toMove(m.state).includes(seat);
-    if (!owes && !this.mayAct(m, seat)) {
-      throw conflict('NOT_YOUR_TURN', turn.simultaneous ? `${seat} owes nothing more this round.` : `It is not ${seat}'s turn.`);
-    }
+    if (!owes && !this.mayAct(m, seat)) throw notYourTurn();
     const before = m.state;
+    const optional = this.isOptional(m, before, command);
+    if (!owes && turn.optional && !optional) throw notYourTurn();
     let next: unknown;
     try {
       next = turn.apply(before, seat, command);
@@ -517,9 +519,13 @@ export class GameManager {
       if (e instanceof GameRuleError) throw new AppError(400, e.code, e.message);
       throw e;
     }
+    // A move that changes nothing (the game hands back the same state, e.g. a bid already standing) is
+    // accepted but never advances the match: no revision, no wake-up for the long-pollers.
+    if (next === before) return this.envelope(matchId, identity.id);
     // Logged before advancing: the envelope advance publishes must already carry it.
     if (owes) {
-      m.timeouts[seat] = 0;
+      // An optional command isn't the move owed: it neither clears the seat's misses nor buys it a fresh deadline.
+      if (!optional) m.timeouts[seat] = 0;
       this.logMove(m, before, next, seat, command, '');
     } else if (turn.simultaneous) {
       // An optional move in a simultaneous round is as secret as any commit (and the seat is already ready).
@@ -527,8 +533,18 @@ export class GameManager {
     } else {
       this.logMove(m, before, next, seat, command, '');
     }
-    await this.advance(m, next, owes ? {} : { keepTurn: true });
+    await this.advance(m, next, owes && !optional ? {} : { keepTurn: true });
     return this.envelope(matchId, identity.id);
+  }
+
+  /** TurnRules.optional for a command, never throwing (false when the game has no such hook). */
+  private isOptional(m: LiveMatch, state: unknown, command: unknown): boolean {
+    try {
+      return !!m.module.turn?.optional?.(state, command);
+    } catch (e) {
+      console.error(`[games] optional() in ${m.id} failed`, e);
+      return false;
+    }
   }
 
   async resign(matchId: string, identity: IdentityPublic): Promise<MatchEnvelope> {

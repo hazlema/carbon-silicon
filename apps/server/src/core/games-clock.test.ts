@@ -20,7 +20,7 @@ afterAll(() => database.close());
  * A test-only simultaneous game with an alarm: every round each seat picks a number; three rounds,
  * then the highest total wins. The first `clock` after a move stamps the time and sets an alarm
  * ALARM_MS later; the first `clock` at or after it rings it. Until it rings, a seat that owes
- * nothing may still bet (`mayAct`).
+ * nothing may still bet (`mayAct`). The same bet twice hands back the same state object.
  */
 type Alarm = {
   seats: SeatId[];
@@ -63,6 +63,7 @@ function alarmGame(calls: number[], opts: { hooks?: boolean; optional?: boolean;
         const next = structuredClone(s);
         if (typeof c.bet === 'number') {
           if (s.rang) throw new GameRuleError('RUNG', 'The alarm has rung.');
+          if (s.bets[seat] === c.bet) return s; // the same bet again changes nothing: the very same state
           next.bets[seat] = c.bet;
           return next;
         }
@@ -377,5 +378,45 @@ describe('optional commands (TurnRules.optional)', () => {
     ctx.clock.advance(60_000);
     await settle();
     expect(Object.keys(view(ctx).bets).length).toBeGreaterThan(0);
+  });
+});
+
+describe('optional moves: engine guards', () => {
+  test('a move whose apply hands back the same state is accepted but never advances the match', async () => {
+    const ctx = await setup(alarmGame([]));
+    await send(ctx, ctx.north, { pick: 1 });
+    await send(ctx, ctx.north, { bet: 3 });
+    const before = rev(ctx);
+    const lines = recent(ctx).length;
+    const env = await send(ctx, ctx.north, { bet: 3 });
+    expect(env.match.revision).toBe(before);
+    expect(rev(ctx)).toBe(before);
+    expect(recent(ctx)).toHaveLength(lines);
+    // A change still lands as ever.
+    await send(ctx, ctx.north, { bet: 4 });
+    expect(rev(ctx)).toBeGreaterThan(before);
+    expect(view(ctx).bets).toEqual({ north: 4 });
+  });
+
+  test('a seat that owes nothing but may act is refused a non-optional move with 409 NOT_YOUR_TURN', async () => {
+    const ctx = await setup(alarmGame([], { optional: true }));
+    await send(ctx, ctx.north, { pick: 1 });
+    const e = await errorOf(send(ctx, ctx.north, { pick: 1 }));
+    expect(e.code).toBe('NOT_YOUR_TURN');
+    expect(e.status).toBe(409);
+    await send(ctx, ctx.north, { bet: 2 }); // its optional commands still go through
+    expect(view(ctx).bets).toEqual({ north: 2 });
+  });
+
+  test("a turn-based mover's optional command doesn't refresh its deadline", async () => {
+    const ctx = await setup(alarmGame([], { optional: true, turnBased: true }));
+    const deadline = ctx.games.summary(ctx.id).deadline;
+    ctx.clock.advance(10_000);
+    await send(ctx, ctx.north, { bet: 5 });
+    expect(view(ctx).bets).toEqual({ north: 5 });
+    expect(ctx.games.summary(ctx.id).deadline).toBe(deadline);
+    // The owed move does start a fresh turn.
+    await send(ctx, ctx.north, { pick: 1 });
+    expect(ctx.games.summary(ctx.id).deadline).not.toBe(deadline);
   });
 });
