@@ -88,7 +88,16 @@ describe('tableContext', () => {
     const seats = [seat('north', 'Frosty', 'human'), seat('east', 'Fable', 'agent'), seat('south', 'OLD_IRON', 'agent'), seat('west', 'Sprocket', 'agent')];
     const view = {
       round: 4,
-      mySea: { ships: [], port: [], shots: { a1: 'hit', a2: 'miss', b3: 'hit' } },
+      // g8 is a hit on my live decoy: it costs my fleet nothing.
+      mySea: {
+        ships: [
+          { id: 'cruiser', cells: ['a1', 'b1', 'c1', 'd1'], hits: ['a1'] },
+          { id: 'destroyer', cells: ['a3', 'a4', 'a5'], hits: ['a3'] },
+        ],
+        port: [],
+        shots: { a1: 'hit', a2: 'miss', a3: 'hit', g8: 'hit' },
+        decoy: { cells: ['g8', 'h8'], hits: ['g8'] },
+      },
       targets: [
         { sea: 'north', afloat: 12 },
         { sea: 'east', afloat: 7 },

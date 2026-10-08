@@ -102,9 +102,10 @@ function standingOf(env: MatchEnvelope): string | null {
     case 'lightline':
       return standingLine(seats.map((s) => entry(s, v.score?.[s.seat] ?? 0)), ROUNDS);
     case 'salvo': {
-      // Ship cells still unhit: other seas from their public `afloat`, my own from my fleet's shots.
+      // Ship cells still unhit: other seas from their public `afloat`, my own from my real ships (a hit on my
+      // decoy is a 'hit' in my sea's shots, but costs my fleet nothing; a ship still in port has no hits).
       const afloat = (seat: string): number => {
-        if (seat === env.you && v.mySea) return FLEET_CELLS - Object.values(v.mySea.shots ?? {}).filter((r) => r === 'hit').length;
+        if (seat === env.you && v.mySea) return FLEET_CELLS - ((v.mySea.ships ?? []) as { hits: string[] }[]).reduce((n, x) => n + x.hits.length, 0);
         return ((v.targets ?? []) as { sea: string; afloat: number }[]).find((t) => t.sea === seat)?.afloat ?? FLEET_CELLS;
       };
       const out = (v.eliminated ?? []) as string[];

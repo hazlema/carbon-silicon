@@ -89,6 +89,8 @@ const BANK: Record<MomentKind, keyof Personality['lines'] | null> = {
   ghost: 'ghost',
   trick: 'trick',
   backfire: 'backfire',
+  crate: 'crate',
+  fooled: 'fooled',
   ambient: 'ambient',
   unanswered: 'unanswered',
   busy: 'busy',
@@ -374,14 +376,15 @@ async function playMatch(
         if (big && view.lastMove.seat !== env.you && Math.random() < 0.5) chatter('gotHit');
       }
       // Salvo: once per volley, a word when I sank someone's ship or someone landed a shell on mine,
-      // and as a ghost: rising from the deep, a trick landing, a mine backfiring. A sunk fleet keeps
+      // a crate pulled from a wreck, my decoy taking a shell, and as a ghost: rising from the deep, a
+      // trick landing, a mine backfiring. A sunk fleet keeps
       // playing (its tricks), since the loop moves whenever toMove includes it.
       const volley = env.match.gameId === 'salvo' ? (env.view as SalvoView).lastVolley : null;
       if (volley && volley.round !== lastSeenVolley) {
         lastSeenVolley = volley.round;
         const moment = volleyMoment(env.view as SalvoView);
         // The ghost moments are rare and the heart of the show: the Foreman's rule, never ration table talk.
-        if ((moment === 'ghost' || moment === 'trick' || moment === 'backfire') && Math.random() < 0.9) chatter(moment);
+        if ((moment === 'ghost' || moment === 'trick' || moment === 'backfire' || moment === 'crate' || moment === 'fooled') && Math.random() < 0.9) chatter(moment);
         if (moment === 'bigCascade' && Math.random() < 0.6) chatter('bigCascade');
         if (moment === 'gotHit' && Math.random() < 0.5) chatter('gotHit');
       }

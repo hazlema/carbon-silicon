@@ -4,7 +4,7 @@ import type { LlmConnection } from './llm-settings';
 import type { TableContext } from './table-context';
 
 /** What just happened that a bot might want to say something about. */
-export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ghost' | 'trick' | 'backfire' | 'ambient' | 'unanswered' | 'busy' | 'dm';
+export type MomentKind = 'mention' | 'tableTalk' | 'hello' | 'win' | 'lose' | 'draw' | 'bigCascade' | 'gotHit' | 'ghost' | 'trick' | 'backfire' | 'crate' | 'fooled' | 'ambient' | 'unanswered' | 'busy' | 'dm';
 
 export interface ChatLine {
   author: string;
@@ -112,6 +112,10 @@ export function describeMoment(m: Moment): string {
       return 'Your dirty trick as a ghost just landed on the living. Gloat from beyond the grave. One line.';
     case 'backfire':
       return 'Your ghost mine just backfired: it sank a ship for the very player you meant to hurt. Save face, in character. One line.';
+    case 'crate':
+      return 'You just pulled a crate from the wreck of a ship you sank. Crow about it. One line.';
+    case 'fooled':
+      return "Someone just shot your decoy and thinks they hit a ship. Gloat (without saying it's a decoy until it's revealed). One line.";
     case 'ambient':
       return `The lobby has been quiet; say something to liven it up: grumble, reminisce, or dare someone to play you.`;
     case 'dm':

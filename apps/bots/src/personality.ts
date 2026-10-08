@@ -30,6 +30,9 @@ export interface Personality {
     ghost?: string[];
     trick?: string[];
     backfire?: string[];
+    /** Salvo: pulling a crate from a wreck I sank / someone shooting my decoy for a ship. */
+    crate?: string[];
+    fooled?: string[];
     mentioned: string[];
     /** Unprompted lobby chatter; only bots with a voice ever use it. May be empty. */
     ambient: string[];

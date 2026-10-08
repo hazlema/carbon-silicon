@@ -1,4 +1,4 @@
-import { FLEET_CELLS, SHIPS, SIZE, buoyCells, cellIndex, cellName, hullCells, neighbours, type SalvoCommand, type SalvoView, type TargetView } from '@cs/salvo';
+import { FLEET_CELLS, ITEMS, SHIPS, SIZE, buoyCells, cellIndex, cellName, clusterCells, hullCells, neighbours, torpedoLane, type ItemId, type SalvoCommand, type SalvoView, type TargetView } from '@cs/salvo';
 
 export type SalvoStrength = 'easy' | 'medium' | 'hard';
 /**
@@ -388,6 +388,159 @@ export function chooseGhostTrick(view: SalvoView, legal: SalvoCommand[], opts: S
   return pick(good, opts.rng).m;
 }
 
+// ── The Arsenal: crates and items ──
+
+type CrateCmd = Extract<SalvoCommand, { crate: unknown }>;
+type ClusterCmd = Extract<SalvoCommand, { fire: 'cluster' }>;
+type TorpedoCmd = Extract<SalvoCommand, { fire: 'torpedo' }>;
+type RepairCmd = Extract<SalvoCommand, { use: 'repair' }>;
+type DecoyCmd = Extract<SalvoCommand, { use: 'decoy' }>;
+const isCrate = (c: SalvoCommand): c is CrateCmd => 'crate' in c;
+const isCluster = (c: SalvoCommand): c is ClusterCmd => 'fire' in c && c.fire === 'cluster';
+const isTorpedo = (c: SalvoCommand): c is TorpedoCmd => 'fire' in c && c.fire === 'torpedo';
+const isRepair = (c: SalvoCommand): c is RepairCmd => 'use' in c && c.use === 'repair';
+const isDecoy = (c: SalvoCommand): c is DecoyCmd => 'use' in c && c.use === 'decoy';
+
+/** Each style's crate preference, best first: GAME_OVER wants firepower, OLD IRON wants to stay afloat. Sprocket shuffles. */
+const PREFERENCE: Record<SalvoStyle, readonly ItemId[] | null> = {
+  finisher: ['cluster', 'torpedo', 'decoy', 'repair'],
+  grudge: ['repair', 'decoy', 'cluster', 'torpedo'],
+  wanderer: null,
+};
+const NO_STYLE: readonly ItemId[] = ['cluster', 'torpedo', 'repair', 'decoy'];
+/** A decoy is laid in rounds 1 to this; held after round DECOY_STALE it is dead weight. */
+const DECOY_UNTIL = 4;
+const DECOY_STALE = 6;
+/** A cluster goes up only when its plus is worth at least this many of the best single shell. */
+const CLUSTER_EDGE = 1.5;
+
+/** Ships of mine still afloat that have taken a hit. */
+const damaged = (view: SalvoView) => (view.mySea?.ships ?? []).filter((x) => x.cells.length > 0 && x.hits.length > 0 && x.hits.length < x.cells.length);
+
+/** An item with no use now: a repair with no hit on a ship still afloat; a decoy after round DECOY_STALE. */
+function idle(view: SalvoView, item: ItemId): boolean {
+  if (item === 'repair') return damaged(view).length === 0;
+  if (item === 'decoy') return view.round > DECOY_STALE;
+  return false;
+}
+
+/**
+ * Opens the crate in character: the best card by the style's preference (Sprocket's is shuffled each time), an
+ * item with no use now ranked behind every useful one. With two held, it swaps out the least useful held item
+ * for the best card, or passes when every held item outranks the cards. Always an entry of `legal`.
+ */
+export function chooseCrate(view: SalvoView, legal: SalvoCommand[], opts: SalvoStrategyOptions): SalvoCommand {
+  const offers = legal.filter(isCrate);
+  if (offers.length === 0) return pick(legal, opts.rng);
+  const pass = offers.find((c) => c.crate === 'pass');
+  const cards = [...new Set(offers.flatMap((c) => (c.crate === 'pass' ? [] : [c.crate])))];
+  if (cards.length === 0) return pass ?? offers[0];
+  const order = (opts.style && PREFERENCE[opts.style]) ?? (opts.style === 'wanderer' ? shuffled(ITEMS, opts.rng) : NO_STYLE);
+  const rank = (item: ItemId) => (idle(view, item) ? ITEMS.length : 0) + order.indexOf(item);
+  const best = cards.reduce((a, b) => (rank(b) < rank(a) ? b : a));
+  const drops = [...new Set(offers.flatMap((c) => (c.crate !== 'pass' && c.drop ? [c.drop] : [])))];
+  if (drops.length === 0) return offers.find((c) => c.crate === best && !('drop' in c && c.drop)) ?? pass ?? offers[0];
+  const worst = drops.reduce((a, b) => (rank(b) > rank(a) ? b : a));
+  if (rank(best) < rank(worst)) return offers.find((c) => c.crate === best && 'drop' in c && c.drop === worst)!;
+  return pass ?? offers[0];
+}
+function shuffled<T>(xs: readonly T[], rng: () => number): T[] {
+  const out = [...xs];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/** Shells that would land under this round's queued cluster are wasted: leave them out. */
+function notUnderCluster(view: SalvoView): (c: SalvoCommand) => boolean {
+  const under = new Set((view.myOrders ?? []).filter((o) => o.fire === 'cluster').flatMap((o) => clusterCells(o.cell).map((c) => `${o.at} ${c}`)));
+  return (c) => !(isShell(c) && under.has(`${c.at} ${c.cell}`));
+}
+
+const manhattan = (a: string, b: string) => {
+  const i = cellIndex(a)!;
+  const j = cellIndex(b)!;
+  return Math.abs((i % SIZE) - (j % SIZE)) + Math.abs(Math.floor(i / SIZE) - Math.floor(j / SIZE));
+};
+
+/**
+ * The round's one item, as the salvo's first order (null for none): repair the hit cell of a ship one hit from
+ * sinking; a cluster centred where its plus adds up the most chance, when that beats the best single shell
+ * CLUSTER_EDGE times over; a decoy in rounds 1–DECOY_UNTIL as far from my ships as it lies; a torpedo, when
+ * nothing is being chased, down the lane with the most chance on any living sea.
+ */
+function chooseItem(view: SalvoView, legal: SalvoCommand[], seas: Map<string, Fire[]>, weight: (sea: string) => number, rng: () => number): SalvoCommand | null {
+  if ((view.myOrders ?? []).length > 0 || !view.you) return null;
+  const repairs = legal.filter(isRepair);
+  const clusters = legal.filter(isCluster);
+  const decoys = legal.filter(isDecoy);
+  const torpedoes = legal.filter(isTorpedo);
+  if (repairs.length + clusters.length + decoys.length + torpedoes.length === 0) return null;
+  for (const ship of damaged(view).filter((x) => x.cells.length - x.hits.length === 1)) {
+    const weld = repairs.find((r) => ship.hits.includes(r.cell));
+    if (weld) return weld;
+  }
+  const odds = new Map(view.targets.filter((t) => !t.out).map((t) => [t.sea, chances(t)]));
+  const worth = (sea: string, cells: string[]) => cells.reduce((n, c) => n + (odds.get(sea)?.get(c) ?? 0), 0) * weight(sea);
+  if (clusters.length > 0) {
+    const single = Math.max(0, ...ranked(view, seas, weight).map((x) => x.p));
+    const scored = clusters.map((c) => ({ c, v: worth(c.at, clusterCells(c.cell)) }));
+    const top = scored.reduce((a, b) => (b.v > a.v ? b : a));
+    if (top.v > 0 && top.v >= CLUSTER_EDGE * single) return top.c;
+  }
+  if (decoys.length > 0 && view.round <= DECOY_UNTIL && view.mySea) {
+    const mine = view.mySea.ships.flatMap((x) => x.cells);
+    const far = (d: DecoyCmd) => Math.min(...hullCells(d.at, 2, d.facing)!.flatMap((c) => mine.map((m) => manhattan(c, m))));
+    const scored = decoys.map((d) => ({ d, v: far(d) }));
+    const top = Math.max(...scored.map((x) => x.v));
+    return pick(scored.filter((x) => x.v === top), rng).d;
+  }
+  if (torpedoes.length > 0 && !chasing(view, seas)) {
+    const scored = torpedoes.map((t) => ({ t, v: worth(t.at, torpedoLane(view.you!, t.lane) ?? []) }));
+    const top = scored.reduce((a, b) => (b.v > a.v ? b : a));
+    if (top.v > 0) return top.t;
+  }
+  return null;
+}
+
+/**
+ * Hard's doubt: two hits side by side on a fleet still afloat, both ends of their line misses (or sunk, or off
+ * the sea), and still no sinking. No submarine takes two hits and floats: one of them is a decoy, a false splash, or
+ * two ships side by side. Before more shells, a buoy over the pair (one I haven't heard from yet) counts what is real.
+ */
+function doubtBuoy(view: SalvoView, buoys: Map<string, Buoy[]>): Buoy | null {
+  for (const t of view.targets) {
+    const drops = buoys.get(t.sea);
+    if (!drops || drops.length === 0) continue;
+    const open = openHits(t);
+    // An end is closed by a miss, a sunk ship, or the edge of the sea; a hit there would make the pair part of a longer line.
+    const walls = new Set([...t.misses, ...t.sunk.flatMap((x) => x.cells)]);
+    const closed = (i: number | null) => i === null || walls.has(cellName(i));
+    for (const a of open) {
+      for (const b of open) {
+        const ia = cellIndex(a)!;
+        const ib = cellIndex(b)!;
+        const across = ib - ia === 1 && Math.floor(ia / SIZE) === Math.floor(ib / SIZE);
+        const down = ib - ia === SIZE;
+        if (!across && !down) continue;
+        const step = ib - ia;
+        const before = across ? (ia % SIZE === 0 ? null : ia - step) : ia - step >= 0 ? ia - step : null;
+        const after = across ? (ib % SIZE === SIZE - 1 ? null : ib + step) : ib + step < SIZE * SIZE ? ib + step : null;
+        if (!closed(before) || !closed(after)) continue;
+        if ((t.sonar ?? []).some((x) => x.cells.includes(a) && x.cells.includes(b))) continue;
+        const over = drops.filter((d) => {
+          const cells = buoyCells(d.cell);
+          return cells.includes(a) && cells.includes(b);
+        });
+        if (over.length > 0) return over.find((d) => d.cell === a || d.cell === b) ?? over[0];
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Picks one entry of `legal`, from the view alone: one shot of this round's salvo (it is asked once
  * per gun; `view.myOrders` says what is already in). Deployment is always at random.
@@ -398,8 +551,14 @@ export function chooseSalvoMove(view: SalvoView, legal: SalvoCommand[], opts: Sa
   if (random) return random;
   // A sunk fleet stays at the table as a ghost: its legal is tricks.
   if (legal.some((c) => 'trick' in c)) return chooseGhostTrick(view, legal, opts);
-  const seas = bySea(legal, isShell);
-  if (seas.size === 0) return pick(legal, opts.rng);
+  // An open crate is owed before the round can close: pick (or pass) first, so the item can fire this round.
+  if (legal.some(isCrate)) return chooseCrate(view, legal, opts);
+  const seas = bySea(legal.filter(notUnderCluster(view)), isShell);
+  if (seas.size === 0) {
+    const shells = bySea(legal, isShell);
+    if (shells.size === 0) return pick(legal, opts.rng);
+    shells.forEach((v, k) => seas.set(k, v));
+  }
   const buoys = bySea(legal, isBuoy);
   const salvo = salvoOf(view);
   // Belt and braces: one buoy a round, whatever legal offers.
@@ -407,6 +566,12 @@ export function chooseSalvoMove(view: SalvoView, legal: SalvoCommand[], opts: Sa
   const weight = seaWeights(view, opts.style);
   let choice: Order;
   try {
+    const item = chooseItem(view, legal, seas, weight, opts.rng);
+    if (item) return item;
+    if (opts.strength === 'hard') {
+      const doubt = doubtBuoy(view, buoys);
+      if (doubt) return doubt;
+    }
     choice =
       opts.strength === 'hard'
         ? hard(view, seas, buoys, salvo, opts.rng, weight)
@@ -421,12 +586,17 @@ export function chooseSalvoMove(view: SalvoView, legal: SalvoCommand[], opts: Sa
   return legal.find((c) => 'fire' in c && c.fire === choice.fire && c.at === choice.at && c.cell === choice.cell) ?? pick(legal, opts.rng);
 }
 
+/** A moment at the table from the last volley, the strongest first (see volleyMoment). */
+export type VolleyMoment = 'ghost' | 'backfire' | 'trick' | 'crate' | 'fooled' | 'bigCascade' | 'gotHit';
+
 /**
  * What the last volley means to me at the table, the strongest first: my own fleet just sank and I
  * stay on as a ghost; my mine backfired (sank a ship for the shooter); my trick landed (a mine that
- * came back as a hit, or my false splash being told); I sank someone's ship; someone hit mine.
+ * came back as a hit, or my false splash being told); I sank a ship and pull a crate from the wreck
+ * (the match goes on and I'm still afloat); someone shot my decoy; I sank someone's ship (in the
+ * volley that ends the match: no crate then); someone hit mine.
  */
-export function volleyMoment(view: SalvoView): 'ghost' | 'backfire' | 'trick' | 'bigCascade' | 'gotHit' | null {
+export function volleyMoment(view: SalvoView): VolleyMoment | null {
   const v = view.lastVolley;
   if (!v || !view.you) return null;
   const me = view.you;
@@ -434,7 +604,25 @@ export function volleyMoment(view: SalvoView): 'ghost' | 'backfire' | 'trick' | 
   if (v.eliminated.includes(me) && view.phase !== 'over') return 'ghost';
   if (tricks.some((t) => t.kind === 'mine' && t.ghost === me && t.result === 'backfire')) return 'backfire';
   if (tricks.some((t) => t.ghost === me && (t.kind === 'splash' || (t.result === 'boomerang' && t.hits.length > 0)))) return 'trick';
-  if (v.sunk.some((x) => x.by.includes(me) && x.sea !== me)) return 'bigCascade';
+  const sank = v.sunk.some((x) => x.by.includes(me) && x.sea !== me);
+  if (sank && view.phase !== 'over' && !view.eliminated.includes(me)) return 'crate';
+  if (decoyHitIn(view)) return 'fooled';
+  if (sank) return 'bigCascade';
   if (whoHitMe(view).length > 0) return 'gotHit';
   return null;
+}
+
+/** Did a shot of the last volley land on my decoy (still live, or revealed by it)? */
+function decoyHitIn(view: SalvoView): boolean {
+  const v = view.lastVolley!;
+  const me = view.you!;
+  if ((v.items ?? []).some((x) => x.item === 'decoy' && x.sea === me)) return true;
+  const decoy = new Set(view.mySea?.decoy?.cells ?? []);
+  if (decoy.size === 0) return false;
+  const landed = [
+    ...v.shells.filter((x) => x.sea === me && x.result !== 'miss').map((x) => x.cell),
+    ...v.blasts.filter((x) => x.sea === me).flatMap((x) => x.hits),
+    ...(v.items ?? []).flatMap((x) => (x.item === 'cluster' && x.sea === me ? x.hits : x.item === 'torpedo' && x.sea === me && x.struck ? [x.struck] : [])),
+  ];
+  return landed.some((c) => decoy.has(c));
 }

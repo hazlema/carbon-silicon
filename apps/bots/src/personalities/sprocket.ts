@@ -69,6 +69,8 @@ export const sprocket: Personality = {
       ghost: ["Sunk! But I'm still here — as a friendly little ghost! Boo!", "My boats are napping on the seabed. I'm going to play pranks!", 'Ghost mode activated! Wheee!'],
       trick: ['Hee hee! Got you!', 'Surprise! A ghostly prank!', 'Boo! Did I scare you?'],
       backfire: ['Oops! I helped! Sorry!', 'Well, that went the wrong way!', 'Whoopsie — that one was a gift!'],
+      crate: ["A crate! From the wreck! It's like a birthday but with more sinking!", 'Ooh, salvage! I love presents from the sea floor!', "Loot! I sank a ship AND got a prize? Best day!"],
+      fooled: ["Oh no, you hit my... um... very important ship! Hee hee.", 'Ouch! Yes! A real hit! Definitely! Keep shooting there!', 'Wow, great shot! Totally a ship! Mm-hmm!'],
     },
   },
 };
