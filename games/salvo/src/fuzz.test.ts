@@ -133,7 +133,7 @@ function assertNoLeaks(s: SalvoState, step: number): void {
     const { ascii, ...rest } = v;
     const where = `round ${s.round}, ${seat ?? 'spectator'}`;
     // A viewer's own queued shots are in myOrders, exactly; nobody else's, and a spectator's is empty.
-    const own = seat !== null && s.phase === 'fire' ? s.pending[seat].map((x) => ({ fire: x.kind, at: x.sea, cell: x.cell })) : [];
+    const own = seat !== null && s.phase === 'fire' ? s.pending[seat].map((x) => ({ fire: x.kind, at: x.sea, cell: x.cell, ...(x.lane !== undefined ? { lane: x.lane } : {}) })) : [];
     check(JSON.stringify(v.myOrders) === JSON.stringify(own), `${where}: myOrders is not my own pending`);
     // Apart from myOrders (and the ascii line that recites it), the view is the same without anything it may not know.
     if (seat === witness) {
@@ -244,7 +244,8 @@ function assertSummarySafe(before: SalvoState, after: SalvoState): void {
   }
   const v = after.lastVolley;
   const told = v ? v.tricks.flatMap((t) => [t.cell, ...(t.kind === 'mine' && t.result === 'boomerang' ? t.hits.map((h) => h.cell) : [])]) : [];
-  const landed = new Set(v ? [...v.shells.map((x) => x.cell), ...v.buoys.map((x) => x.cell), ...v.blasts.flatMap((b) => b.cells), ...told] : []);
+  const used = v ? (v.items ?? []).flatMap((x) => (x.item === 'cluster' ? [x.cell, ...x.cells] : x.item === 'torpedo' ? x.path : [])) : [];
+  const landed = new Set(v ? [...v.shells.map((x) => x.cell), ...v.buoys.map((x) => x.cell), ...v.blasts.flatMap((b) => b.cells), ...told, ...used] : []);
   const sunk = new Set<string>(v ? v.sunk.map((x) => x.ship) : []);
   for (const line of lines) {
     for (const cell of line.match(CELL) ?? []) check(landed.has(cell), `summary names ${cell}: ${line}`);
@@ -373,7 +374,8 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
         checkGhostTurn(s, seat, legal, rng, g, tally);
         tally.ghostMoves += 1;
       } else {
-        if (s.phase === 'fire') check(legal.length <= 192 + 108 + 7, `game ${g}: legal is ${legal.length} long`);
+        // Shells, buoys and crate choices, then a held cluster (a centre per cell) and a held torpedo (a lane per sea).
+        if (s.phase === 'fire') check(legal.length <= 192 + 108 + 7 + 192 + 24, `game ${g}: legal is ${legal.length} long`);
         // legal × apply: a few other entries apply cleanly too, and a spent cell is refused.
         turn.apply(s, seat, rng.pick(legal));
       }
@@ -529,7 +531,8 @@ describe('fuzz', () => {
       // a and b share a cell (Time on Target); c finishes the ship; each salvo is then filled out by the player
       const legalB = turn.legal(s, b) as SalvoCommand[];
       const shared = (turn.legal(s, a) as SalvoCommand[]).find(
-        (x) => 'fire' in x && x.fire === 'shell' && legalB.some((y) => 'fire' in y && y.fire === 'shell' && y.at === x.at && y.cell === x.cell),
+        (x): x is Extract<SalvoCommand, { fire: 'shell' }> =>
+          'fire' in x && x.fire === 'shell' && legalB.some((y) => 'fire' in y && y.fire === 'shell' && y.at === x.at && y.cell === x.cell),
       );
       // An older mine on the Time on Target cell, so two shooters set one off at once.
       const ghost = spooks[0];

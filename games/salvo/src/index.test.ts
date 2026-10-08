@@ -1496,6 +1496,23 @@ describe('crates', () => {
     expect(s.crates.south).toHaveLength(1);
     expect(s.crates.west).toEqual([]);
   });
+  test("a ghost's boomerang that sinks a ship earns the ghost no crate", () => {
+    let s = withGhost();
+    preHit(s, 'north', ['a7'], 'east');
+    s = trick(s, 'west', { trick: 'mine', at: 'east', cell: 'b8' }); // open water on east; north's nearest unhit ship cell is b7
+    const before = s;
+    s = volley(s, { north: ['east', 'b8'] });
+    expect(tricksIn(s)).toEqual([{ kind: 'mine', ghost: 'west', sea: 'east', cell: 'b8', shooters: ['north'], result: 'boomerang', hits: [{ sea: 'north', cell: 'b7' }] }]);
+    expect(s.lastVolley!.sunk).toEqual([{ sea: 'north', ship: 'submarine', by: ['west'] }]);
+    expect(s.crates.west).toEqual([]);
+    expect(s.crates.north).toEqual([]);
+    expect(roundSummary(before, s).join(' ')).not.toMatch(/crate/);
+  });
+  test('a drop with room in hand is refused: pick without dropping', () => {
+    const s = sinkSub();
+    s.arsenal.north = ['repair'];
+    expect(codeOf(() => turn.apply(s, 'north', { crate: s.crates.north[0][0], drop: 'repair' }))).toBe('BAD_DROP');
+  });
   test('two sinkings in one volley queue two crates, one open at a time', () => {
     let s = deployed();
     preHit(s, 'east', ['a7'], 'north');
@@ -1536,5 +1553,184 @@ describe('crates', () => {
     let s = sinkSub();
     for (let k = 0; k < 20 && turn.toMove(s).includes('north'); k++) s = turn.apply(s, 'north', (turn.legal(s, 'north') as SalvoCommand[]).at(-1)!);
     expect(turn.toMove(s)).not.toContain('north');
+  });
+});
+
+describe('cluster and torpedo', () => {
+  /** STANDARD fleets everywhere; `seat` holds `items`. */
+  function holding(seat: string, items: ItemId[]): SalvoState {
+    const s = deployed();
+    s.arsenal[seat] = items;
+    return s;
+  }
+  const use = (s: SalvoState, seat: string, cmd: Record<string, unknown>) => turn.apply(s, seat, cmd);
+  const itemsOf = (s: SalvoState, seat: string) =>
+    (turn.legal(s, seat) as SalvoCommand[]).filter((c) => 'fire' in c && (c.fire === 'cluster' || c.fire === 'torpedo'));
+
+  test('legal offers each held kind once, every sea; one item a round (ONE_ITEM)', () => {
+    expect(itemsOf(deployed(), 'north')).toEqual([]);
+    const two = itemsOf(holding('north', ['cluster', 'cluster']), 'north');
+    expect(two).toHaveLength(3 * 64);
+    expect(two[0]).toEqual({ fire: 'cluster', at: 'east', cell: 'a1' });
+    let s = holding('north', ['cluster', 'torpedo']);
+    const offered = itemsOf(s, 'north');
+    expect(offered.filter((c) => (c as { fire: string }).fire === 'torpedo')).toHaveLength(3 * 8);
+    expect(offered).toContainEqual({ fire: 'torpedo', at: 'west', lane: 'h' });
+    expect(itemsOf(holding('west', ['torpedo']), 'west')).toContainEqual({ fire: 'torpedo', at: 'east', lane: '8' });
+    s = use(s, 'north', { fire: 'cluster', at: 'east', cell: 'b3' });
+    expect(s.arsenal.north).toEqual(['torpedo']);
+    expect(viewOf(s, 'east').holding.north).toBe(1);
+    expect(viewOf(s, 'north').myOrders).toEqual([{ fire: 'cluster', at: 'east', cell: 'b3' }]);
+    expect(viewOf(s, 'east').myOrders).toEqual([]);
+    expect(itemsOf(s, 'north')).toEqual([]);
+    expect(codeOf(() => use(s, 'north', { fire: 'torpedo', at: 'east', lane: 'e' }))).toBe('ONE_ITEM');
+  });
+
+  test('refusals carry precise codes', () => {
+    const s = holding('north', ['cluster', 'torpedo']);
+    expect(codeOf(() => use(deployed(), 'north', { fire: 'cluster', at: 'east', cell: 'b3' }))).toBe('NO_ITEM');
+    expect(codeOf(() => use(holding('north', ['cluster']), 'north', { fire: 'torpedo', at: 'east', lane: 'c' }))).toBe('NO_ITEM');
+    expect(codeOf(() => use(s, 'north', { fire: 'torpedo', at: 'east', lane: '3' }))).toBe('BAD_LANE');
+    expect(codeOf(() => use(holding('west', ['torpedo']), 'west', { fire: 'torpedo', at: 'east', lane: 'c' }))).toBe('BAD_LANE');
+    expect(codeOf(() => use(s, 'north', { fire: 'cluster', at: 'north', cell: 'b3' }))).toBe('BAD_TARGET');
+    expect(codeOf(() => use(s, 'north', { fire: 'cluster', at: 'east', cell: 'z9' }))).toBe('BAD_CELL');
+    expect(codeOf(() => use(s, 'north', { fire: 'torpedo', at: 'east' }))).toBe('BAD_COMMAND');
+    const shot = holding('north', ['cluster', 'torpedo']);
+    preHit(shot, 'east', ['b3'], 'north');
+    expect(codeOf(() => use(shot, 'north', { fire: 'cluster', at: 'east', cell: 'b3' }))).toBe('ALREADY_FIRED');
+    preHit(shot, 'east', ['e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7', 'e8'], 'north');
+    expect(codeOf(() => use(shot, 'north', { fire: 'torpedo', at: 'east', lane: 'e' }))).toBe('LANE_SPENT');
+    expect(itemsOf(shot, 'north')).not.toContainEqual({ fire: 'torpedo', at: 'east', lane: 'e' });
+    expect(itemsOf(shot, 'north')).toContainEqual({ fire: 'torpedo', at: 'south', lane: 'e' });
+    expect(itemsOf(shot, 'north')).not.toContainEqual({ fire: 'cluster', at: 'east', cell: 'b3' });
+    expect(shot.arsenal.north).toEqual(['cluster', 'torpedo']); // a refused item stays in hand
+  });
+
+  test('a cluster lands five cells as shells from its shooter: hits paid, a sinking, a crate', () => {
+    let s = holding('north', ['cluster']);
+    const scrap = s.scrap.north;
+    const before = s;
+    s = use(s, 'north', { fire: 'cluster', at: 'east', cell: 'b3' }); // the destroyer is a3–c3
+    s = volley(s, {});
+    expect(s.lastVolley!.items).toEqual([{ item: 'cluster', from: 'north', sea: 'east', cell: 'b3', cells: ['b3', 'b2', 'a3', 'c3', 'b4'], hits: ['b3', 'a3', 'c3'] }]);
+    expect(s.lastVolley!.shells.some((x) => x.sea === 'east')).toBe(false); // a cluster is not a shell
+    expect(s.shots.east.b2).toEqual({ result: 'miss', by: ['north'] });
+    expect(s.shots.east.a3).toEqual({ result: 'hit', by: ['north'] });
+    expect(s.lastVolley!.sunk).toEqual([{ sea: 'east', ship: 'destroyer', by: ['north'] }]);
+    expect(s.scrap.north - scrap).toBe(3 + 3);
+    expect(s.hitsLanded.north).toBe(3);
+    expect(s.crates.north).toHaveLength(1);
+    expect(s.arsenal.north).toEqual([]);
+    const lines = roundSummary(before, s);
+    expect(lines).toContain("{north}'s cluster lands on {east} around b3: 3 hits.");
+    expect(lines).toContain("{north} sinks {east}'s destroyer.");
+  });
+
+  test('a cluster at the edge lands three cells; cells you have shot are skipped; open water is all water', () => {
+    let s = holding('north', ['cluster']);
+    s = volley(use(s, 'north', { fire: 'cluster', at: 'east', cell: 'a1' }), {});
+    expect(s.lastVolley!.items[0]).toMatchObject({ cells: ['a1', 'b1', 'a2'], hits: ['a1', 'b1'] });
+    let t = holding('north', ['cluster']);
+    preHit(t, 'east', ['f5'], 'north');
+    preHit(t, 'east', ['f7'], 'south');
+    const before = t;
+    t = volley(use(t, 'north', { fire: 'cluster', at: 'east', cell: 'f6' }), {});
+    expect(t.lastVolley!.items[0]).toMatchObject({ cell: 'f6', cells: ['f6', 'e6', 'g6', 'f7'], hits: [] });
+    expect(t.shots.east.f5).toEqual({ result: 'miss', by: ['north'] });
+    expect(t.shots.east.f7).toEqual({ result: 'miss', by: ['north', 'south'] }); // seat order
+    expect(roundSummary(before, t)).toContain("{north}'s cluster lands on {east} around f6: all water.");
+  });
+
+  test("a cluster cell another seat's lone shell also hits is no Time on Target", () => {
+    let s = holding('north', ['cluster']);
+    s = use(s, 'north', { fire: 'cluster', at: 'east', cell: 'b3' });
+    s = volley(s, { south: ['east', 'a3'] });
+    expect(s.lastVolley!.blasts).toEqual([]);
+    expect(s.lastVolley!.shells.find((x) => x.from === 'south' && x.cell === 'a3')).toMatchObject({ result: 'sunk', blast: false });
+    expect(s.shots.east.a3).toEqual({ result: 'hit', by: ['north', 'south'] });
+    expect(s.shots.east.a4).toBeUndefined(); // no 3×3 spill
+    expect(s.lastVolley!.sunk).toEqual([{ sea: 'east', ship: 'destroyer', by: ['north', 'south'] }]);
+  });
+
+  test("a cluster or torpedo never sets off a ghost's mine: the mine it spends fizzles", () => {
+    let s = withGhost();
+    s = turn.apply(s, 'north', { crate: 'pass' });
+    s.arsenal.north = ['cluster'];
+    s = trick(s, 'west', { trick: 'mine', at: 'east', cell: 'e6' }); // south's fillers run down east's column g
+    s = volley(use(s, 'north', { fire: 'cluster', at: 'east', cell: 'f6' }), {});
+    expect(tricksIn(s)).toEqual([]);
+    expect(s.mines).toEqual([]);
+    expect(s.shots.east.e6).toEqual({ result: 'miss', by: ['north'] });
+    // A torpedo running over a mine spends it the same way.
+    let t = withGhost();
+    t = turn.apply(t, 'north', { crate: 'pass' });
+    t.arsenal.north = ['torpedo'];
+    t = trick(t, 'west', { trick: 'mine', at: 'east', cell: 'e6' });
+    t = volley(use(t, 'north', { fire: 'torpedo', at: 'east', lane: 'e' }), {});
+    expect(tricksIn(t)).toEqual([]);
+    expect(t.mines).toEqual([]);
+  });
+
+  test("each seat's torpedo runs away from it and stops at the first ship cell; the summary tells each", () => {
+    let s = deployed();
+    for (const x of s.seats) s.arsenal[x] = ['torpedo'];
+    const before = s;
+    s = use(s, 'north', { fire: 'torpedo', at: 'east', lane: 'e' }); // down column e from e8: open water
+    s = use(s, 'east', { fire: 'torpedo', at: 'north', lane: '3' }); // west along row 3 from h3: the destroyer ends at c3
+    s = use(s, 'south', { fire: 'torpedo', at: 'east', lane: 'b' }); // up column b from b1: the cruiser
+    s = use(s, 'west', { fire: 'torpedo', at: 'east', lane: '1' }); // east along row 1 from a1: the cruiser
+    s = volley(s, {});
+    expect(s.lastVolley!.items).toEqual([
+      { item: 'torpedo', from: 'north', sea: 'east', lane: 'e', path: ['e8', 'e7', 'e6', 'e5', 'e4', 'e3', 'e2', 'e1'], struck: null },
+      { item: 'torpedo', from: 'east', sea: 'north', lane: '3', path: ['h3', 'g3', 'f3', 'e3', 'd3', 'c3'], struck: 'c3' },
+      { item: 'torpedo', from: 'south', sea: 'east', lane: 'b', path: ['b1'], struck: 'b1' },
+      { item: 'torpedo', from: 'west', sea: 'east', lane: '1', path: ['a1'], struck: 'a1' },
+    ]);
+    for (const c of ['e8', 'e7', 'e6', 'e5', 'e4', 'e3', 'e2', 'e1']) expect(s.shots.east[c]).toEqual({ result: 'miss', by: ['north'] });
+    for (const c of ['h3', 'g3', 'f3', 'e3', 'd3']) expect(s.shots.north[c]).toEqual({ result: 'miss', by: ['east'] });
+    expect(s.shots.north.c3).toEqual({ result: 'hit', by: ['east'] });
+    expect(s.shots.north.b3).toBeUndefined();
+    expect(s.shots.east.a1).toEqual({ result: 'hit', by: ['west'] });
+    expect(s.shots.east.b1).toEqual({ result: 'hit', by: ['south'] });
+    expect(s.fleets.east.find((x) => x.id === 'cruiser')!.hits).toEqual(['a1', 'b1']);
+    expect(s.hitsLanded).toMatchObject({ north: 0, east: 1, south: 1, west: 1 });
+    const lines = roundSummary(before, s);
+    expect(lines).toContain("{north}'s torpedo runs down {east}'s lane e and runs clean through.");
+    expect(lines).toContain("{east}'s torpedo runs down {north}'s lane 3 and strikes at c3.");
+    expect(lines).toContain("{south}'s torpedo runs down {east}'s lane b and strikes at b1.");
+    expect(lines).toContain("{west}'s torpedo runs down {east}'s lane 1 and strikes at a1.");
+  });
+
+  test('a torpedo passes shot cells: hits, misses, its own shots; it stops only at a ship cell unhit when the volley began', () => {
+    let s = holding('west', ['torpedo']);
+    preHit(s, 'east', ['a1', 'b1'], 'north');
+    preHit(s, 'east', ['c1'], 'west');
+    s = use(s, 'west', { fire: 'torpedo', at: 'east', lane: '1' });
+    s = volley(s, { north: ['east', 'd1'] }); // north's shell lands on d1 the same volley: the torpedo still stops there
+    expect(s.lastVolley!.items).toEqual([{ item: 'torpedo', from: 'west', sea: 'east', lane: '1', path: ['a1', 'b1', 'c1', 'd1'], struck: 'd1' }]);
+    expect(s.shots.east.a1).toEqual({ result: 'hit', by: ['north', 'west'] });
+    expect(s.shots.east.c1).toEqual({ result: 'hit', by: ['west'] });
+    expect(s.shots.east.d1).toEqual({ result: 'hit', by: ['north', 'west'] });
+    expect(s.lastVolley!.blasts).toEqual([]);
+    expect(s.lastVolley!.sunk).toEqual([{ sea: 'east', ship: 'cruiser', by: ['north', 'west'] }]);
+    // North runs down column a from a8: a miss of its own, a hit someone else landed, then the frigate at a5.
+    let t = holding('north', ['torpedo']);
+    preHit(t, 'east', ['a8'], 'north');
+    preHit(t, 'east', ['a7'], 'south');
+    t = volley(use(t, 'north', { fire: 'torpedo', at: 'east', lane: 'a' }), {});
+    expect(t.lastVolley!.items[0]).toMatchObject({ path: ['a8', 'a7', 'a6', 'a5'], struck: 'a5' });
+    expect(t.shots.east.a8).toEqual({ result: 'miss', by: ['north'] });
+    expect(t.shots.east.a7).toEqual({ result: 'hit', by: ['north', 'south'] });
+    expect(t.shots.east.a6).toEqual({ result: 'miss', by: ['north'] });
+    expect(t.shots.east.a5).toEqual({ result: 'hit', by: ['north'] });
+  });
+
+  test('an item shot is told like a shell before the reveal: "fires", "is ready"; the volley lists none when none is used', () => {
+    const s = holding('north', ['cluster', 'torpedo']);
+    for (const cmd of [{ fire: 'cluster', at: 'east', cell: 'b3' }, { fire: 'torpedo', at: 'east', lane: 'c' }]) {
+      expect(turn.describe!(cmd)).toBe('fires');
+      expect(turn.narrate!(s, use(s, 'north', cmd), 'north', cmd)).toBe('is ready');
+    }
+    expect(volley(deployed(), {}).lastVolley!.items).toEqual([]);
   });
 });

@@ -1,6 +1,6 @@
 import { GameRuleError, createRng, type GameModule, type Outcome, type SeatId, type TurnRules } from '@cs/game-api';
 import { renderAscii } from './ascii';
-import { ITEM_LIMIT, dealCrate, isItemId, type ItemId } from './arsenal';
+import { ITEM_LIMIT, clusterCells, dealCrate, isItemId, lanesFor, torpedoLane, type ItemId } from './arsenal';
 import { MINE_LIMIT, SIZE, buoyCells, cellIndex, cellName, hullCells, isBuoyCentre, liftedRows, neighbours, rowOf, type Facing } from './board';
 
 export { FOG_FROM, MINE_LIMIT, SIZE, buoyCells, cellIndex, cellName, hullCells, isBuoyCentre, liftedRows, neighbours } from './board';
@@ -41,9 +41,13 @@ export interface Shell {
 }
 /** A sonar buoy dropped this round: public where it fell, private what it heard. */
 export type Buoy = Shell;
-/** A seat's secret commit for the round: a shell, or a sonar buoy instead of one. */
+/**
+ * A seat's secret commit for the round: a shell, a sonar buoy instead of one, or an item for one.
+ * A cluster's `cell` is its centre; a torpedo carries its `lane` and, as `cell`, the cell it enters at.
+ */
 export interface Order extends Shell {
-  kind: 'shell' | 'buoy';
+  kind: 'shell' | 'buoy' | 'cluster' | 'torpedo';
+  lane?: string;
 }
 /** A ghost's mine: hidden from everyone but its ghost until a shell sets it off. */
 export interface Mine {
@@ -88,6 +92,16 @@ export type Trick =
   | { kind: 'mine'; ghost: SeatId; sea: SeatId; cell: string; shooters: SeatId[]; result: 'boomerang'; hits: { sea: SeatId; cell: string }[] }
   | { kind: 'mine'; ghost: SeatId; sea: SeatId; cell: string; shooters: SeatId[]; result: 'backfire'; ship: ShipId }
   | { kind: 'splash'; ghost: SeatId; fool: SeatId; sea: SeatId; cell: string };
+/**
+ * An item used in a volley (public at the reveal). A cluster's `cells` are the cells it landed on (cells its
+ * shooter had already shot are skipped), `hits` the new hits among them. A torpedo's `path` is every cell it
+ * ran through, from its edge to `struck` (the first ship cell unhit at the start of the volley) or the whole lane.
+ */
+export type ItemUse =
+  | { item: 'cluster'; from: SeatId; sea: SeatId; cell: string; cells: string[]; hits: string[] }
+  | { item: 'torpedo'; from: SeatId; sea: SeatId; lane: string; path: string[]; struck: string | null }
+  | { item: 'repair'; from: SeatId; cell: string }
+  | { item: 'decoy'; sea: SeatId; cells: string[]; by: SeatId[] };
 export interface Volley {
   round: number;
   shells: ShellResult[];
@@ -99,6 +113,8 @@ export interface Volley {
   eliminated: SeatId[];
   /** Tricks revealed in this volley: mines that went off, false splashes withdrawn. [] when none. */
   tricks: Trick[];
+  /** Items used in this volley, in seat order. [] when none. */
+  items: ItemUse[];
 }
 
 export interface SalvoState {
@@ -148,6 +164,8 @@ export type SalvoCommand =
   | { place: 'random' }
   | { fire: 'shell'; at: SeatId; cell: string }
   | { fire: 'buoy'; at: SeatId; cell: string }
+  | { fire: 'cluster'; at: SeatId; cell: string }
+  | { fire: 'torpedo'; at: SeatId; lane: string }
   | { trick: 'mine'; at: SeatId; cell: string }
   | { trick: 'splash'; fool: SeatId; at: SeatId; cell: string }
   | { crate: ItemId; drop?: ItemId }
@@ -186,8 +204,8 @@ export interface SalvoView {
   ghosts: SeatId[];
   /** How many shots each living seat fires this round: one per ship still afloat (public: sinkings are). */
   guns: Record<SeatId, number>;
-  /** The shots you have sent this round, in order (yours alone; [] for spectators and outside a round). */
-  myOrders: { fire: 'shell' | 'buoy'; at: SeatId; cell: string }[];
+  /** The shots you have sent this round, in order (yours alone; [] for spectators and outside a round). A torpedo's `cell` is where it enters its lane. */
+  myOrders: { fire: Order['kind']; at: SeatId; cell: string; lane?: string }[];
   /** A ghost's own mischief: its live mines, its live splashes, this round's commit. Null for everyone else. */
   myTricks: {
     mines: { sea: SeatId; cell: string; round: number }[];
@@ -375,17 +393,19 @@ function applyTrick(s: SalvoState, seat: SeatId, command: Record<string, unknown
   if (toMove(s).length === 0) resolve(s);
 }
 
+/** Is this order an item (one a round)? */
+const isItemOrder = (x: Order) => x.kind === 'cluster' || x.kind === 'torpedo';
+
 function applyFire(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
   const { fire, at, cell } = command;
+  if (fire === 'cluster' || fire === 'torpedo') {
+    applyItemFire(s, seat, command);
+    return;
+  }
   if ((fire !== 'shell' && fire !== 'buoy') || typeof at !== 'string' || typeof cell !== 'string') {
     throw new GameRuleError('BAD_COMMAND', 'Send {"fire":"shell","at":"east","cell":"e5"} or {"fire":"buoy","at":"east","cell":"e5"}.');
   }
-  if (at === seat || !s.seats.includes(at) || isEliminated(s, at)) {
-    throw new GameRuleError('BAD_TARGET', `Fire at a living opponent's sea: ${living(s).filter((x) => x !== seat).join(', ')}.`);
-  }
-  if (s.pending[seat].length >= gunsOf(s, seat)) {
-    throw new GameRuleError('SALVO_DONE', 'Your whole salvo is in; open your crate: {"crate":"pass"} or one of its cards.');
-  }
+  checkTarget(s, seat, at);
   const i = cellIndex(cell);
   if (i === null) throw new GameRuleError('BAD_CELL', `There is no cell "${cell}" on an 8×8 sea (a1 to h8).`);
   const name = cellName(i);
@@ -399,6 +419,53 @@ function applyFire(s: SalvoState, seat: SeatId, command: Record<string, unknown>
     throw new GameRuleError('ALREADY_AIMED', `One of this round's shells is already on ${at}'s ${name}.`);
   }
   s.pending[seat].push({ kind: fire, from: seat, sea: at, cell: name });
+  markReady(s, seat);
+}
+
+/** A shot's sea must be a living opponent's, and a gun must be free. */
+function checkTarget(s: SalvoState, seat: SeatId, at: string): void {
+  if (at === seat || !s.seats.includes(at) || isEliminated(s, at)) {
+    throw new GameRuleError('BAD_TARGET', `Fire at a living opponent's sea: ${living(s).filter((x) => x !== seat).join(', ')}.`);
+  }
+  if (s.pending[seat].length >= gunsOf(s, seat)) {
+    throw new GameRuleError('SALVO_DONE', 'Your whole salvo is in; open your crate: {"crate":"pass"} or one of its cards.');
+  }
+}
+
+/** A lane name as sent: a column letter or a row number (a number is taken as its string). */
+const laneName = (lane: unknown) => (typeof lane === 'number' ? String(lane) : typeof lane === 'string' ? lane.trim().toLowerCase() : null);
+
+/** A held cluster or torpedo as one shot of the salvo; it leaves your hand now. */
+function applyItemFire(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
+  const { fire, at, cell } = command;
+  const item = fire as 'cluster' | 'torpedo';
+  const lane = laneName(command.lane);
+  if (typeof at !== 'string' || (item === 'cluster' ? typeof cell !== 'string' : lane === null)) {
+    throw new GameRuleError('BAD_COMMAND', 'Send {"fire":"cluster","at":"east","cell":"c4"} or {"fire":"torpedo","at":"east","lane":"c"}.');
+  }
+  if (s.pending[seat].some(isItemOrder)) throw new GameRuleError('ONE_ITEM', 'One item a round; the rest of your salvo is shells.');
+  if (!s.arsenal[seat].includes(item)) {
+    throw new GameRuleError('NO_ITEM', `You hold no ${item}${s.arsenal[seat].length > 0 ? `: you hold ${s.arsenal[seat].join(', ')}` : ''}.`);
+  }
+  checkTarget(s, seat, at);
+  let order: Order;
+  if (item === 'cluster') {
+    const i = cellIndex(cell as string);
+    if (i === null) throw new GameRuleError('BAD_CELL', `There is no cell "${cell}" on an 8×8 sea (a1 to h8).`);
+    const name = cellName(i);
+    if (firedAt(s, seat, at, name)) throw new GameRuleError('ALREADY_FIRED', `You have already shot ${at}'s ${name}; centre your cluster on a cell you haven't.`);
+    order = { kind: 'cluster', from: seat, sea: at, cell: name };
+  } else {
+    const cells = torpedoLane(seat, lane!);
+    if (!cells) {
+      const which = seat === 'east' || seat === 'west' ? 'a row, "1" to "8"' : 'a column, "a" to "h"';
+      throw new GameRuleError('BAD_LANE', `From ${seat} a torpedo runs down ${which}; there is no lane "${command.lane}".`);
+    }
+    if (cells.every((c) => firedAt(s, seat, at, c))) throw new GameRuleError('LANE_SPENT', `You have shot every cell of ${at}'s lane ${lane}.`);
+    order = { kind: 'torpedo', from: seat, sea: at, cell: cells[0], lane: lane! };
+  }
+  s.arsenal[seat].splice(s.arsenal[seat].indexOf(item), 1);
+  s.pending[seat].push(order);
   markReady(s, seat);
 }
 
@@ -419,7 +486,8 @@ function applyCrate(s: SalvoState, seat: SeatId, command: Record<string, unknown
     }
     const held = s.arsenal[seat];
     if (drop !== undefined) {
-      if (!isItemId(drop) || !held.includes(drop)) throw new GameRuleError('BAD_DROP', `You can only drop an item you hold: ${held.join(', ') || 'none'}.`);
+      if (held.length < ITEM_LIMIT) throw new GameRuleError('BAD_DROP', `You have room: pick without dropping, {"crate":"${crate}"}.`);
+      if (!isItemId(drop) || !held.includes(drop)) throw new GameRuleError('BAD_DROP', `You can only drop an item you hold: ${held.join(', ')}.`);
       held.splice(held.indexOf(drop), 1);
     } else if (held.length >= ITEM_LIMIT) {
       throw new GameRuleError('HANDS_FULL', `You hold ${ITEM_LIMIT} items: swap with {"crate":"${crate}","drop":"${held[0]}"}, or {"crate":"pass"}.`);
@@ -532,6 +600,27 @@ function resolve(s: SalvoState): void {
     }
   }
 
+  // Clusters and torpedoes land as lone shells from their shooter: never a Time on Target, never a mine's trigger.
+  // Both read the sea as it was at the start of the volley (nothing has landed yet), so commit order can't matter.
+  const unhitShip = (sea: SeatId, c: string) => {
+    const ship = shipAt(s, sea, c);
+    return !!ship && !ship.hits.includes(c);
+  };
+  const items: ItemUse[] = [];
+  for (const o of orders) {
+    if (o.kind === 'cluster') {
+      const cells = clusterCells(o.cell).filter((c) => !firedAt(s, o.from, o.sea, c));
+      for (const c of cells) covered(o.sea, c, [o.from]);
+      items.push({ item: 'cluster', from: o.from, sea: o.sea, cell: o.cell, cells, hits: cells.filter((c) => unhitShip(o.sea, c)) });
+    } else if (o.kind === 'torpedo') {
+      const lane = torpedoLane(o.from, o.lane!)!;
+      const stop = lane.findIndex((c) => unhitShip(o.sea, c));
+      const path = stop >= 0 ? lane.slice(0, stop + 1) : lane;
+      for (const c of path) if (!firedAt(s, o.from, o.sea, c)) covered(o.sea, c, [o.from]);
+      items.push({ item: 'torpedo', from: o.from, sea: o.sea, lane: o.lane!, path, struck: stop >= 0 ? lane[stop] : null });
+    }
+  }
+
   // Record every covered cell, then land the new hits and their credit.
   const newHits = new Map<string, SeatId[]>(); // "sea cell" → credited seats
   for (const [key, set] of cover) {
@@ -640,7 +729,7 @@ function resolve(s: SalvoState): void {
   // Crates: one per sinking to each credited seat still afloat (never a ghost), none once the match is over.
   if (!ends) for (const x of crateEarners(s, sunk)) s.crates[x].push(dealCrate(s.seed, s.draws++));
 
-  s.lastVolley = { round: s.round, shells: results, buoys, blasts, sunk, eliminated: out, tricks };
+  s.lastVolley = { round: s.round, shells: results, buoys, blasts, sunk, eliminated: out, tricks, items };
   for (const x of s.seats) s.pending[x] = [];
   for (const x of s.seats) s.pendingTrick[x] = null;
   s.ready = [];
@@ -708,6 +797,18 @@ function legal(s: SalvoState, seat: SeatId): SalvoCommand[] {
     for (let i = 0; i < SIZE * SIZE; i++) {
       const cell = cellName(i);
       if (isBuoyCentre(cell) && !buoyedAt(s, seat, sea, cell)) out.push({ fire: 'buoy', at: sea, cell });
+    }
+  }
+  // Or a held item for one of the shots: one a round, each kind held listed once.
+  const held = s.pending[seat].some(isItemOrder) ? [] : [...new Set(s.arsenal[seat])];
+  for (const item of held) {
+    for (const sea of living(s)) {
+      if (sea === seat) continue;
+      if (item === 'cluster') {
+        for (let i = 0; i < SIZE * SIZE; i++) if (!firedAt(s, seat, sea, cellName(i))) out.push({ fire: 'cluster', at: sea, cell: cellName(i) });
+      } else if (item === 'torpedo') {
+        for (const lane of lanesFor(seat)) if (torpedoLane(seat, lane)!.some((c) => !firedAt(s, seat, sea, c))) out.push({ fire: 'torpedo', at: sea, lane });
+      }
     }
   }
   return out;
@@ -833,7 +934,7 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
     ready: [...s.ready],
     ghosts: ghosts(s),
     guns: s.phase === 'fire' ? Object.fromEntries(living(s).map((x) => [x, gunsOf(s, x)])) : {},
-    myOrders: you && s.phase === 'fire' ? s.pending[you].map((x) => ({ fire: x.kind, at: x.sea, cell: x.cell })) : [],
+    myOrders: you && s.phase === 'fire' ? s.pending[you].map((x) => ({ fire: x.kind, at: x.sea, cell: x.cell, ...(x.lane !== undefined ? { lane: x.lane } : {}) })) : [],
     myTricks:
       you && isGhost(s, you)
         ? {
@@ -921,12 +1022,21 @@ export function roundSummary(before: SalvoState, after: SalvoState): string[] {
       const hits = `${b.hits.length} ${b.hits.length === 1 ? 'hit' : 'hits'}`;
       lines.push(`Time on Target at {${b.sea}} ${b.cell} by ${who(b.by)}: ${b.cells.length} cells, ${hits}.`);
     }
+    for (const x of v.items ?? []) {
+      if (x.item === 'cluster') {
+        const hits = x.hits.length === 0 ? 'all water' : `${x.hits.length} ${x.hits.length === 1 ? 'hit' : 'hits'}`;
+        lines.push(`{${x.from}}'s cluster lands on {${x.sea}} around ${x.cell}: ${hits}.`);
+      } else if (x.item === 'torpedo') {
+        const end = x.struck ? `strikes at ${x.struck}` : 'runs clean through';
+        lines.push(`{${x.from}}'s torpedo runs down {${x.sea}}'s lane ${x.lane} and ${end}.`);
+      }
+    }
     for (const x of v.sunk) {
       const told = v.shells.some((sh) => !sh.blast && sh.result === 'sunk' && sh.sea === x.sea && sh.ship === x.ship);
       if (!told) lines.push(`${who(x.by)} ${x.by.length === 1 ? 'sinks' : 'sink'} {${x.sea}}'s ${x.ship}.`);
     }
-    if (!ended) for (const x of crateEarners(after, v.sunk)) lines.push(`{${x}} pulls a crate from the wreck.`);
     for (const t of v.tricks ?? []) lines.push(trickLine(t));
+    if (!ended) for (const x of crateEarners(after, v.sunk)) lines.push(`{${x}} pulls a crate from the wreck.`);
     for (const x of v.eliminated) {
       if (tied.includes(x)) continue;
       const sunk = after.eliminated.some((e) => e.seat === x && e.reason === 'sunk');

@@ -358,7 +358,8 @@ And the volley as the machine view carries it:
   ],
   "sunk": [{"sea": "east", "ship": "destroyer", "by": ["north", "south"]}],
   "eliminated": [],
-  "tricks": []
+  "tricks": [],
+  "items": []
 }
 ```
 
@@ -692,8 +693,8 @@ south, scrap 2, 12 ship cells afloat     south, scrap 2, 8 ship cells afloat
 
 ```
 Round 5: {north} sinks {south}'s cruiser and 11 misses.
-{north} pulls a crate from the wreck.
 Backfire! {west}'s mine was sitting on {south}'s cruiser. {north}'s shell sends it to the bottom. Thanks for the help, {west}.
+{north} pulls a crate from the wreck.
 The fog lifts from row 8.
 ```
 
@@ -1231,7 +1232,7 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
 }
 ```
 
-**`Volley`** (`lastVolley`) is `{round, shells, buoys, blasts, sunk, eliminated, tricks}`:
+**`Volley`** (`lastVolley`) is `{round, shells, buoys, blasts, sunk, eliminated, tricks, items}`:
 
 - `shells`: every shell of the round, in seat order, each a **`ShellResult`**:
   `{from, sea, cell, result, ship, blast}`. `result` is `miss`, `hit` or `sunk`
@@ -1255,6 +1256,12 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
   - `{kind: "mine", ghost, sea, cell, shooters, result: "backfire", ship}`: the
     mine sat on `ship`, which sank whole for the shooters (it's in `sunk` too).
   - `{kind: "splash", ghost, fool, sea, cell}`: a false splash taken back.
+- `items`: the Arsenal items used this volley, in seat order, `[]` when none:
+  - `{item: "cluster", from, sea, cell, cells, hits}`: `cell` the centre,
+    `cells` the cells it landed on, `hits` the new hits among them.
+  - `{item: "torpedo", from, sea, lane, path, struck}`: `path` every cell it
+    ran through from its edge, `struck` the cell it hit, or `null` when it ran
+    clean through.
 
 The round 4 volley from the worked round, with no blast and no sinking:
 
@@ -1282,7 +1289,8 @@ The round 4 volley from the worked round, with no blast and no sinking:
   "blasts": [],
   "sunk": [],
   "eliminated": [],
-  "tricks": []
+  "tricks": [],
+  "items": []
 }
 ```
 

@@ -64,7 +64,7 @@ const isBuoy = (c: SalvoCommand) => 'fire' in c && c.fire === 'buoy';
 const reading = (cell: string, afloat: number, round = 2) => ({ cell, round, cells: buoyCells(cell), afloat });
 const fire = (c: SalvoCommand) => c as Extract<SalvoCommand, { fire: 'shell' }>;
 const argmax = (heat: Map<string, number>) => [...heat].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
-const volley = (over: Partial<Volley>): Volley => ({ round: 2, shells: [], buoys: [], blasts: [], sunk: [], eliminated: [], tricks: [], ...over });
+const volley = (over: Partial<Volley>): Volley => ({ round: 2, shells: [], buoys: [], blasts: [], sunk: [], eliminated: [], tricks: [], items: [], ...over });
 
 describe('heatmap', () => {
   test('an open sea: corners are cold, the middle is hot, and every placement is counted once per cell', () => {

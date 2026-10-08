@@ -11,7 +11,7 @@ const shell = (from: string, sea: string, cell: string, more: Partial<ShellResul
   blast: false,
   ...more,
 });
-const volley = (shells: ShellResult[], blasts: Volley['blasts'] = [], buoys: Volley['buoys'] = []): Volley => ({ round: 3, shells, buoys, blasts, sunk: [], eliminated: [], tricks: [] });
+const volley = (shells: ShellResult[], blasts: Volley['blasts'] = [], buoys: Volley['buoys'] = []): Volley => ({ round: 3, shells, buoys, blasts, sunk: [], eliminated: [], tricks: [], items: [] });
 
 describe('sideOf', () => {
   test('you are always south, and the others keep their places around the table', () => {
@@ -87,6 +87,7 @@ describe('planVolley', () => {
         ],
         eliminated: [],
         tricks: [],
+        items: [],
       },
       (s) => sideOf(s, 'north'),
     );
@@ -199,6 +200,7 @@ describe('planVolley: mines', () => {
     sunk: [],
     eliminated: [],
     tricks: [{ kind: 'mine', ghost: 'west', sea: 'east', cell: 'e2', shooters: ['north'], result: 'boomerang', hits: [{ sea: 'north', cell: 'd1' }] }],
+    items: [],
   });
   test('a mine goes off when its shell lands and comes back RETURN_MS later', () => {
     const p = planVolley(boomerang(), (s) => s as Side, {});
@@ -225,6 +227,7 @@ describe('planVolley: mines', () => {
       sunk: [{ sea: 'east', ship: 'cruiser', by: ['north'] }],
       eliminated: [],
       tricks: [{ kind: 'mine', ghost: 'south', sea: 'east', cell: 'c4', shooters: ['north'], result: 'backfire', ship: 'cruiser' }],
+      items: [],
     };
     const p = planVolley(v, (s) => sideOf(s, 'north'));
     expect(p.mines).toEqual([{ ghost: 'south', sea: 'east', cell: 'c4', at: p.shells[1].landAt, result: 'backfire', returns: [] }]);
