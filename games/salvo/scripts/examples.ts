@@ -3,7 +3,7 @@
  * `bun games/salvo/scripts/examples.ts` prints each one under its name; `src/examples.test.ts` asserts
  * that docs/rules.md carries every one verbatim inside a fenced code block.
  */
-import { cellIndex, roundSummary, salvoGame as G, type SalvoCommand, type SalvoState, type SalvoView, type ShipId, type Trick } from '../src/index';
+import { cellIndex, clusterCells, hullCells, roundSummary, salvoGame as G, torpedoLane, type ItemUse, type SalvoCommand, type SalvoState, type SalvoView, type ShipId, type Trick } from '../src/index';
 
 export interface Example {
   name: string;
@@ -15,15 +15,43 @@ type Fleet = [ShipId, string, 'east' | 'north'][];
 const place = (s: SalvoState, seat: string, fleet: Fleet) =>
   fleet.reduce((x, [ship, at, facing]) => G.turn.apply(x, seat, { place: ship, at, facing }), s);
 
-type Shot = [string, string] | [string, string, 'buoy'];
+/** A story shot: a shell, a buoy when the third entry says so, or an Arsenal item sent as it is. */
+type Shot = [string, string] | [string, string, 'buoy'] | SalvoCommand;
 type Round = Record<string, Shot | Shot[]>;
-/** A round's ghost play: the tricks the story's ghosts send, and the tricks the volley must tell ("mine west east d6"). */
+/**
+ * A round's extras: the tricks the story's ghosts send and the tricks the volley must tell ("mine west east d6");
+ * the crate picks the story makes (every other crate is passed); the items the volley must tell ("torpedo north east c").
+ */
 interface Plays {
   tricks?: Record<string, SalvoCommand>;
   told?: string[];
+  crates?: Record<string, SalvoCommand>;
+  items?: string[];
 }
 const trickKey = (t: Trick) => `${t.kind} ${t.ghost} ${t.sea} ${t.cell}`;
-const shotsOf = (x: Shot | Shot[]): Shot[] => (Array.isArray(x[0]) ? (x as Shot[]) : [x as Shot]);
+/** An item as the volley tells it: "cluster north east c5", "torpedo west east 5", "repair east f6", "decoy-laid south", "decoy south g5 h5". */
+function itemKey(x: ItemUse): string {
+  if (x.item === 'cluster') return `cluster ${x.from} ${x.sea} ${x.cell}`;
+  if (x.item === 'torpedo') return `torpedo ${x.from} ${x.sea} ${x.lane}`;
+  if (x.item === 'repair') return `repair ${x.from} ${x.cell}`;
+  if (x.item === 'decoy-laid') return `decoy-laid ${x.from}`;
+  return `decoy ${x.sea} ${x.cells.join(' ')}`;
+}
+const isList = (x: Shot | Shot[]): x is Shot[] => Array.isArray(x) && typeof x[0] !== 'string';
+const shotsOf = (x: Shot | Shot[]): Shot[] => (isList(x) ? x : [x]);
+const isTuple = (x: Shot): x is [string, string] | [string, string, 'buoy'] => Array.isArray(x);
+/** The sea a story shot aims at, if it aims at one (a repair or a decoy is on your own sea). */
+const seaOf = (x: Shot): string | null => (isTuple(x) ? x[0] : 'at' in x && 'fire' in x ? (x.at as string) : null);
+/** Every "sea cell" a story shot names or an item of it covers, so the open-water shots keep off them. */
+function cellsOf(seat: string, x: Shot): string[] {
+  if (isTuple(x)) return [`${x[0]} ${x[1]}`];
+  const c = x as Record<string, string>;
+  if (c.fire === 'cluster') return clusterCells(c.cell).map((y) => `${c.at} ${y}`);
+  if (c.fire === 'torpedo') return torpedoLane(seat, c.lane)!.map((y) => `${c.at} ${y}`);
+  if (c.use === 'repair') return [`${seat} ${c.cell}`];
+  if (c.use === 'decoy') return hullCells(c.at, 2, c.facing as 'east' | 'north')!.map((y) => `${seat} ${y}`);
+  return [];
+}
 
 /**
  * One round, in seat order (the order never changes the result): each seat's shots the story is about
@@ -36,20 +64,25 @@ function round(s: SalvoState, shots: Round, story: Set<string>, plays: Plays = {
   for (const [ghost, trick] of Object.entries(plays.tricks ?? {})) s = G.turn.apply(s, ghost, trick);
   for (const seat of s.seats) {
     if (!shots[seat] || s.round !== start) continue;
+    // The story's crate pick comes first, so an item picked this round can be used this round.
+    if (plays.crates?.[seat]) s = G.turn.apply(s, seat, plays.crates[seat]);
     const mine = shotsOf(shots[seat]);
-    for (const shot of mine) s = G.turn.apply(s, seat, { fire: shot[2] ?? 'shell', at: shot[0], cell: shot[1] });
-    const sea = mine[0][0];
+    for (const shot of mine) s = G.turn.apply(s, seat, isTuple(shot) ? { fire: shot[2] ?? 'shell', at: shot[0], cell: shot[1] } : shot);
+    const sea = mine.map(seaOf).find((x) => x !== null);
     const named = story;
     // Until the salvo is in (the last one in resolves the round, and then the seat owes the next).
     while (s.round === start && s.phase === 'fire' && G.turn.toMove(s).includes(seat)) {
       const legal = G.turn.legal(s, seat) as { fire: string; at: string; cell: string }[];
-      // A crate from a sinking is owed too: the story passes it (the examples tell no items).
+      // Any other crate is owed too, and the story passes it.
       if (legal.some((c) => 'crate' in c)) {
         s = G.turn.apply(s, seat, { crate: 'pass' });
         continue;
       }
+      if (!sea) throw new Error(`round ${start}: ${seat} has shots to fill and no sea to fill them on`);
+      // Open water: no ship and no live decoy there, no story cell, nobody's shot this round.
       const water = legal
         .filter((c) => c.fire === 'shell' && c.at === sea && !named.has(`${sea} ${c.cell}`) && !s.fleets[sea].some((x) => x.cells.includes(c.cell)))
+        .filter((c) => !s.decoys[sea].some((d) => d.cells.includes(c.cell)))
         .filter((c) => !s.seats.some((x) => s.pending[x].some((o) => o.sea === sea && o.cell === c.cell)))
         .sort((a, b) => cellIndex(b.cell)! - cellIndex(a.cell)!);
       s = G.turn.apply(s, seat, water[0]);
@@ -70,6 +103,13 @@ function round(s: SalvoState, shots: Round, story: Set<string>, plays: Plays = {
   const asked = plays.told ?? [];
   if (told.some((x) => !asked.includes(x)) || asked.some((x) => !told.includes(x))) {
     throw new Error(`round ${start} told tricks ${JSON.stringify(told)}, the story asked for ${JSON.stringify(asked)}`);
+  }
+  // The same for items: the open-water shots never use one, but one of them landing on a story's decoy or
+  // repaired cell would change what an item did; every item the volley tells must be one the story asked for.
+  const used = s.lastVolley?.round === start ? s.lastVolley.items.map(itemKey) : [];
+  const wanted = plays.items ?? [];
+  if (used.some((x) => !wanted.includes(x)) || wanted.some((x) => !used.includes(x))) {
+    throw new Error(`round ${start} told items ${JSON.stringify(used)}, the story asked for ${JSON.stringify(wanted)}`);
   }
   return s;
 }
@@ -116,7 +156,7 @@ const SOUTH: Fleet = [['cruiser', 'a8', 'east'], ['destroyer', 'h1', 'north'], [
 const WEST: Fleet = [['cruiser', 'e1', 'north'], ['destroyer', 'a2', 'north'], ['frigate', 'b8', 'east'], ['submarine', 'g6', 'east']];
 
 /** Every "sea cell" a list of rounds names, so the open-water shots keep off them. */
-const storyOf = (rounds: Round[]) => new Set(rounds.flatMap((r) => Object.values(r).flatMap((x) => shotsOf(x).map(([sea, cell]) => `${sea} ${cell}`))));
+const storyOf = (rounds: Round[]) => new Set(rounds.flatMap((r) => Object.entries(r).flatMap(([seat, x]) => shotsOf(x).flatMap((y) => cellsOf(seat, y)))));
 
 /** Each seat's shot the story follows, round by round; the rest of every salvo splashes. */
 const FOUR_SEAT_ROUNDS: Round[] = [
@@ -216,6 +256,57 @@ function ghostGame() {
   return { beforeSinking: after[1], sunk: after[2], mined: after[3], boomerang: after[4], backfire: after[5], told: after[6] };
 }
 
+// ── A four-seat game with the Arsenal: crates from sinkings, then each item in use ──
+
+/**
+ * Round 1 everyone sinks a submarine and round 2 a destroyer, two crates each. Then four torpedoes (one
+ * from every side), a cluster that finishes east's cruiser around west's hit, a decoy south lays that fools
+ * west, and east's repair.
+ */
+const ARSENAL_ROUNDS: Round[] = [
+  { north: [['east', 'g4'], ['east', 'h4']], east: [['south', 'e6'], ['south', 'e7']], south: [['west', 'g6'], ['west', 'h6']], west: [['north', 'e5'], ['north', 'e6']] },
+  {
+    north: [['east', 'e2'], ['east', 'f2'], ['east', 'g2']],
+    east: [['south', 'h1'], ['south', 'h2'], ['south', 'h3']],
+    south: [['west', 'a2'], ['west', 'a3'], ['west', 'a4']],
+    west: [['north', 'g3'], ['north', 'g4'], ['north', 'g5']],
+  },
+  // Round 3: a torpedo from every side.
+  {
+    north: { fire: 'torpedo', at: 'east', lane: 'c' },
+    east: { fire: 'torpedo', at: 'north', lane: '6' },
+    south: { fire: 'torpedo', at: 'east', lane: 'f' },
+    west: { fire: 'torpedo', at: 'east', lane: '5' },
+  },
+  // Round 4: north's cluster on west's hit at east c5; south slips a decoy onto g5–h5.
+  { north: { fire: 'cluster', at: 'east', cell: 'c5' }, east: ['north', 'a1'], south: [{ use: 'decoy', at: 'g5', facing: 'east' }, ['west', 'a1']], west: ['south', 'a1'] },
+  // Round 5: east welds f6; west hits south's decoy at g5, and drops a buoy over it.
+  { north: ['east', 'a1'], east: { use: 'repair', cell: 'f6' }, south: ['west', 'b1'], west: [['south', 'g5'], ['south', 'g4', 'buoy']] },
+  // Round 6: west finishes the decoy.
+  { north: ['east', 'b1'], east: ['north', 'b1'], south: ['west', 'c1'], west: ['south', 'h5'] },
+];
+const ARSENAL_PLAYS: Plays[] = [
+  {},
+  { crates: { north: { crate: 'torpedo' }, east: { crate: 'torpedo' }, south: { crate: 'torpedo' }, west: { crate: 'torpedo' } } },
+  {
+    crates: { north: { crate: 'cluster' }, east: { crate: 'repair' }, south: { crate: 'decoy' } },
+    items: ['torpedo north east c', 'torpedo east north 6', 'torpedo south east f', 'torpedo west east 5'],
+  },
+  { items: ['cluster north east c5', 'decoy-laid south'] },
+  { items: ['repair east f6'] },
+  { items: ['decoy south g5 h5'] },
+];
+
+function arsenalGame() {
+  let s = G.setup({ seats: ['north', 'east', 'south', 'west'], seed: 16 });
+  for (const [seat, fleet] of [['north', NORTH], ['east', EAST], ['south', SOUTH], ['west', WEST]] as const) s = place(s, seat, fleet);
+  const story = storyOf(ARSENAL_ROUNDS);
+  const after: SalvoState[] = [s];
+  ARSENAL_ROUNDS.forEach((r, i) => after.push((s = round(s, r, story, ARSENAL_PLAYS[i]))));
+  // after[n] is the game once round n has landed.
+  return after;
+}
+
 export function examples(): Example[] {
   const g = fourSeatGame();
   const t = tiebreakGame();
@@ -256,6 +347,28 @@ export function examples(): Example[] {
   add('ghost-splash', beside(sea(viewOf(h.backfire, 'east'), 'north'), sea(viewOf(h.told, 'east'), 'north')));
   add('ghost-splash-shells', json(viewOf(h.backfire, 'east').lastVolley!.shells.filter((x) => x.sea === 'north')));
   add('ghost-splash-summary', roundSummary(h.backfire, h.told).join('\n'));
+  const a = arsenalGame();
+  const told = (n: number) => roundSummary(a[n - 1], a[n]).join('\n');
+  add('crate-summary', told(1));
+  add('crate-arsenal', json(viewOf(a[1], 'north').myArsenal));
+  add('crate-legal', (G.turn.legal(a[1], 'north') as SalvoCommand[]).slice(0, 4).map((x) => json(x)).join('\n'));
+  add('holding', json(viewOf(a[3], 'north').holding));
+  add('torpedo-sea', beside(sea(viewOf(a[2], 'north'), 'east'), sea(viewOf(a[3], 'north'), 'east')));
+  add('torpedo-north-sea', beside(sea(viewOf(a[2], 'east'), 'north'), sea(viewOf(a[3], 'east'), 'north')));
+  add('torpedo-summary', told(3));
+  add('torpedo-items', json(viewOf(a[3], 'north').lastVolley!.items));
+  add('cluster-sea', beside(sea(viewOf(a[3], 'north'), 'east'), sea(viewOf(a[4], 'north'), 'east')));
+  add('cluster-summary', told(4));
+  add('cluster-items', json(viewOf(a[4], 'north').lastVolley!.items));
+  add('decoy-own-sea', beside(sea(viewOf(a[4], 'south'), 'south'), sea(viewOf(a[5], 'south'), 'south')));
+  add('decoy-my-sea', json(viewOf(a[4], 'south').mySea!.decoy));
+  add('repair-sea', beside(sea(viewOf(a[4], 'north'), 'east'), sea(viewOf(a[5], 'north'), 'east')));
+  add('repair-summary', told(5));
+  add('decoy-fooled', beside(sea(viewOf(a[4], 'west'), 'south'), sea(viewOf(a[5], 'west'), 'south')));
+  add('decoy-revealed', sea(viewOf(a[6], 'west'), 'south'));
+  add('decoy-summary', told(6));
+  add('decoy-volley', json({ shells: viewOf(a[6], 'west').lastVolley!.shells.filter((x) => x.from === 'west'), items: viewOf(a[6], 'west').lastVolley!.items }));
+  add('decoy-target', json(viewOf(a[6], 'west').targets.find((x) => x.sea === 'south')));
   return out;
 }
 

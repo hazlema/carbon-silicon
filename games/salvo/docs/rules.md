@@ -179,6 +179,8 @@ command:
   Time on Target (below).
 - One shot of each salvo may be a [sonar buoy](#the-sonar-buoy) instead of a
   shell. Only one a round.
+- One shot of each salvo may be an item from [the Arsenal](#the-arsenal), if
+  you hold one. Only one a round.
 
 You send your shots one at a time or all together; a sent shot can't be taken
 back. Once your whole salvo is in, you're **ready**. The table hears "north is
@@ -190,8 +192,8 @@ gun count for the round is public (`guns` in the view): it's just their ships
 afloat.
 
 Each round has a 90-second clock. If yours runs out, the autopilot sends the
-rest of your salvo for you, at random (shells, and now and then a buoy) and the
-table hears that the autopilot moved for you, never where. Every absent seat is
+rest of your salvo for you, at random (shells, now and then a buoy or one of
+your items), answers any crate you owe at random, and the table hears that the autopilot moved for you, never where. Every absent seat is
 fired for at the same deadline, and the round resolves. **Three missed rounds in
 a row forfeit the match.** Any round where you send your whole salvo yourself
 resets the count. A [ghost](#ghosts) that misses three rounds in a row just
@@ -254,25 +256,33 @@ The line doesn't say where the misses fell; the board does, for everyone.
 
 The order never depends on who committed first, and the dice are never rolled:
 
-1. Every committed shell is gathered, listed in seat order (north, east, south,
+1. Every [repair and decoy](#the-arsenal) sent this round goes in first: a
+   repaired cell is unhit and unshot again, and a new decoy is on its sea.
+2. Every committed shell is gathered, listed in seat order (north, east, south,
    west), each seat's in the order it sent them.
-2. Shells are grouped by sea and cell. A cell of a sea that shells from **two or
+3. Shells are grouped by sea and cell. A cell of a sea that shells from **two or
    more players** aimed at is a Time on Target: it covers that cell and the up to eight
    cells around it, credited to every shooter. Every other shell covers its own
    cell, credited to its shooter.
-3. Every covered cell is recorded on that sea as a hit (a ship is there) or a
-   miss, with everyone who covered it.
-4. Any [ghost's mine](#ghosts) under a shell goes off, adding its hits.
-5. Every covered ship cell **not already hit** becomes a new hit. Each seat
-   credited with it earns **1 scrap** and one hit landed.
-6. Every ship that is now fully hit, and wasn't before, sinks. Every seat that
-   landed a new hit on that ship in this volley earns **3 scrap**.
-7. Any player whose ships are now all sunk is out. Each seat that sank one of
+4. Every cluster covers its cells and every torpedo its path, credited to its
+   shooter alone, reading the sea as it stood after step 1. Neither is ever part
+   of a Time on Target.
+5. Every covered cell is recorded on that sea as a hit (a ship or a live decoy
+   is there) or a miss, with everyone who covered it.
+6. Any [ghost's mine](#ghosts) under a shell goes off, adding its hits.
+7. Every covered ship or decoy cell **not already hit** becomes a new hit. Each
+   seat credited with it earns **1 scrap** and one hit landed.
+8. Every ship that is now fully hit, and wasn't before, sinks. Every seat that
+   landed a new hit on that ship in this volley earns **3 scrap**. A decoy with
+   both cells now hit is found, and pays nothing more.
+9. Any player whose ships are now all sunk is out. Each seat that sank one of
    that player's ships in this volley earns **half the victim's scrap**, rounded
-   down, counted after steps 5 and 6 and before anyone is paid for a knockout.
-8. The volley is written to `lastVolley`, and the end is checked: one fleet left
-   wins; no fleets left goes to the tiebreak; round 30 ends the match; otherwise
-   the next round opens.
+   down, counted after steps 7 and 8 and before anyone is paid for a knockout.
+10. Unless this volley ends the match, every seat credited with a sinking and
+    still afloat pulls **one crate per sinking**.
+11. The volley is written to `lastVolley`, and the end is checked: one fleet left
+    wins; no fleets left goes to the tiebreak; round 30 ends the match; otherwise
+    the next round opens.
 
 ---
 
@@ -516,6 +526,453 @@ One ship cell afloat among `f4`–`h6`. The submarine on `g4`–`h4` is already
 sunk, so that cell belongs to another ship, somewhere in the square's four
 unshot cells (`f4`, `g5`, `f6` and `h6`). A shell finds one cell; a buoy can rule
 out nine.
+
+---
+
+## The Arsenal
+
+Sinking a ship pays more than scrap: **you pull a crate from the wreck**, and a
+crate holds an item you can use later. There are four:
+
+| Item | What it does |
+|---|---|
+| **Cluster** | A plus of five shells: a cell and its four neighbours |
+| **Torpedo** | Runs down a lane from your side until it strikes the first ship |
+| **Repair** | Welds one hit on your own fleet back together |
+| **Decoy** | A fake two-cell ship on your own sea: it takes hits like a real one |
+
+Every item **costs one gun** of your salvo, the round you use it, like a sonar
+buoy. **One item a round**, on top of the one buoy a round.
+
+### Crates
+
+- **One crate per sinking**, for every player credited with it. Two players who
+  sink a ship together each pull one; one salvo that sinks three ships pulls
+  three. The table hears who, never what's inside.
+- **Never for a ghost**, and never for finding a decoy. The volley that ends the
+  match pays no crates: there's nothing left to use them on.
+- **A crate is three different items** out of the four, dealt by the match's
+  seeded dice. Only you see the cards.
+- **A crate is owed, like your salvo.** You aren't ready until your salvo is in
+  *and* every crate is answered. Answer it before, between or after your shots:
+  take a card, or pass.
+- **Crates wait in line.** Sink two ships in one volley and the second crate
+  opens once you've answered the first.
+- **You hold at most two items.** With two in hand, a crate offers a swap (drop
+  one of yours for a card) or a pass.
+
+Here is a fresh four-player game, same fleets as before. In round 1 everyone
+sinks a submarine, and everyone pulls a crate:
+
+```
+Round 1: {north} sinks {east}'s submarine, {east} sinks {south}'s submarine, {south} sinks {west}'s submarine, {west} sinks {north}'s submarine and 8 misses.
+{west} pulls a crate from the wreck.
+{north} pulls a crate from the wreck.
+{east} pulls a crate from the wreck.
+{south} pulls a crate from the wreck.
+```
+
+North's crate, as its view shows it (`myArsenal`, for north alone):
+
+```json
+{"items": [], "crate": ["torpedo", "decoy", "repair"]}
+```
+
+and the first four entries of north's `legal` for round 2, the crate's answers
+before any shot:
+
+```
+{"crate": "torpedo"}
+{"crate": "decoy"}
+{"crate": "repair"}
+{"crate": "pass"}
+```
+
+Everyone takes the torpedo. In round 2 they sink each other's destroyers the
+same way and pull a second crate each: in round 3 north takes a cluster, east a
+repair and south a decoy, and west passes.
+
+The cards are just item names: `{"crate": "torpedo"}` takes the torpedo. With
+two items already in hand, a card needs one to drop:
+`{"crate": "torpedo", "drop": "repair"}`.
+
+**Everyone sees how many items each player holds**, never which ones. In the
+browser it's the 📦×N on each player's card; in the view it's `holding`. At the
+start of round 4, after the torpedoes below, north, east and south each hold one
+item, and west passed on its second crate:
+
+```json
+{"north": 1, "east": 1, "south": 1, "west": 0}
+```
+
+An item leaves your hand the moment you send it, but the count everyone sees
+only drops when the volley lands. Nobody learns mid-round that you've just
+committed one.
+
+### Cluster
+
+```json
+{"fire": "cluster", "at": "east", "cell": "c5"}
+```
+
+- The cluster lands on `cell` **and the four cells next to it** (up, down, left,
+  right): five shells from you, fewer on an edge or in a corner.
+- The centre must be a cell **you** haven't shot. Arm cells you've already shot
+  are skipped; cells *other players* shot are fine, so you can centre it on
+  someone else's hit.
+- Each cell lands like a lone shell from you: hits score 1 each, and a ship it
+  finishes is your sinking (and your crate).
+- **It's never a Time on Target**, even when another player's shell lands on one
+  of its cells, and **it never sets off a ghost's mine**. A mine on a cell it
+  covers fizzles without a word.
+- You can't aim a shell of this salvo at the cluster's centre, or centre the
+  cluster on a cell one of your shells is already aimed at.
+
+In round 3 west's torpedo hit east's `c5`. In round 4 north centres a cluster on
+that hit: `c5` is already hit and scores nothing, but `c4` and `c6` are new hits,
+and east's cruiser (`c4` to `c7`) goes down. East's sea as north sees it, before
+and after:
+
+```
+east, scrap 12, 4 ship cells afloat     east, scrap 12, 2 ship cells afloat
+  a b c d e f g h                         a b c d e f g h
+8 . . o . o . o o                       8 . . o o o . o o
+7 . . X . . . . .                       7 . . * . . . . .
+6 . . . . . X . .                       6 . . * . . X . .
+5 o o X . . o . .                       5 o o * o . o . .
+4 . . . . . o * *                       4 . . * . . o * *
+3 . . . . . o . .                       3 . . . . . o . .
+2 . . . . * * * .                       2 . . . . * * * .
+1 . . . . . o . .                       1 . . . . . o . .
+  a b c d e f g h                         a b c d e f g h
+```
+
+```
+Round 4: 6 misses.
+{north}'s cluster lands on {east} around c5: 2 hits.
+{south} slips a decoy into the water.
+{north} sinks {east}'s cruiser.
+{north} pulls a crate from the wreck.
+```
+
+The volley's `items` say what it did, with `cells` every cell it landed on and
+`hits` the new hits among them:
+
+```json
+[
+  {
+    "item": "cluster",
+    "from": "north",
+    "sea": "east",
+    "cell": "c5",
+    "cells": ["c5", "c4", "b5", "d5", "c6"],
+    "hits": ["c4", "c6"]
+  },
+  {"item": "decoy-laid", "from": "south"}
+]
+```
+
+(The second item is south's decoy going in. More on that below.)
+
+### Torpedo
+
+```json
+{"fire": "torpedo", "at": "east", "lane": "c"}
+```
+
+A torpedo starts at **your side of the target's sea** and runs straight across
+it. Which side is set by your seat, whoever's sea you aim at:
+
+| You sit | It runs | `lane` |
+|---|---|---|
+| `north` | down a column, from row 8 | a column, `"a"` to `"h"` |
+| `south` | up a column, from row 1 | a column, `"a"` to `"h"` |
+| `east` | along a row, from column `h` westward | a row, `"1"` to `"8"` |
+| `west` | along a row, from column `a` eastward | a row, `"1"` to `"8"` |
+
+- It **stops at the first ship cell that isn't hit yet** (or an unhit cell of a
+  live decoy): a hit for you, like a shell. If that was the ship's last cell,
+  it's your sinking.
+- **Every cell it passes on the way becomes your shot.** Water is a miss; an old
+  hit stays a hit and scores nothing.
+- A lane with nothing left to strike runs clean through: every cell of it
+  becomes yours.
+- It reads the sea **as the volley starts**, after repairs and decoys land and
+  before any shell: a cell another shell hits in the same volley still stops
+  it, and so does a cell repaired or a decoy laid in it.
+- **It never sets off a ghost's mine** (a mine on a cell it runs over fizzles)
+  and is never part of a Time on Target.
+- Any lane with at least one cell you haven't shot is yours to fire down.
+
+In round 3 everyone fires a torpedo, one from every side. North, south and west
+aim at east; east aims at north. East's sea as north sees it, before and after:
+
+```
+east, scrap 11, 7 ship cells afloat     east, scrap 12, 4 ship cells afloat
+  a b c d e f g h                         a b c d e f g h
+8 . . . . . . o o                       8 . . o . o . o o
+7 . . . . . . . .                       7 . . X . . . . .
+6 . . . . . . . .                       6 . . . . . X . .
+5 . . . . . . . .                       5 o o X . . o . .
+4 . . . . . . * *                       4 . . . . . o * *
+3 . . . . . . . .                       3 . . . . . o . .
+2 . . . . * * * .                       2 . . . . * * * .
+1 . . . . . . . .                       1 . . . . . o . .
+  a b c d e f g h                         a b c d e f g h
+```
+
+North's ran down column `c` from the top and struck `c7` at once. South's came up
+column `f` from the bottom, over the sunk destroyer at `f2`, and struck the
+frigate at `f6`. West's ran along row 5 from the left and struck `c5`. And
+north's own sea, as east sees it: east's torpedo came in along row 6 from the
+right, crossed the sunk submarine at `e6` and struck `d6`.
+
+```
+north, scrap 11, 7 ship cells afloat     north, scrap 12, 6 ship cells afloat
+  a b c d e f g h                          a b c d e f g h
+8 . . . . . . o o                        8 . . . . . . o o
+7 . . . . . . . .                        7 . . . . . . . .
+6 . . . . * . . .                        6 . . . X * o o o
+5 . . . . * . * .                        5 . . . . * . * .
+4 . . . . . . * .                        4 . . . . . . * .
+3 . . . . . . * .                        3 . . . . . . * .
+2 . . . . . . . .                        2 . . . . . . . .
+1 . . . . . . . .                        1 . . . . . . . .
+  a b c d e f g h                          a b c d e f g h
+```
+
+```
+Round 3: 4 misses.
+{north}'s torpedo runs down {east}'s lane c and strikes at c7.
+{east}'s torpedo runs down {north}'s lane 6 and strikes at d6.
+{south}'s torpedo runs down {east}'s lane f and strikes at f6.
+{west}'s torpedo runs down {east}'s lane 5 and strikes at c5.
+```
+
+In the volley, `path` is every cell the torpedo ran through, from its edge, and
+`struck` the cell it hit (`null` when it ran clean through):
+
+```json
+[
+  {
+    "item": "torpedo",
+    "from": "north",
+    "sea": "east",
+    "lane": "c",
+    "path": ["c8", "c7"],
+    "struck": "c7"
+  },
+  {
+    "item": "torpedo",
+    "from": "east",
+    "sea": "north",
+    "lane": "6",
+    "path": ["h6", "g6", "f6", "e6", "d6"],
+    "struck": "d6"
+  },
+  {
+    "item": "torpedo",
+    "from": "south",
+    "sea": "east",
+    "lane": "f",
+    "path": ["f1", "f2", "f3", "f4", "f5", "f6"],
+    "struck": "f6"
+  },
+  {
+    "item": "torpedo",
+    "from": "west",
+    "sea": "east",
+    "lane": "5",
+    "path": ["a5", "b5", "c5"],
+    "struck": "c5"
+  }
+]
+```
+
+### Repair
+
+```json
+{"use": "repair", "cell": "f6"}
+```
+
+- `cell` is a **hit cell of one of your own ships that is still afloat**. Never
+  a sunk ship, and never a decoy.
+- The cell is unhit again: your fleet has one more ship cell afloat. It's unshot
+  again too, so anyone may fire at it, including whoever hit it.
+- **Repairs land before the shells.** A shell aimed at that cell in the same
+  volley hits it all over again.
+- **Everyone sees the welding spark**, drawn `r`, until the cell is shot again.
+  There's no hiding a repair: hits are public, so a hit that vanished would name
+  the cell anyway.
+
+In round 5 east welds the hit south's torpedo put on its frigate at `f6`. East's
+sea as north sees it, before and after:
+
+```
+east, scrap 12, 2 ship cells afloat     east, scrap 12, 3 ship cells afloat
+  a b c d e f g h                         a b c d e f g h
+8 . . o o o . o o                       8 . o o o o . o o   fog lifted: 1 afloat
+7 . . * . . . . .                       7 . . * . . . . .
+6 . . * . . X . .                       6 . . * . . r . .
+5 o o * o . o . .                       5 o o * o . o . .
+4 . . * . . o * *                       4 . . * . . o * *
+3 . . . . . o . .                       3 . . . . . o . .
+2 . . . . * * * .                       2 . . . . * * * .
+1 . . . . . o . .                       1 o . . . . o . .
+  a b c d e f g h                         a b c d e f g h
+```
+
+```
+Round 5: {west} hits {south} at g5 and 4 misses.
+{west} drops a sonar buoy on {south}'s sea at g4.
+{east} welds the hit at f6 back together.
+The fog lifts from row 8.
+```
+
+West's hit at `g5` that round is the next story.
+
+### Decoy
+
+```json
+{"use": "decoy", "at": "g5", "facing": "east"}
+```
+
+- A decoy is a **fake two-cell ship on your own sea**, placed like a ship: its
+  first cell and `east` or `north`. Both cells must be open water no shell has
+  landed on.
+- **One live decoy at a time.** Once it's found you may lay another.
+- It goes in **before the shells** of the volley you lay it in.
+- The table hears **that** you laid one, never where: "{south} slips a decoy
+  into the water."
+- **A hit on a decoy looks and pays exactly like a real hit**: an `X` on
+  everyone's board, `hit` in the volley, 1 scrap and a hit landed for the
+  shooter, and one less ship cell afloat on your sea as everyone else sees it.
+- **When both cells are hit, it's found.** The shot that finishes it reads
+  `decoy`, the cells turn to driftwood (`~`), and your afloat count comes back.
+  Finding it pays no sinking scrap and no crate, and it's never in `sunk`.
+- **Guns never count a decoy.** It isn't a ship: it never fires, and finding it
+  silences nothing.
+
+In round 4 south lays a decoy on `g5` and `h5`. In its own drawing it's `d`,
+and `x` where it's been hit. South's sea before and after west's shell at `g5`
+in round 5:
+
+```
+south (you), scrap 12, 7 ship cells afloat     south (you), scrap 12, 7 ship cells afloat
+  a b c d e f g h                                a b c d e f g h
+8 C C C C . . o o                              8 C C C C . . o o
+7 . . . . * . . .                              7 . . . . * . . .
+6 . . . . * . . .                              6 . . . . * . . .
+5 . . . . . . d d                              5 . . . . . . x d
+4 . . . . . . . .                              4 . . . . . . . .
+3 . . F F F . . *                              3 . . F F F . . *
+2 . . . . . . . *                              2 . . . . . . . *
+1 o . . . . . . *                              1 o . . . . . . *
+  a b c d e f g h                                a b c d e f g h
+```
+
+Your own heading counts your real ships only: it still reads 7. Your live decoy
+is in your view's `mySea.decoy`, for you alone:
+
+```json
+{"cells": ["g5", "h5"], "hits": []}
+```
+
+West sees a hit. South's sea as west sees it after round 4 and after round 5:
+the count of ship cells afloat drops to 6.
+
+```
+south, scrap 12, 7 ship cells afloat     south, scrap 12, 6 ship cells afloat
+  a b c d e f g h                          a b c d e f g h
+8 . . . . . . o o                        8 . . . . . . o o   fog lifted: 4 afloat
+7 . . . . * . . .                        7 . . . . * . . .
+6 . . . . * . . .                        6 . . . . * . . .
+5 . . . . . . . .                        5 . . . . . . X .
+4 . . . . . . . .                        4 . . . . . . . .
+3 . . . . . . . *                        3 . . . . . . . *
+2 . . . . . . . *                        2 . . . . . . . *
+1 o . . . . . . *                        1 o . . . . . . *
+  a b c d e f g h                          a b c d e f g h
+                                         Your sonar buoy at g4 (round 5) hears 0 ship cells afloat in f3–h5.
+```
+
+In round 6 west fires at `h5`, next to its hit, and finds the truth:
+
+```
+Round 6: 6 misses.
+{west}'s shell finds {south}'s DECOY — nothing but driftwood.
+The fog lifts from row 1.
+```
+
+```
+south, scrap 12, 7 ship cells afloat
+  a b c d e f g h
+8 . . . . . . o o   fog lifted: 4 afloat
+7 . . . . * . . .
+6 . . . . * . . .
+5 . . . . . . ~ ~
+4 . . . . . . . .
+3 . . . . . . . *
+2 . . . . . . . *
+1 o . . . . . . *   fog lifted: 0 afloat
+  a b c d e f g h
+Your sonar buoy at g4 (round 5) hears 0 ship cells afloat in f3–h5.
+```
+
+The count is back to 7. In the volley, west's shell reads `decoy`, and `items`
+lists the decoy with its cells and `by`, every player who hit it in the volley
+that found it:
+
+```json
+{
+  "shells": [
+    {"from": "west", "sea": "south", "cell": "h5", "result": "decoy", "ship": null, "blast": false},
+    {"from": "west", "sea": "south", "cell": "g8", "result": "miss", "ship": null, "blast": false}
+  ],
+  "items": [{"item": "decoy", "sea": "south", "cells": ["g5", "h5"], "by": ["west"]}]
+}
+```
+
+### What sees through a decoy
+
+- **Sonar buoys and fog counts count real ship cells only.** In round 5 west
+  dropped a buoy at `g4`, whose square takes in `g5` and `h5`. It heard **0**
+  ship cells afloat, in the same volley that showed west a hit at `g5`. A hit
+  the sonar can't hear is a decoy.
+- A ghost's mine on a live decoy **backfires it**: both cells go up for the
+  shooter, and it's found on the spot.
+- One small lie on top: while a fleet is alive, its public afloat count **never reads
+  below 1**, even when decoy hits push it there. A fleet that's out reads 0.
+
+### How items are told
+
+Items are as secret as shells until the volley lands: a crate answer is told as
+"opens a crate", an item as "is ready", like any shot. Once it lands, the
+round's story tells each item, in seat order, after the buoys and Time on
+Targets:
+
+```
+{north}'s cluster lands on {east} around c5: 2 hits.
+{north}'s cluster lands on {east} around c5: all water.
+{north}'s torpedo runs down {east}'s lane c and strikes at c7.
+{north}'s torpedo runs down {east}'s lane c and runs clean through.
+{east} welds the hit at f6 back together.
+{south} slips a decoy into the water.
+{west}'s shell finds {south}'s DECOY — nothing but driftwood.
+Backfire! {west}'s mine was sitting on {south}'s DECOY. {north}'s shell blows it out of the water.
+{north} pulls a crate from the wreck.
+```
+
+A decoy found by a cluster or a torpedo says so (`{north}'s cluster finds…`),
+and two finders read `{north} and {east}'s shells find…`. The crate lines
+follow the sinkings and any tricks, one for each crate.
+
+**In the browser:** when a crate opens, a card shows **📦 Crate! Pick one** with
+its three items; click one, or **Pass** (with two in hand, each card offers
+**Swap out** one of yours). Your items sit in a tray under your salvo controls:
+click one and aim it. A cluster shows its plus, a torpedo lights its lane from
+your side, a repair makes your fleet's hits clickable, and a decoy shows its two
+cells on your sea (**R** turns it).
 
 ---
 
@@ -937,6 +1394,14 @@ round share a place.
 15. **A hit you see may be fake.** A false splash shows one player one hit for
     one round. It never moves a fog count or a sonar reading, and its
     "shooter" fired one shell too many.
+16. **Sinking a ship pays a crate.** One for every ship you help sink, owed
+    before you're ready. You hold two items at most.
+17. **A hit can be driftwood.** A decoy takes hits like a ship until both its
+    cells are hit. Sonar and the fog never count it.
+18. **Your torpedo comes from your side.** Your seat sets which way it runs,
+    whoever's sea you aim at.
+19. **Everyone knows how many items you hold, never which.** And the count only
+    drops when the volley lands.
 
 ---
 
@@ -967,6 +1432,10 @@ round share a place.
   as a big number.
 - **Read the rows.** A lifted row with as many ships afloat as unshot cells is a
   row of sure hits; a row reading `0` is water.
+- **Spend your crates.** A cluster centred on someone else's hit finds the rest
+  of the ship. A torpedo searches a whole lane for one gun. A repair on a ship
+  one hit from sinking keeps a gun firing. A decoy laid early soaks up shells.
+  And when a pair of hits won't sink, buoy it before you spend more.
 - **Haunt with purpose.** As a ghost, mine where the living will shoot but a
   ship probably isn't. Next to a fresh hit is where everyone aims, but it's
   also where a ship most likely lies, and a Backfire only helps the shooter.
@@ -992,7 +1461,7 @@ round share a place.
 
 Each turn the host gives you `legal`: every command you may send right now, in
 exactly the shape the command takes. Pick one and send it unchanged. There are
-six shapes: four for a fleet, two for a ghost.
+twelve shapes: ten for a fleet, two for a ghost.
 
 **Place a ship** (deployment only):
 
@@ -1019,9 +1488,10 @@ first cell; `facing` is `east` (the hull runs toward `h`) or `north` (toward row
 `at` is a living opponent's seat; `cell` is a cell of that sea you haven't
 already shot (blast cells you were part of count as shot).
 
-Each round you send one fire command per ship afloat (`guns[you]` in your view),
-one at a time; you're asked again until your salvo is in, and `legal` shrinks
-as you go (no cell aimed twice, no second buoy).
+Each round you send one shot per ship afloat (`guns[you]` in your view): a
+shell, a buoy or an item, one at a time. You're asked again until your salvo is
+in, and `legal` shrinks as you go (no cell aimed twice, no second buoy, no second
+item).
 
 **Drop a sonar buoy** as one of those shots (at most one a round):
 
@@ -1032,6 +1502,46 @@ as you go (no cell aimed twice, no second buoy).
 `cell` is the centre of the 3 × 3 the buoy listens to, `b2` to `g7`, and not a
 centre where you already have a buoy on that sea. After the volley, the reading
 is in your view's entry for that sea, under `sonar`.
+
+**Use an item** as one of those shots (one a round, and only one you hold; see
+[the Arsenal](#the-arsenal)):
+
+```json
+{"fire": "cluster", "at": "east", "cell": "c5"}
+```
+
+`cell` is the centre: a cell of that sea you haven't shot, and not one a shell of
+this salvo is aimed at.
+
+```json
+{"fire": "torpedo", "at": "east", "lane": "c"}
+```
+
+`lane` is a column, `"a"` to `"h"`, if you sit north or south, and a row, `"1"`
+to `"8"`, if you sit east or west (a number is taken as its row). Any lane of
+that sea with a cell you haven't shot.
+
+```json
+{"use": "repair", "cell": "f6"}
+```
+
+`cell` is a hit cell of one of your own ships still afloat.
+
+```json
+{"use": "decoy", "at": "g5", "facing": "east"}
+```
+
+`at` and `facing` place the decoy's two cells on your own sea like a ship's:
+both unshot, clear of your ships, and only while you have no live decoy.
+
+**Answer a crate** (whenever one is open, before you can be ready):
+
+```json
+{"crate": "torpedo"}
+```
+
+takes a card; `{"crate": "torpedo", "drop": "repair"}` swaps one of your two
+items for it (only with two in hand); `{"crate": "pass"}` leaves the crate.
 
 **Plant a mine** (a ghost only, one trick a round):
 
@@ -1060,9 +1570,21 @@ living opponent's sea, in seat order, then every buoy centre you haven't used on
 each of those seas: 192 shells and 108 buoys at the start of a four-player game
 (three seas of 64 cells and 36 centres), 128 and 72 with three players, 64 and
 36 with two, shrinking as you shoot and listen (and as this round's salvo fills:
-cells you've aimed this round drop out, and all buoys once one is in). `legal`
-is empty when you owe nothing: once your fleet is down, once
-your salvo is in, once you're out (and not a ghost), and once the match is over.
+cells you've aimed this round drop out, and all buoys once one is in).
+
+**A crate comes first.** With a crate open, `legal` starts with its answers:
+each card (or, with two items in hand, each card with each item you could
+drop), then `{"crate": "pass"}`. After the shells and buoys come your items, one
+kind at a time in the order you hold them: a repair lists every hit cell of your
+ships afloat; a decoy every placement on your sea that fits (`a1` first, `east`
+before `north`; none while your decoy is live); a cluster every centre you could
+use on each living sea; a torpedo every lane with a cell you haven't shot, on
+each living sea. Once an item is in, the items drop out; once your salvo is in,
+only the crate's answers are left.
+
+`legal` is empty when you owe nothing: once your fleet is down, once
+your salvo is in and every crate is answered, once you're out (and not a
+ghost), and once the match is over.
 
 A ghost's `legal` is its tricks: mines first (every unshot cell of every living
 sea, in seat order, `a1` first, less the cells you've mined), then false
@@ -1088,8 +1610,8 @@ Each round (and deployment) has one 90-second clock, the same for everyone;
 other players committing never restarts it. At 0 the autopilot moves for every
 seat that still owes something: it places every ship still in port during
 deployment, and sends the rest of your salvo in a round, one random legal
-command at a time (shells, and now and then a buoy), and a random trick for a
-ghost. Each counts as one miss, and
+command at a time (shells, now and then a buoy or one of your items, and a
+random answer to any crate you owe), and a random trick for a ghost. Each counts as one miss, and
 three misses in a row forfeit the match (a ghost fades: its placement stays,
 its mines and splashes go).
 
@@ -1102,17 +1624,17 @@ fetch the match and aim again).
 
 | Code | Meaning |
 |---|---|
-| `BAD_COMMAND` | Not an object, the wrong shape for the phase (a shell during deployment, a placement during a round, a shell from a ghost), or `at` or `cell` isn't a string, or `trick` isn't `mine` or `splash` |
+| `BAD_COMMAND` | Not an object, the wrong shape for the phase (a shell during deployment, a placement during a round, a shell or an item from a ghost), or `at`, `cell` or `lane` is missing or the wrong type, or `trick` isn't `mine` or `splash`, or `use` isn't `repair` or `decoy` |
 | `BAD_SHIP` | No such ship, or that ship is already deployed |
 | `BAD_CELL` | The cell isn't on an 8 × 8 sea (`a1` to `h8`) |
-| `BAD_FACING` | `facing` isn't `east` or `north` (or is missing) |
+| `BAD_FACING` | `facing` isn't `east` or `north` (or is missing), for a ship or a decoy |
 | `OFF_SEA` | The hull would run off the sea |
 | `OVERLAP` | The hull would cross one of your ships |
 | `BAD_TARGET` | `at` isn't a living opponent: your own seat, a seat not in the match, or one that's out (for a ghost's trick: `at` isn't a living sea) |
-| `ALREADY_FIRED` | You already shot that cell of that sea (directly or in a blast) |
+| `ALREADY_FIRED` | You already shot that cell of that sea (directly, in a blast, or with an item), for a shell or a cluster's centre |
 | `BAD_BUOY` | A buoy's centre must keep its 3 × 3 on the sea: `b2` to `g7` |
 | `ALREADY_BUOYED` | You already have a buoy at that centre of that sea (its reading stays live) |
-| `ALREADY_AIMED` | Another shell of this round's salvo is already aimed at that cell of that sea |
+| `ALREADY_AIMED` | Another shell of this round's salvo, or your cluster's centre, is already aimed at that cell of that sea |
 | `ONE_BUOY` | You already have a buoy in this round's salvo |
 | `NOT_A_GHOST` | A trick from a fleet still afloat: only a ghost plays tricks |
 | `ALREADY_SHOT` | A trick on a cell a shell has already landed on (anyone's shell) |
@@ -1121,7 +1643,20 @@ fetch the match and aim again).
 | `TOO_FEW` | A false splash with fewer than three fleets afloat |
 | `LAST_CELL` | A false splash on a sea down to its last ship cell (its fake would read "0 afloat") |
 | `BAD_FOOL` | `fool` isn't a living seat, or is the owner of the sea the splash is on |
-| `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, your whole salvo (or your ghost's trick) is in, you're a ghost with nothing to play, or you're out. The engine itself can also answer `409 NOT_YOUR_TURN` when you owe nothing this round, for instance after your last shot is already in |
+| `ONE_ITEM` | You already have an item in this round's salvo |
+| `NO_ITEM` | You don't hold that item |
+| `SALVO_DONE` | Your whole salvo is in and a crate is still open: answer the crate (a card, or pass) |
+| `BAD_LANE` | No such lane for your seat: a column `a` to `h` from north or south, a row `1` to `8` from east or west |
+| `LANE_SPENT` | You've already shot every cell of that lane on that sea |
+| `NOT_HIT` | A repair on a cell that isn't a hit on one of your ships |
+| `SHIP_SUNK` | A repair on a ship that's already sunk |
+| `ONE_DECOY` | Your decoy is still live: one at a time |
+| `DECOY_PLACE` | A decoy's two cells must lie on your sea, unshot, clear of your ships |
+| `NO_CRATE` | A crate answer with no crate open |
+| `NOT_IN_CRATE` | That card isn't in your open crate |
+| `HANDS_FULL` | You hold two items: add a `drop` to swap, or pass |
+| `BAD_DROP` | A `drop` while you have room, or a `drop` you don't hold |
+| `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, your whole salvo (or your ghost's trick) is in and no crate is open, you're a ghost with nothing to play, or you're out. The engine itself can also answer `409 NOT_YOUR_TURN` when you owe nothing this round, for instance after your last shot is already in |
 | `MATCH_OVER` (409) | The match is over. The engine answers this before the game is asked, so it is the only code you will see for a move into a finished match |
 | `NO_ROOM` | Random deployment found no room for a ship (it can't happen with this fleet; listed for completeness) |
 
@@ -1131,10 +1666,11 @@ Your view is plain JSON, and it only ever contains what your seat is allowed to
 know. It never contains another fleet's unhit ships (until the match is over),
 anyone else's shell that hasn't landed yet (your own this round are in
 `myOrders`, for you alone), or a ghost's trick before it's revealed (a ghost's
-own are in `myTricks`). One thing in it can be false: if a ghost plays a
-[false splash](#false-splash) on you, the fake hit is in your view, your
-`targets` and your `lastVolley`, exactly like a real one, until the next
-volley takes it back.
+own are in `myTricks`), or which items anyone else holds. Two things in it can
+be false: if a ghost plays a [false splash](#false-splash) on you, the fake hit
+is in your view, your `targets` and your `lastVolley`, exactly like a real one,
+until the next volley takes it back; and a hit on a live [decoy](#decoy) is a
+hit in everyone's view until the decoy is found.
 
 | Field | Meaning |
 |---|---|
@@ -1145,8 +1681,10 @@ volley takes it back.
 | `ready` | During deployment, the seats whose fleets are complete; during a round, the seats whose whole salvo (or ghost's trick) is in. Never what they sent |
 | `ghosts` | The sunk fleets still at the table, in seat order (`[]` once the match is over) |
 | `guns` | During a round, how many shots each living seat fires this round: its ships afloat. Ghosts have no entry |
-| `myOrders` | During a round, the shots you've already sent this round, each `{fire, at, cell}`, in order. Yours alone: `[]` for everyone else and for spectators |
+| `myOrders` | During a round, the shots you've already sent this round, each `{fire, at, cell}`, in order: `fire` is `shell`, `buoy` or the item's name; a torpedo adds its `lane` (its `cell` is where it enters), a repair or a decoy has your own seat as `at`, and a decoy adds its `facing`. Yours alone: `[]` for everyone else and for spectators |
 | `myTricks` | If you're a ghost, your own mischief: `{mines, splashes, pending}`, below. `null` for everyone else |
+| `holding` | How many items each living seat holds, by seat; never which. An item sent this round still counts until the volley lands |
+| `myArsenal` | Yours alone: `{items, crate}`, the items you hold and your open crate's three cards (`null` when none is open). `null` for spectators and once you're out |
 | `mySea` | Your own sea (below); `null` for a spectator |
 | `targets` | One `TargetView` per opponent's sea (spectators: every sea), fleets that are out included and marked `out` |
 | `lastVolley` | The last resolved round, a `Volley`, or `null` before round 1 lands |
@@ -1157,10 +1695,12 @@ volley takes it back.
 | `endReason` | `last-afloat`, `tiebreak`, `round-cap`, a forfeit reason, or `null` |
 | `ascii` | The whole table drawn in text (below) |
 
-**`mySea`** is `{ships, port, shots}`. `ships` lists all four ships in fleet
-order, each `{id, cells, hits}` (a ship still in port has `cells: []`); `port`
-lists the ships not yet placed; `shots` maps every cell shot at your sea to
-`"hit"` or `"miss"`, in the order the cells were first shot. North's after round 5:
+**`mySea`** is `{ships, port, shots, decoy, repaired}`. `ships` lists all four
+ships in fleet order, each `{id, cells, hits}` (a ship still in port has
+`cells: []`); `port` lists the ships not yet placed; `shots` maps every cell
+shot at your sea to `"hit"` or `"miss"`, in the order the cells were first shot
+(a hit on your decoy reads `"hit"`); `decoy` is your live decoy, `{cells, hits}`,
+or `null`; `repaired` lists the welding sparks on your sea. North's after round 5:
 
 ```json
 {
@@ -1190,13 +1730,15 @@ splash), else `null`. West's at the start of round 4, in the
 | Field | Meaning |
 |---|---|
 | `sea` | Whose sea it is |
-| `mine` | Your shots at that sea, each `{cell, result}`, in the order the cells were first shot by anyone: a cell someone else shot earlier comes before a cell you shot earlier, so the last entry is not necessarily your latest shot (use `lastVolley` for what you just fired). `result` is `miss`, `hit`, or `sunk` once the ship there has gone down. Blast cells you were part of are included. Empty for spectators |
-| `hits` | Every hit cell anyone has landed there, in board order (`a1` first) |
+| `mine` | Your shots at that sea, each `{cell, result}`, in the order the cells were first shot by anyone: a cell someone else shot earlier comes before a cell you shot earlier, so the last entry is not necessarily your latest shot (use `lastVolley` for what you just fired). `result` is `miss`, `hit`, `sunk` once the ship there has gone down, or `decoy` once the decoy there is found. Blast and item cells you were part of are included. Empty for spectators |
+| `hits` | Every hit cell anyone has landed there, in board order (`a1` first). A live decoy's hits are here like any others; a found decoy's cells leave for `decoys` |
 | `misses` | Every miss anyone has landed there, in board order |
 | `sunk` | Each sunk ship, `{ship, cells}` |
-| `lifted` | For each lifted row, `{row, afloat}`: how many ship cells in that row are still unhit. A count, never which cells |
-| `sonar` | Your sonar buoys on that sea, oldest first, each `{cell, round, cells, afloat}`: its centre, the round you dropped it, the nine cells it listens to, and how many ship cells among them are still unhit (live). Yours alone: every other viewer gets `[]` |
-| `afloat` | Ship cells still unhit: 12 minus the hits |
+| `decoys` | Each decoy found on that sea, its two cells, oldest first |
+| `repaired` | The welding sparks on that sea: cells repaired and not shot since, oldest first |
+| `lifted` | For each lifted row, `{row, afloat}`: how many ship cells in that row are still unhit. A count, never which cells, and never a decoy's |
+| `sonar` | Your sonar buoys on that sea, oldest first, each `{cell, round, cells, afloat}`: its centre, the round you dropped it, the nine cells it listens to, and how many ship cells among them are still unhit (live), never counting a decoy. Yours alone: every other viewer gets `[]` |
+| `afloat` | Ship cells still unhit as the table sees it: 12 minus the hits. Never below 1 while the fleet is living (decoy hits can't push it to 0); 0 once it's out |
 | `out` | `true` once that fleet is out (sunk, or its player forfeited): still on view, no longer a target |
 | `revealed` | Only once the match is over: every ship, `{id, cells, hits}` |
 | `mines` | Only once the match is over: every mine still live on that sea, `{ghost, cell}` |
@@ -1236,12 +1778,45 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
 }
 ```
 
+South's sea from west's view after round 6 of the [decoy](#decoy) story, the
+decoy found:
+
+```json
+{
+  "sea": "south",
+  "mine": [
+    {"cell": "h8", "result": "miss"},
+    {"cell": "g8", "result": "miss"},
+    {"cell": "a1", "result": "miss"},
+    {"cell": "g5", "result": "decoy"},
+    {"cell": "h5", "result": "decoy"}
+  ],
+  "hits": ["h1", "h2", "h3", "e6", "e7"],
+  "misses": ["a1", "g8", "h8"],
+  "sunk": [{"ship": "destroyer", "cells": ["h1", "h2", "h3"]}, {"ship": "submarine", "cells": ["e6", "e7"]}],
+  "decoys": [["g5", "h5"]],
+  "repaired": [],
+  "lifted": [{"row": 8, "afloat": 4}, {"row": 1, "afloat": 0}],
+  "sonar": [
+    {
+      "cell": "g4",
+      "round": 5,
+      "cells": ["f3", "g3", "h3", "f4", "g4", "h4", "f5", "g5", "h5"],
+      "afloat": 0
+    }
+  ],
+  "afloat": 7,
+  "out": false
+}
+```
+
 **`Volley`** (`lastVolley`) is `{round, shells, buoys, blasts, sunk, eliminated, tricks, items}`:
 
 - `shells`: every shell of the round, in seat order, each a **`ShellResult`**:
   `{from, sea, cell, result, ship, blast}`. `result` is `miss`, `hit` or `sunk`
-  for the shell's own cell; a shell at a cell that was already hit reads `hit`
-  and scores nothing. `ship` is named only when this shell sank it (it landed a new hit on a ship that went down in this volley; several shells of one salvo can share a sinking), else `null`.
+  for the shell's own cell, or `decoy` for a shell that landed one of the hits
+  that found a decoy in this volley; a shell at a cell that was already hit reads `hit` and scores
+  nothing, and a shell at a found decoy's cell reads `miss`. `ship` is named only when this shell sank it (it landed a new hit on a ship that went down in this volley; several shells of one salvo can share a sinking), else `null`.
   `blast` is `true` when the shell was part of a Time on Target.
 - `buoys`: each sonar buoy dropped this round, `{from, sea, cell}`, in seat
   order. Where it fell, never what it heard.
@@ -1259,13 +1834,21 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
     own seas. Any ship it sank is in `sunk`, credited to the ghost.
   - `{kind: "mine", ghost, sea, cell, shooters, result: "backfire", ship}`: the
     mine sat on `ship`, which sank whole for the shooters (it's in `sunk` too).
+    `ship` is `"decoy"` when the mine sat on a live decoy: both its cells were
+    hit for the shooters and it's found (in `items`, never in `sunk`).
   - `{kind: "splash", ghost, fool, sea, cell}`: a false splash taken back.
-- `items`: the Arsenal items used this volley, in seat order, `[]` when none:
+- `items`: the [Arsenal](#the-arsenal) items used this volley, in seat order,
+  then the decoys found in it; `[]` when none:
   - `{item: "cluster", from, sea, cell, cells, hits}`: `cell` the centre,
-    `cells` the cells it landed on, `hits` the new hits among them.
+    `cells` the cells it landed on (cells `from` had already shot are skipped),
+    `hits` the new hits among them.
   - `{item: "torpedo", from, sea, lane, path, struck}`: `path` every cell it
     ran through from its edge, `struck` the cell it hit, or `null` when it ran
     clean through.
+  - `{item: "repair", from, cell}`: the cell welded on `from`'s own sea.
+  - `{item: "decoy-laid", from}`: `from` laid a decoy. Never where.
+  - `{item: "decoy", sea, cells, by}`: a decoy found on `sea`, its two cells,
+    and `by` every seat that hit it in this volley.
 
 The round 4 volley from the worked round, with no blast and no sinking:
 
@@ -1315,6 +1898,19 @@ in its drawing only, and a legend line explains the `M`. Once the match is
 over, every live mine left on open water shows as `M` on its sea, for everyone.
 A mine on a ship shows the ship's letter instead; `TargetView.mines` lists them
 all.
+
+The Arsenal adds three marks. On your own sea, your live decoy is `d`, and `x`
+where it's been hit. On any sea, a found decoy is `~` and a welding spark is
+`r`. Each comes with its legend line when it's on show:
+
+```
+d = your decoy (x where it is hit)
+~ = a decoy, found: driftwood
+r = a repaired cell (a welding spark, until it is shot again)
+```
+
+The line of your salvo lists each shot you've sent, an item by name: `Your
+salvo: 1 of 2 sent (torpedo at east lane c).`
 
 North's whole view at the start of round 6:
 
@@ -1382,7 +1978,9 @@ The move log and the table chat never carry an aim before it lands. A command is
 described only as "fires", "deploys a ship" or "deploys the fleet", and a commit
 is narrated as "is ready", whether a person, a machine or the autopilot sent it.
 A ghost's trick is described as "plays a dirty trick" and narrated as "is up to
-something…", never which trick, where or on whom.
+something…", never which trick, where or on whom. An item is described as
+"fires" and narrated as "is ready", like a shell; a crate answer is described
+and narrated as "opens a crate", never which card.
 The round's story is told once it has resolved, in lines like the ones in this
 guide, with each seat written `{seat}` for the platform to fill in a name.
 
@@ -1396,6 +1994,8 @@ ships tell you which lengths are gone. The fog's row counts and your sonar
 readings are constraints on top: a row or square reading `0` is water, one whose
 count equals its unshot cells is all ships, and in between the count tells you
 how dense it is. When the heatmap is flat, a buoy usually beats a guess.
+Remember the decoys: a pair of hits that never sinks, with no fog count or
+sonar reading to back it, may be driftwood.
 
 Solver scripts are allowed, for humans too: a person running a heatmap in another
 window is just **a silicon in a trench coat**, and we take it as a compliment.
@@ -1404,8 +2004,11 @@ That's a joke, not a rule; nobody could enforce a ban anyway.
 `@cs/salvo` exports helpers for simulations: `cellIndex`, `cellName`,
 `neighbours` (the up to eight cells around a cell), `hullCells(at, length,
 facing)`, `liftedRows(round)`, `isBuoyCentre(cell)`, `buoyCells(centre)`,
-`renderAscii(view)`, and the constants `SHIPS`, `SIZE` (8), `FOG_FROM` (6),
-`ROUND_CAP` (30), `TURN_SECONDS` (90) and `MINE_LIMIT` (3). Your view
+`renderAscii(view)`, `clusterCells(cell)` (a cluster's cells, centre first),
+`lanesFor(seat)` and `torpedoLane(seat, lane)` (a torpedo's cells, in the order
+it runs), and the constants `SHIPS`, `SIZE` (8), `FOG_FROM` (6),
+`ROUND_CAP` (30), `TURN_SECONDS` (90), `MINE_LIMIT` (3), `ITEMS` and
+`ITEM_LIMIT` (2). Your view
 isn't the game state (it can't be, the fleets are hidden), so you can't replay
 `apply` on it; reason over the view instead.
 
@@ -1427,5 +2030,7 @@ isn't the game state (it can't be, the fleets are hidden), so you can't replay
 | **Scrap** | Hit 1, sinking 3, knockout half the victim's scrap |
 | **Win** | Last fleet afloat; same-volley knockouts go to most scrap, then most hits, then a seeded coin |
 | **Round cap** | After round 30: most ship cells afloat, then the tiebreak |
+| **Crates** | One per ship you help sink (never for a ghost or a decoy): three item cards, owed before you're ready: `{"crate": "torpedo"}`, `{"crate": "torpedo", "drop": "repair"}` (swap, when you hold 2) or `{"crate": "pass"}`; hold 2 at most; the table sees how many, never which |
+| **Items** | One a round, for one gun: cluster `{"fire": "cluster", "at": "east", "cell": "c5"}` (a plus of 5), torpedo `{"fire": "torpedo", "at": "east", "lane": "c"}` (from your side to the first ship), repair `{"use": "repair", "cell": "f6"}` (a hit on your fleet, before the shells, spark public), decoy `{"use": "decoy", "at": "g5", "facing": "east"}` (a fake two-cell ship; sonar and fog see through it) |
 | **Ghosts** | A sunk fleet stays as a ghost, placement fixed, and plays one trick a round: a hidden mine `{"trick": "mine", "at": "east", "cell": "e5"}` (open water hits the shooter's own sea; a ship sinks whole, for the shooter) or a false splash `{"trick": "splash", "fool": "south", "at": "east", "cell": "e5"}` (one fake hit, one player, one round) |
 | **Clock** | 90 s a round; the autopilot moves at random; 3 misses in a row forfeit |
