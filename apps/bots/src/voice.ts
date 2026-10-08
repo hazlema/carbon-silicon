@@ -115,7 +115,7 @@ export function describeMoment(m: Moment): string {
     case 'crate':
       return 'You just pulled a crate from the wreck of a ship you sank. Crow about it. One line.';
     case 'fooled':
-      return "Someone just shot your decoy and thinks they hit a ship. Gloat (without saying it's a decoy until it's revealed). One line.";
+      return 'Someone just blew up your decoy — they wasted their shots on driftwood. Gloat. One line.';
     case 'ambient':
       return `The lobby has been quiet; say something to liven it up: grumble, reminisce, or dare someone to play you.`;
     case 'dm':

@@ -376,7 +376,7 @@ async function playMatch(
         if (big && view.lastMove.seat !== env.you && Math.random() < 0.5) chatter('gotHit');
       }
       // Salvo: once per volley, a word when I sank someone's ship or someone landed a shell on mine,
-      // a crate pulled from a wreck, my decoy taking a shell, and as a ghost: rising from the deep, a
+      // a crate pulled from a wreck, my decoy revealed (a live one hit plays like any hit), and as a ghost: rising from the deep, a
       // trick landing, a mine backfiring. A sunk fleet keeps
       // playing (its tricks), since the loop moves whenever toMove includes it.
       const volley = env.match.gameId === 'salvo' ? (env.view as SalvoView).lastVolley : null;

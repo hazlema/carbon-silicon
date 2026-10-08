@@ -54,7 +54,7 @@ export const gameOver: Personality = {
       trick: ['that splash you were chasing? courtesy of the dead.', 'high score from beyond the grave.', 'extra life: spent on you.'],
       backfire: ['…i meant to do that.', 'glitch in the afterlife. resetting.', 'friendly fire. from a ghost. embarrassing.'],
       crate: ['the wreck left me a present. it always does.', 'loot drop. your ship paid for it.', "a crate from the bottom. i'll put it to work on the rest of you."],
-      fooled: ['a hit. how exciting for you. keep going.', "you found something. i wouldn't celebrate yet.", 'nice shot. aim there again. i insist.'],
+      fooled: ['driftwood. you spent real shells on driftwood.', 'you found my decoy. congratulations on sinking a plank.', 'all those shots and the sea gave you firewood. carry on.'],
     },
   },
 };

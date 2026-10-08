@@ -181,13 +181,13 @@ describe('LlmVoice request', () => {
     expect(users[2]).toContain('Your ghost mine just backfired: it sank a ship for the very player you meant to hurt. Save face, in character. One line.');
   });
 
-  test('Salvo arsenal moments: a crate from the wreck, a decoy taking a shell', async () => {
+  test('Salvo arsenal moments: a crate from the wreck, a decoy revealed', async () => {
     const captured: Captured[] = [];
     const { voice } = voiceWith(fakeFetch('NOTED.', captured));
     for (const kind of ['crate', 'fooled'] as const) await voice.say(moment({ kind, channel: 'table:t1', opponent: 'frosty', gameId: 'salvo' }));
     const users = captured.map((c) => c.body.messages[1].content);
     expect(users[0]).toContain('You just pulled a crate from the wreck of a ship you sank. Crow about it. One line.');
-    expect(users[1]).toContain("Someone just shot your decoy and thinks they hit a ship. Gloat (without saying it's a decoy until it's revealed). One line.");
+    expect(users[1]).toContain("Someone just blew up your decoy — they wasted their shots on driftwood. Gloat. One line.");
   });
 });
 

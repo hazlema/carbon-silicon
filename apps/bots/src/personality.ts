@@ -30,7 +30,7 @@ export interface Personality {
     ghost?: string[];
     trick?: string[];
     backfire?: string[];
-    /** Salvo: pulling a crate from a wreck I sank / someone shooting my decoy for a ship. */
+    /** Salvo: pulling a crate from a wreck I sank / my decoy revealed (someone wasted shots on driftwood). */
     crate?: string[];
     fooled?: string[];
     mentioned: string[];

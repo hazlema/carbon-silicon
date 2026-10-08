@@ -593,8 +593,9 @@ export type VolleyMoment = 'ghost' | 'backfire' | 'trick' | 'crate' | 'fooled' |
  * What the last volley means to me at the table, the strongest first: my own fleet just sank and I
  * stay on as a ghost; my mine backfired (sank a ship for the shooter); my trick landed (a mine that
  * came back as a hit, or my false splash being told); I sank a ship and pull a crate from the wreck
- * (the match goes on and I'm still afloat); someone shot my decoy; I sank someone's ship (in the
- * volley that ends the match: no crate then); someone hit mine.
+ * (the match goes on and I'm still afloat); my decoy was revealed (someone wasted shots on driftwood);
+ * I sank someone's ship (in the volley that ends the match: no crate then); someone hit mine.
+ * A hit on my decoy while it is still live plays like any hit: gloating then would give it away.
  */
 export function volleyMoment(view: SalvoView): VolleyMoment | null {
   const v = view.lastVolley;
@@ -606,23 +607,13 @@ export function volleyMoment(view: SalvoView): VolleyMoment | null {
   if (tricks.some((t) => t.ghost === me && (t.kind === 'splash' || (t.result === 'boomerang' && t.hits.length > 0)))) return 'trick';
   const sank = v.sunk.some((x) => x.by.includes(me) && x.sea !== me);
   if (sank && view.phase !== 'over' && !view.eliminated.includes(me)) return 'crate';
-  if (decoyHitIn(view)) return 'fooled';
+  if (decoyRevealedIn(view)) return 'fooled';
   if (sank) return 'bigCascade';
   if (whoHitMe(view).length > 0) return 'gotHit';
   return null;
 }
 
-/** Did a shot of the last volley land on my decoy (still live, or revealed by it)? */
-function decoyHitIn(view: SalvoView): boolean {
-  const v = view.lastVolley!;
-  const me = view.you!;
-  if ((v.items ?? []).some((x) => x.item === 'decoy' && x.sea === me)) return true;
-  const decoy = new Set(view.mySea?.decoy?.cells ?? []);
-  if (decoy.size === 0) return false;
-  const landed = [
-    ...v.shells.filter((x) => x.sea === me && x.result !== 'miss').map((x) => x.cell),
-    ...v.blasts.filter((x) => x.sea === me).flatMap((x) => x.hits),
-    ...(v.items ?? []).flatMap((x) => (x.item === 'cluster' && x.sea === me ? x.hits : x.item === 'torpedo' && x.sea === me && x.struck ? [x.struck] : [])),
-  ];
-  return landed.some((c) => decoy.has(c));
+/** Was my decoy revealed in the last volley? Public: the volley's items tell it, on my sea. */
+function decoyRevealedIn(view: SalvoView): boolean {
+  return (view.lastVolley!.items ?? []).some((x) => x.item === 'decoy' && x.sea === view.you);
 }

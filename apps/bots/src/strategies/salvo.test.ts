@@ -911,7 +911,7 @@ describe('residents play whole games with the Arsenal', () => {
 });
 
 describe('volleyMoment: crates and decoys', () => {
-  test('my decoy eating a shell is fooled; the shooter just sees a hit', () => {
+  test('my live decoy eating a shell is just a hit (gloating would give it away); its reveal is fooled', () => {
     // South lays a decoy on f8–g8 in round 1 (west's fillers run down h); north shoots f8 in round 2.
     let laid = deployed();
     laid.arsenal.south = ['decoy'];
@@ -920,9 +920,9 @@ describe('volleyMoment: crates and decoys', () => {
     expect(volleyMoment(viewOf(laid, 'south'))).toBeNull();
     let s = volleyOf(laid, { north: [['south', 'f8']] });
     expect(viewOf(s, 'south').mySea!.decoy).toEqual({ cells: ['f8', 'g8'], hits: ['f8'] });
-    expect(volleyMoment(viewOf(s, 'south'))).toBe('fooled');
+    expect(volleyMoment(viewOf(s, 'south'))).toBe('gotHit');
     expect(volleyMoment(viewOf(s, 'north'))).toBeNull();
-    // Both cells shot in one volley reveal it: still fooled (they spent two shells on driftwood).
+    // Both cells shot in one volley reveal it: fooled (they spent their shells on driftwood).
     s = volleyOf(laid, { north: [['south', 'f8']], east: [['south', 'g8']] });
     expect(s.lastVolley!.items).toContainEqual({ item: 'decoy', sea: 'south', cells: ['f8', 'g8'], by: ['north', 'east'] });
     expect(volleyMoment(viewOf(s, 'south'))).toBe('fooled');
@@ -935,15 +935,20 @@ describe('volleyMoment: crates and decoys', () => {
     const onDecoy = { from: 'east', sea: 'south', cell: 'g8', result: 'hit' as const, ship: null, blast: false };
     const onShip = { ...onDecoy, cell: 'a1' };
     const mySea = { ships: [], port: [], shots: {}, decoy: { cells: ['g8', 'h8'], hits: ['g8'] }, repaired: [] };
+    const revealed = { item: 'decoy' as const, sea: 'south', cells: ['g8', 'h8'], by: ['east'] };
     const at = (v: Partial<Volley>, over: Partial<SalvoView> = {}) => volleyMoment(view([], { mySea, lastVolley: volley(v), ...over }));
     expect(at({ tricks: [trick], sunk })).toBe('trick');
-    expect(at({ sunk, shells: [onDecoy, onShip] })).toBe('crate');
-    expect(at({ shells: [onDecoy, onShip] })).toBe('fooled');
-    expect(at({ sunk, shells: [onDecoy] }, { phase: 'over' })).toBe('fooled');
+    expect(at({ sunk, shells: [onDecoy, onShip], items: [revealed] })).toBe('crate');
+    expect(at({ shells: [onDecoy, onShip], items: [revealed] })).toBe('fooled');
+    expect(at({ sunk, shells: [onDecoy], items: [revealed] }, { phase: 'over' })).toBe('fooled');
     expect(at({ sunk, shells: [onShip] }, { phase: 'over' })).toBe('bigCascade');
     expect(at({ shells: [onShip] })).toBe('gotHit');
-    // A cluster or torpedo on the decoy counts too.
-    expect(at({ items: [{ item: 'cluster', from: 'east', sea: 'south', cell: 'g7', cells: ['g7', 'g8'], hits: ['g8'] }] })).toBe('fooled');
-    expect(at({ items: [{ item: 'torpedo', from: 'east', sea: 'south', lane: '8', path: ['h8', 'g8'], struck: 'g8' }] })).toBe('fooled');
+    // A hit on the live decoy, by shell, cluster or torpedo, is never fooled: it reads like any hit (or nothing).
+    expect(at({ shells: [onDecoy] })).toBe('gotHit');
+    expect(at({ sunk, shells: [onDecoy] }, { phase: 'over' })).toBe('bigCascade');
+    expect(at({ items: [{ item: 'cluster', from: 'east', sea: 'south', cell: 'g7', cells: ['g7', 'g8'], hits: ['g8'] }] })).not.toBe('fooled');
+    expect(at({ items: [{ item: 'torpedo', from: 'east', sea: 'south', lane: '8', path: ['h8', 'g8'], struck: 'g8' }] })).not.toBe('fooled');
+    // Someone else's decoy revealed is not mine to gloat about.
+    expect(at({ items: [{ ...revealed, sea: 'east' }] })).toBeNull();
   });
 });
