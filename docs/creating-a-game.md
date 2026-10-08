@@ -83,6 +83,14 @@ export interface TurnRules<S> {
   round?(state: S): number;
   /** Simultaneous only: the round's story once it resolves (or the game ends), credited to no seat. */
   roundSummary?(before: S, after: S): string[];
+  /** The game's own clock: called after every accepted move and at each wake-up; see "Wake-ups and optional moves". */
+  clock?(state: S, nowMs: number): S;
+  /** When the game next wants clock() called (epoch ms), or null. */
+  wakeAt?(state: S): number | null;
+  /** May a seat that owes nothing send a command now (a bid after firing)? */
+  mayAct?(state: S, seat: SeatId): boolean;
+  /** Commands a seat may send but never owes; the autopilot never sends them. */
+  optional?(state: S, command: unknown): boolean;
 }
 
 export interface GameMeta {
@@ -170,6 +178,28 @@ Four optional `TurnRules` hooks for things that run on their own clock or that a
 - **`wakeAt(state)`** is the epoch ms at which you next want `clock()` called, or null. The engine re-reads it after every change and keeps one wake-up per match, apart from the round deadline; it's cleared when the match ends or the server stops. A wake-up whose `clock()` changes nothing waits for the next change rather than firing again.
 - **`mayAct(state, seat)`** lets a seat that owes nothing (not in `toMove()`) send a command now, e.g. a bid after firing; `apply()` still validates it. Such a move doesn't reset the seat's misses, move the deadline or change who owes, and in a simultaneous game it isn't logged (the seat is already ready). A command from a seat that *does* owe is an owed move as always, whatever it is.
 - **`optional(state, command)`** flags commands a seat may send but never owes (Salvo's bids and tells). List them in `legal()` after the owed ones; the autopilot never sends a flagged entry when a seat times out, so a dozing player is never made to bid.
+
+`mayAct` and `optional` answer different questions: `mayAct` is *who* may move without owing (the server checks it before `apply()`, and hands that seat its `legal()`), `optional` is *which* commands the autopilot must skip. A seat that still owes its salvo can bid too; that's an owed seat sending an optional command, so `mayAct` isn't asked, but `optional` still keeps the bid out of its autopilot.
+
+A sealed-bid auction that closes 30 seconds after it opens, in outline:
+
+```typescript
+turn: {
+  // …turnSeconds, toMove, legal (owed commands, then the bids), apply, round, roundSummary…
+  clock(state, nowMs) {
+    const a = state.auction;
+    if (!a) return state;
+    if (a.closesAt === null) return { ...state, auction: { ...a, closesAt: nowMs + 30_000 } }; // stamp it once
+    if (nowMs >= a.closesAt) return closeAuction(state); // highest bid wins; roundSummary tells it
+    return state; // nothing due: the same object, so no revision
+  },
+  wakeAt: (state) => state.auction?.closesAt ?? null,
+  mayAct: (state, seat) => state.auction !== null && !isOut(state, seat),
+  optional: (_state, command) => typeof command === 'object' && command !== null && 'bid' in command,
+},
+```
+
+The first `clock()` after the auction appears (the move that opened its round) stamps the close; the engine reads `wakeAt()`, sleeps until then, calls `clock()` again, and logs whatever `roundSummary(before, after)` says about the change. Salvo's real one is `clock`, `wakeAt`, `mayAct` and `optionalLegal` in `games/salvo/src/index.ts`, with the auction itself in `games/salvo/src/whisper.ts`.
 
 ---
 

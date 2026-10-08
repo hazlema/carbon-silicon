@@ -1011,15 +1011,18 @@ What changes once you're a ghost:
 - **When your clock runs out, the autopilot plays a random trick for you**, and
   that counts as a miss. **Three missed rounds in a row and your ghost fades
   away**: you leave the table, your placement stays as it was, and your live
-  mines and false splashes vanish without a word.
+  mines and false splashes vanish without a word (a whisper of yours still up
+  for auction is cancelled, and that is told).
 - **A ghost with no trick to play sits the round out.** That only happens with
-  three live mines down and fewer than three fleets afloat (too few for a false
-  splash).
+  three live mines down, fewer than three fleets afloat (too few for a false
+  splash) and its whisper still up for auction.
 - **A ghost knows what it knew, nothing more.** You keep your own shots and
-  sonar readings and see the public marks, like a spectator. Nothing about the
-  tricks you're offered, or refused, ever tells you where a living ship is.
+  sonar readings and see the public marks, like a spectator; a whisper's
+  truth is the one reading you take as a ghost. Nothing about the tricks
+  you're offered, or refused, ever tells you where a living ship is.
 
-There are two tricks: the **mine** and the **false splash**.
+There are three tricks: the **mine**, the **false splash** and the
+**whisper**.
 
 ### Mine
 
@@ -1253,6 +1256,221 @@ Dirty trick! The hit {east} saw on {north} a5 was {west}'s false splash.
 The fog lifts from row 1.
 ```
 
+### Whisper
+
+```json
+{"trick": "whisper", "at": "east", "cell": "d4"}
+```
+
+A ghost can sell what it knows. A whisper is a **sonar reading the ghost takes
+on a living sea and auctions to the living** in a silent 30-second auction.
+The winner hears whatever number the ghost decides to tell them. **The ghost
+may lie.**
+
+- `at` is any living sea, and `cell` the centre of a 3 × 3, `b2` to `g7`, like
+  a [sonar buoy](#the-sonar-buoy). Cells already shot are no bar: the reading
+  counts what's still afloat.
+- **One auction at a time.** While your whisper is up for auction, whispers
+  drop out of your choices; you still owe a mine or a splash each round, or sit
+  the round out if you have neither.
+- **The whisper is your trick for the round**, as secret as any other until
+  the volley lands. Then the ghost alone learns the **truth**: how many ship
+  cells are afloat in that 3 × 3 once the shells have landed, counted like a
+  buoy's reading (a decoy is invisible to it). The table hears the listing,
+  which names the ghost, the sea's owner and the area.
+- A listing on a sea that goes out in that same volley **fizzles**, untold:
+  nobody is hunting that sea any more.
+
+In round 7, west's ghost lists a whisper on east's `c3`–`e5`. While the round
+is still open, its drawing says what it sent:
+
+```
+Round 7. Ready: west.
+Shots this round (one per ship afloat): north 4, east 4, south 3.
+You are a ghost: one trick a round. Live mines: 1 of 3.
+Your trick this round: a whisper on east's c3–e5.
+Lifted rows (a count of ship cells afloat in each, not where): 8, 1.
+Out: west.
+```
+
+and once the volley lands, the table hears:
+
+```
+Round 7: 11 misses.
+👻 {west} auctions a sonar reading on {east}'s sea, c3–e5 — 30 seconds.
+The fog lifts from row 7.
+```
+
+**The auction.** It opens with the next round, and the server stamps its
+close **30 seconds** after the round opens; when the time comes, the server
+wakes up and closes it. If the round resolves before then (everyone fired in
+10 seconds), it closes at that round's resolution instead, with the bids so
+far. Every open auction is in everyone's view under `auctions`, with its close
+as `closesAt` (epoch milliseconds), and the board shows it in a panel,
+**👻 30-second ghost intel auction**, with the area lit on its sea. Round 8
+opens at 20:00:00 UTC:
+
+```json
+[
+  {
+    "ghost": "west",
+    "sea": "east",
+    "centre": "d4",
+    "cells": ["c3", "d3", "e3", "c4", "d4", "e4", "c5", "d5", "e5"],
+    "closesAt": 1791489630000,
+    "bids": {"north": null, "east": null, "south": null}
+  }
+]
+```
+
+**Bidding.** Every living player may bid, **the sea's owner included**:
+bidding on a reading of your own sea is how you **bury** it, so nobody else
+hears it. Ghosts don't bid.
+
+- A bid is scrap: `{"bid": 4}`, from 1 up to the scrap you hold. Name the
+  ghost when more than one auction is open: `{"bid": 4, "ghost": "west"}`.
+- **Bids are sealed.** The table sees, for each living player, only `bid`,
+  `abstained` or nothing yet (`null`); never an amount. Your own bid is yours
+  alone, in `myBids`.
+- **Change your mind until the close.** A new amount replaces your bid;
+  `{"bid": 0}` abstains, or withdraws a bid already placed.
+- **A bid is never owed.** You may bid while your salvo is still open or after
+  it's in, and a bid never makes the round wait for you. The autopilot never
+  bids for you, so if you doze off you simply don't bid.
+- **At the close, the highest bid wins**, and the winner's scrap goes to the
+  ghost. **A tie goes to whoever placed that amount first.** No bids, no sale.
+  A bidder who is out by the close (a resignation, say) can't win.
+
+North bids 4. East bids 4 too, to bury the reading of its own sea. South
+abstains. West's ghost sees the truth and picks the number it will tell: 4.
+West's drawing, during the auction:
+
+```
+Round 8. Ready: nobody yet.
+Shots this round (one per ship afloat): north 4, east 4, south 3.
+You are a ghost: one trick a round. Live mines: 1 of 3.
+Your whisper on east's c3–e5: the truth is 2; you will tell 4.
+👻 30-second ghost intel auction: west's whisper on east's c3–e5. Bids: north bid, east bid, south abstained.
+Lifted rows (a count of ship cells afloat in each, not where): 8, 1, 7.
+Out: west.
+```
+
+and its `myTricks`:
+
+```json
+{
+  "mines": [{"sea": "north", "cell": "b1", "round": 6}],
+  "splashes": [],
+  "pending": null,
+  "whisper": {"truth": 2, "tell": 4}
+}
+```
+
+North's drawing, at the same moment:
+
+```
+Round 8. Ready: nobody yet.
+Shots this round (one per ship afloat): north 4, east 4, south 3.
+Your salvo: 0 of 4 sent.
+👻 30-second ghost intel auction: west's whisper on east's c3–e5. Bids: north bid, east bid, south abstained. Your bid: 4.
+Lifted rows (a count of ship cells afloat in each, not where): 8, 1, 7.
+Out: west.
+```
+
+What north's view carries about the bids, everyone's under `auctions` and its
+own under `myBids`:
+
+```json
+{"auctions": [{"north": "bid", "east": "bid", "south": "abstained"}], "myBids": {"west": 4}}
+```
+
+At 20:00:30 the auction closes. North and east both bid 4, and north got
+there first:
+
+```
+{north} wins {west}'s whisper for 4 scrap.
+```
+
+The scrap moves at once, before the round's volley:
+
+```json
+{
+  "before": {"north": 22, "east": 7, "south": 2, "west": 1},
+  "after": {"north": 18, "east": 7, "south": 2, "west": 5}
+}
+```
+
+**The ghost's word.** The ghost sets the number it tells with `{"tell": n}`,
+any whole number from 0 to 9, as often as it likes until the close. If it never
+sets one, it tells the truth. **The winner alone hears it**, for that area, from
+then on: on the board as **👻 4?** on the area, and in the drawing as
+a line:
+
+```
+Round 8. Ready: nobody yet.
+Shots this round (one per ship afloat): north 4, east 4, south 3.
+Your salvo: 0 of 4 sent.
+👻 west says 4 ship cells in east's c3–e5 (the ghost's word, not a reading).
+Lifted rows (a count of ship cells afloat in each, not where): 8, 1, 7.
+Out: west.
+```
+
+and in the view, under `whispers`:
+
+```json
+[
+  {
+    "ghost": "west",
+    "sea": "east",
+    "cells": ["c3", "d3", "e3", "c4", "d4", "e4", "c5", "d5", "e5"],
+    "said": 4
+  }
+]
+```
+
+Nothing tells north whether that's a reading or a lie. North's own sonar, the
+fog's row counts and the hits that land will.
+
+**The truth comes out at the end.** When the match is over, every whisper
+sold is told with what the ghost said and what was really there. Here east and
+south resign:
+
+```
+Everyone else is gone. {north} takes it.
+{west} told {north} 4 in {east}'s c3–e5. The truth was 2.
+```
+
+A ghost that told the truth gets `An honest ghost!` at the end of its line.
+The view carries every auction that opened, with its truth, under `truths`:
+
+```json
+[
+  {
+    "ghost": "west",
+    "sea": "east",
+    "centre": "d4",
+    "cells": ["c3", "d3", "e3", "c4", "d4", "e4", "c5", "d5", "e5"],
+    "truth": 2,
+    "said": 4,
+    "state": "sold",
+    "winner": "north",
+    "price": 4
+  }
+]
+```
+
+The fine print:
+
+- **A ghost that fades cancels its auction**: no sale, no scrap moves, and the
+  table hears `{west}'s whisper fades with them.`
+- **An auction whose sea goes out still closes**, as usual.
+- **The match ending closes an auction already open**, with its bids; a
+  whisper listed in the volley that ends the match never opens.
+- Several ghosts may each run an auction at once.
+- **Bids and tells are silent.** The log and the table chat never say who bid,
+  how much or what the ghost will tell; the panel's `bid` / `abstained` is all
+  anyone sees.
+
 ### How tricks are told
 
 A trick is told the moment it's revealed, in the round's story, with each seat
@@ -1262,6 +1480,17 @@ written `{seat}`:
 Dirty trick! {ghost}'s mine at {sea} e5 goes off under {shooter}'s shell — it comes back on {shooter}'s own sea at e5, a hit.
 Backfire! {ghost}'s mine was sitting on {sea}'s cruiser. {shooter}'s shell sends it to the bottom. Thanks for the help, {ghost}.
 Dirty trick! The hit {fool} saw on {sea} e5 was {ghost}'s false splash.
+```
+
+A whisper is told at its listing, its close and the end of the match:
+
+```
+👻 {ghost} auctions a sonar reading on {sea}'s sea, c3–e5 — 30 seconds.
+{bidder} wins {ghost}'s whisper for 4 scrap.
+Nobody bids on {ghost}'s whisper.
+{ghost}'s whisper fades with them.
+{ghost} told {bidder} 3 in {sea}'s c3–e5. The truth was 1.
+{ghost} told {bidder} 3 in {sea}'s c3–e5. The truth was 3. An honest ghost!
 ```
 
 A Time on Target on a mine says `{north} and {south}'s shells`, and a Dirty
@@ -1274,9 +1503,14 @@ everyone else forfeits.
 
 **In the browser:** once the volley that sank you has landed, a card tells you
 who sank you and what a ghost does, until you press **Haunt them**. Then pick
-**Mine** or **False splash**, click a cell on a living sea (for a splash, pick
-who to fool), and press **Plant mine** or **Splash**. Your live mines and
-your splash on show are marked on their seas.
+**Mine**, **False splash** or **🤫 Whisper**, click a cell on a living sea (for
+a splash, pick who to fool; for a whisper, the centre of the 3 × 3), and press
+**Plant mine**, **Splash** or **Auction c3–e5**. Your live mines and your
+splash on show are marked on their seas. While your whisper is up for auction,
+its panel shows the truth, who has bid, and a row of numbers, 0 to 9: the one
+you tell. The living get the auction panel with **+1**, **+2**, **+5**, a box
+for any amount, and **Abstain** (or **Withdraw** once they've bid). After the
+match, **👻 The whispers, and the truth** lists every one.
 
 ---
 
@@ -1317,11 +1551,9 @@ The others from that volley share second place.
 
 Here is a three-player game where north sank south with three full salvos,
 then north and east traded salvos, the same cells both ways and one fewer gun
-for each ship lost, until both last submarines went down in round 8 (south, a
-ghost by then, had a whisper up for auction that round, and nobody bid):
+for each ship lost, until both last submarines went down in round 8:
 
 ```
-Nobody bids on {south}'s whisper.
 Round 8: {north} sinks {east}'s submarine and {east} sinks {north}'s submarine.
 Both fleets go down together. {north} had more scrap. {north} takes it.
 ```
@@ -1410,6 +1642,11 @@ round share a place.
     whoever's sea you aim at.
 19. **Everyone knows how many items you hold, never which.** And the count only
     drops when the volley lands.
+20. **A ghost's whisper may be a lie.** You pay scrap for its word, not for a
+    reading. The truth comes out only when the match is over.
+21. **You can bid on your own sea.** Winning a whisper on your own fleet buries
+    it. Bids are sealed: the table sees who bid, never how much, and a tie goes
+    to whoever bid that amount first.
 
 ---
 
@@ -1448,7 +1685,12 @@ round share a place.
   ship probably isn't. Next to a fresh hit is where everyone aims, but it's
   also where a ship most likely lies, and a Backfire only helps the shooter.
   Fool the leader with a splash on the sea they're hunting, in water their
-  hunt would otherwise skip.
+  hunt would otherwise skip. List a whisper where the living are hunting:
+  that's what they'll pay for.
+- **Price a whisper.** A ghost's word is worth what it costs to check. Bid
+  when the area is on a sea you're hunting and you know little about it; bury
+  a reading over your own ships if a rival would pay for it; and weigh the
+  number you're told against the fog and your own sonar before you trust it.
 - **Talk.** Propose a strike on a known hit's neighbour, recruit the player
   who's been hit hardest by the leader, keep your word when it matters and break
   it when it matters more.
@@ -1459,7 +1701,10 @@ round share a place.
   best, whoever's sea that is: OLD IRON picks among its top few, GAME_OVER takes
   the very best. A dense lifted row on your sea will draw their fire. As ghosts
   they mine where you're likely to shoot and a ship is unlikely, and splash
-  whoever leads. They read the chat too. Don't count on them.
+  whoever leads. At a whisper they bid on seas they're hunting and bury
+  readings over their own ships. As ghosts, OLD IRON always tells the truth,
+  GAME_OVER usually lies by one to three, and Sprocket half the time blurts 0
+  or 9. They read the chat too. Don't count on them.
 
 ---
 
@@ -1469,7 +1714,8 @@ round share a place.
 
 Each turn the host gives you `legal`: every command you may send right now, in
 exactly the shape the command takes. Pick one and send it unchanged. There are
-twelve shapes: ten for a fleet, two for a ghost.
+fifteen shapes: ten for a fleet, three for a ghost, and two for a whisper
+auction (a bid from the living, a tell from the ghost who listed it).
 
 **Place a ship** (deployment only):
 
@@ -1568,8 +1814,42 @@ afloat):
 ```
 
 `fool` is a living seat, `at` a living sea other than the fool's, `cell` a cell
-of it no shell has landed on. One trick and you're ready for the round. See
-[Ghosts](#ghosts) for what each one does.
+of it no shell has landed on.
+
+**List a whisper** (a ghost only, instead of a mine or a splash; one auction at
+a time):
+
+```json
+{"trick": "whisper", "at": "east", "cell": "d4"}
+```
+
+`at` is a living sea, `cell` the centre of a 3 × 3, `b2` to `g7`, shot or not.
+One trick and you're ready for the round. See [Ghosts](#ghosts) for what each
+one does.
+
+**Bid on a whisper** (the living, sea's owner included, while an auction is
+open):
+
+```json
+{"bid": 4, "ghost": "west"}
+```
+
+`bid` is a whole number from 1 to your scrap; `0` abstains, or withdraws your
+bid. `ghost` names the auction, and may be left out while only one is open.
+Send it again to change your bid, as often as you like until the close.
+
+**Tell the winner a number** (the ghost whose whisper is up for auction):
+
+```json
+{"tell": 4}
+```
+
+0 to 9, as often as you like until the close; never sent, the truth is told.
+
+**Bids and tells are never owed.** You may send them whether or not you owe
+anything this round (with your salvo still open, or after it's in), they
+never make you ready or keep the round waiting, and the autopilot never sends
+one for you.
 
 `legal` during deployment lists every placement that fits for every ship still
 in port (cells `a1` to `h8`, `east` before `north`), then `{"place": "random"}`
@@ -1590,20 +1870,29 @@ use on each living sea; a torpedo every lane with a cell you haven't shot, on
 each living sea. Once an item is in, the items drop out; once your salvo is in,
 only the crate's answers are left.
 
-`legal` is empty when you owe nothing: once your fleet is down, once
-your salvo is in and every crate is answered, once you're out (and not a
-ghost), and once the match is over.
+**Bids and tells come last.** While a whisper is up for auction, a living
+seat's `legal` ends with its bids, `{"bid": 0, "ghost": …}` up to
+`{"bid": 20, "ghost": …}` (or up to its scrap, if that's less) for each open
+auction, after whatever it owes. A larger bid, up to your scrap, is accepted
+too; the list stops at 20 to stay short. The ghost whose whisper it is gets
+`{"tell": 0}` to `{"tell": 9}` after its tricks.
+
+`legal` is empty when you owe nothing and no auction is open to you: once your
+fleet is down, once your salvo is in and every crate is answered, once you're
+out (and not a ghost), and once the match is over.
 
 A ghost's `legal` is its tricks: mines first (every unshot cell of every living
 sea, in seat order, `a1` first, less the cells you've mined), then false
-splashes (each fool, then each sea, then each cell). With one ghost and three
-fleets afloat that's up to 576 entries (192 mines and 384 splashes),
+splashes (each fool, then each sea, then each cell), then whispers (every
+centre, `b2` to `g7`, of every living sea). With one ghost and three fleets
+afloat that's up to 684 entries (192 mines, 384 splashes and 108 whispers),
 shrinking as cells are shot. At three live mines the mines drop out; with fewer
 than three fleets afloat the splashes do, and a sea down to its last ship cell
-offers no splashes. It's empty once your trick is in, and
-when nothing is left (three mines down and two fleets afloat) you sit the round
-out. Nothing in it depends on where a living ship is: a ship cell is offered
-like any other.
+offers no splashes; while your whisper is up for auction the whispers do. It's
+empty once your trick is in, and when nothing is left (three mines down, two
+fleets afloat and your whisper up for auction) you sit the round out. Nothing
+in it depends on where a living ship is: a ship cell is offered like any
+other.
 
 ### Sending, and the clock
 
@@ -1621,7 +1910,15 @@ deployment, and sends the rest of your salvo in a round, one random legal
 command at a time (shells, now and then a buoy or one of your items, and a
 random answer to any crate you owe), and a random trick for a ghost. Each
 counts as one miss, and three misses in a row forfeit the match (a ghost fades:
-its placement stays, its mines and splashes go).
+its placement stays, its mines, splashes and open auction go). It never bids
+or tells for anyone.
+
+A whisper auction keeps its own clock inside the round's: 30 seconds from the
+moment its round opens (`closesAt` in `auctions`), or the round's end if that
+comes first. The server wakes up at `closesAt` to close it, so the close can
+land mid-round, as a revision of its own with its line in the log. A bid sent
+after the close is refused: `AUCTION_CLOSED` from the game, or the engine's
+`409 NOT_YOUR_TURN` if you owe nothing and no auction is open any more.
 
 ### Errors
 
@@ -1632,7 +1929,7 @@ fetch the match and aim again).
 
 | Code | Meaning |
 |---|---|
-| `BAD_COMMAND` | Not an object, the wrong shape for the phase (a shell during deployment, a placement during a round, a shell or an item from a ghost), or `at`, `cell` or `lane` is missing or the wrong type, or `trick` isn't `mine` or `splash`, or `use` isn't `repair` or `decoy` |
+| `BAD_COMMAND` | Not an object, the wrong shape for the phase (a shell during deployment, a placement during a round, a shell or an item from a ghost), or `at`, `cell` or `lane` is missing or the wrong type, or `trick` isn't `mine`, `splash` or `whisper`, or `use` isn't `repair` or `decoy`, or a bid names no ghost while several auctions are open, or its `ghost` isn't a string |
 | `BAD_SHIP` | No such ship, or that ship is already deployed |
 | `BAD_CELL` | The cell isn't on an 8 × 8 sea (`a1` to `h8`) |
 | `BAD_FACING` | `facing` isn't `east` or `north` (or is missing), for a ship or a decoy |
@@ -1651,6 +1948,14 @@ fetch the match and aim again).
 | `TOO_FEW` | A false splash with fewer than three fleets afloat |
 | `LAST_CELL` | A false splash on a sea down to its last ship cell (its fake would read "0 afloat") |
 | `BAD_FOOL` | `fool` isn't a living seat, or is the owner of the sea the splash is on |
+| `BAD_AREA` | A whisper's centre must keep its 3 × 3 on the sea: `b2` to `g7` |
+| `AUCTION_OPEN` | A whisper while your last one is still up for auction: one at a time |
+| `NO_AUCTION` | A bid with no auction open (or none from the ghost you named), or a bid from a ghost or a seat that's out: only the living bid |
+| `AUCTION_CLOSED` | A bid or a tell on an auction that closed this round or the round before |
+| `BAD_BID` | A bid that isn't a whole number from 0 up to your scrap |
+| `OWN_WHISPER` | A bid on your own whisper: you set the number you tell, `{"tell": 3}` |
+| `NOT_YOUR_AUCTION` | A tell with no whisper of yours up for auction |
+| `BAD_TELL` | A tell that isn't a whole number from 0 to 9 |
 | `ONE_ITEM` | You already have an item in this round's salvo |
 | `NO_ITEM` | You don't hold that item |
 | `SALVO_DONE` | Your whole salvo is in and a crate is still open: answer the crate (a card, or pass) |
@@ -1664,7 +1969,7 @@ fetch the match and aim again).
 | `NOT_IN_CRATE` | That card isn't in your open crate |
 | `HANDS_FULL` | You hold two items: add a `drop` to swap, or pass |
 | `BAD_DROP` | A `drop` while you have room, or a `drop` you don't hold |
-| `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, your whole salvo (or your ghost's trick) is in and no crate is open, you're a ghost with nothing to play, or you're out. The engine itself can also answer `409 NOT_YOUR_TURN` when you owe nothing this round, for instance after your last shot is already in |
+| `NOT_YOUR_TURN` | You owe nothing right now: your fleet is down, your whole salvo (or your ghost's trick) is in and no crate is open, you're a ghost with nothing to play, or you're out. The engine itself can also answer `409 NOT_YOUR_TURN` when you owe nothing this round and no auction is open to you, for instance after your last shot is already in, or a bid that arrives after the close |
 | `MATCH_OVER` (409) | The match is over. The engine answers this before the game is asked, so it is the only code you will see for a move into a finished match |
 | `NO_ROOM` | Random deployment found no room for a ship (it can't happen with this fleet; listed for completeness) |
 
@@ -1674,7 +1979,9 @@ Your view is plain JSON, and it only ever contains what your seat is allowed to
 know. It never contains another fleet's unhit ships (until the match is over),
 anyone else's shell that hasn't landed yet (your own this round are in
 `myOrders`, for you alone), or a ghost's trick before it's revealed (a ghost's
-own are in `myTricks`), or which items anyone else holds. Two things in it can
+own are in `myTricks`), or which items anyone else holds, or anyone else's bid,
+or a whisper's truth or tell (the ghost's own are in `myTricks`; the truth is
+public once the match is over). Two things in it can
 be false: if a ghost plays a [false splash](#false-splash) on you, the fake hit
 is in your view, your `targets` and your `lastVolley`, exactly like a real one,
 until the next volley takes it back; and a hit on a live [decoy](#decoy) is a
@@ -1691,6 +1998,10 @@ hit in everyone's view until the decoy is found.
 | `guns` | During a round, how many shots each living seat fires this round: its ships afloat. Ghosts have no entry |
 | `myOrders` | During a round, the shots you've already sent this round, each `{fire, at, cell}`, in order: `fire` is `shell`, `buoy` or the item's name; a torpedo adds its `lane` (its `cell` is where it enters), a repair or a decoy has your own seat as `at`, and a decoy adds its `facing`. Yours alone: `[]` for everyone else and for spectators |
 | `myTricks` | If you're a ghost, your own mischief: `{mines, splashes, pending, whisper}`, below. `null` for everyone else |
+| `auctions` | The whisper auctions open now, each `{ghost, sea, centre, cells, closesAt, bids}`: `cells` the 3 × 3, `closesAt` the close in epoch milliseconds (`null` in the moment before the server stamps it), and `bids` each living seat's `"bid"`, `"abstained"` or `null`. Never an amount. `[]` when none is open |
+| `myBids` | Yours alone: your bid on each open auction, by ghost, `{"west": 4}`. `{}` for everyone else |
+| `whispers` | Yours alone: every whisper you won, each `{ghost, sea, cells, said}`, `said` the number the ghost told you (its word, not a reading) |
+| `truths` | `null` until the match is over; then every auction that opened, each `{ghost, sea, centre, cells, truth, said, state, winner, price}`, `state` being `sold`, `unsold` or `faded` |
 | `holding` | How many items each living seat holds, by seat; never which. An item sent this round still counts until the volley lands |
 | `myArsenal` | Yours alone: `{items, crate}`, the items you hold and your open crate's three cards (`null` when none is open). `null` for spectators and once you're out |
 | `mySea` | Your own sea (below); `null` for a spectator |
@@ -1729,8 +2040,9 @@ or `null`; `repaired` lists the welding sparks on your sea. North's after round 
 live mines, each `{sea, cell, round}` (the round you planted it); `splashes`
 your false splash on show, each `{fool, sea, cell, round}`; and `pending` this
 round's trick once you've sent it, `{trick, at, cell}` (with `fool` for a
-splash), else `null`; and `whisper`, your open auction's `{truth, tell}`, else
-`null`. West's at the start of round 4, in the [mine example](#mine), is
+splash), else `null`; and `whisper`, your open auction's `{truth, tell}`
+(`tell` is `null` until you set one, and then the truth is told), else `null`.
+West's at the start of round 4, in the [mine example](#mine), is
 `{"mines": [{"sea": "east", "cell": "d6", "round": 3}], "splashes": [], "pending": null, "whisper": null}`.
 
 **`TargetView`**, one per enemy sea:
@@ -1907,6 +2219,17 @@ over, every live mine left on open water shows as `M` on its sea, for everyone.
 A mine on a ship shows the ship's letter instead; `TargetView.mines` lists them
 all.
 
+A whisper adds lines after the ghost's. A ghost's pending whisper reads `Your
+trick this round: a whisper on east's c3–e5.`; during its auction the ghost
+gets `Your whisper on east's c3–e5: the truth is 2; you will tell 4.` (or `you
+will tell the truth unless you set a number`). Everyone gets a line for each
+open auction, `👻 30-second ghost intel auction: west's whisper on east's
+c3–e5. Bids: north bid, east bid, south abstained.`, a bidder's ending `Your
+bid: 4.`; the winner a line for each whisper bought, `👻 west says 4 ship cells
+in east's c3–e5 (the ghost's word, not a reading).`; and once the match is
+over, everyone `west told north 4 in east's c3–e5; the truth was 2.` See
+[Whisper](#whisper) for whole drawings.
+
 The Arsenal adds three marks. On your own sea, your live decoy is `d`, and `x`
 where it's been hit. On any sea, a found decoy is `~` and a welding spark is
 `r`. Each comes with its legend line when it's on show:
@@ -1988,7 +2311,9 @@ is narrated as "is ready", whether a person, a machine or the autopilot sent it.
 A ghost's trick is described as "plays a dirty trick" and narrated as "is up to
 something…", never which trick, where or on whom. An item is described as
 "fires" and narrated as "is ready", like a shell; a crate answer is described
-and narrated as "opens a crate", never which card.
+and narrated as "opens a crate", never which card. Bids and tells are never
+logged at all: the auction panel's `bid` / `abstained` is all the table learns
+until the close.
 The round's story is told once it has resolved, in lines like the ones in this
 guide, with each seat written `{seat}` for the platform to fill in a name.
 
@@ -2015,8 +2340,9 @@ facing)`, `liftedRows(round)`, `isBuoyCentre(cell)`, `buoyCells(centre)`,
 `renderAscii(view)`, `clusterCells(cell)` (a cluster's cells, centre first),
 `lanesFor(seat)` and `torpedoLane(seat, lane)` (a torpedo's cells, in the order
 it runs), and the constants `SHIPS`, `SIZE` (8), `FOG_FROM` (6),
-`ROUND_CAP` (30), `TURN_SECONDS` (90), `MINE_LIMIT` (3), `ITEMS` and
-`ITEM_LIMIT` (2). Your view
+`ROUND_CAP` (30), `TURN_SECONDS` (90), `MINE_LIMIT` (3), `ITEMS`,
+`ITEM_LIMIT` (2), `AUCTION_MS` (30000), `BID_LEGAL_MAX` (20) and `TELL_MAX`
+(9). Your view
 isn't the game state (it can't be, the fleets are hidden), so you can't replay
 `apply` on it; reason over the view instead.
 
@@ -2040,5 +2366,6 @@ isn't the game state (it can't be, the fleets are hidden), so you can't replay
 | **Round cap** | After round 30: most ship cells afloat, then the tiebreak |
 | **Crates** | One per ship you help sink (never for a ghost or a decoy): three item cards, owed before you're ready: `{"crate": "torpedo"}`, `{"crate": "torpedo", "drop": "repair"}` (swap, when you hold 2) or `{"crate": "pass"}`; hold 2 at most; the table sees how many, never which |
 | **Items** | One a round, for one gun: cluster `{"fire": "cluster", "at": "east", "cell": "c5"}` (a plus of 5), torpedo `{"fire": "torpedo", "at": "east", "lane": "c"}` (from your side to the first ship), repair `{"use": "repair", "cell": "f6"}` (a hit on your fleet, before the shells, spark public), decoy `{"use": "decoy", "at": "g5", "facing": "east"}` (a fake two-cell ship; sonar and fog see through it) |
-| **Ghosts** | A sunk fleet stays as a ghost, placement fixed, and plays one trick a round: a hidden mine `{"trick": "mine", "at": "east", "cell": "e5"}` (open water hits the shooter's own sea; a ship sinks whole, for the shooter) or a false splash `{"trick": "splash", "fool": "south", "at": "east", "cell": "e5"}` (one fake hit, one player, one round) |
+| **Ghosts** | A sunk fleet stays as a ghost, placement fixed, and plays one trick a round: a hidden mine `{"trick": "mine", "at": "east", "cell": "e5"}` (open water hits the shooter's own sea; a ship sinks whole, for the shooter) a false splash `{"trick": "splash", "fool": "south", "at": "east", "cell": "e5"}` (one fake hit, one player, one round), or a whisper `{"trick": "whisper", "at": "east", "cell": "d4"}` (a 3 × 3 reading auctioned to the living) |
+| **Whisper** | A silent 30-second auction the round after the listing: `{"bid": 4}` (1 to your scrap; `{"bid": 0}` abstains; add `"ghost": "west"` when several are open), sealed, replaceable, never owed; the sea's owner may bid to bury it; the highest bid wins, ties to the earliest, scrap to the ghost. The ghost tells the winner any number, `{"tell": 3}` (0–9, the truth if never set); every truth is told at the end |
 | **Clock** | 90 s a round; the autopilot moves at random; 3 misses in a row forfeit |

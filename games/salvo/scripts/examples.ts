@@ -3,7 +3,8 @@
  * `bun games/salvo/scripts/examples.ts` prints each one under its name; `src/examples.test.ts` asserts
  * that docs/rules.md carries every one verbatim inside a fenced code block.
  */
-import { cellIndex, clusterCells, hullCells, roundSummary, salvoGame as G, torpedoLane, type ItemUse, type SalvoCommand, type SalvoState, type SalvoView, type ShipId, type Trick } from '../src/index';
+import { AUCTION_MS, cellIndex, clusterCells, hullCells, roundSummary, salvoGame as G, torpedoLane, type ItemUse, type SalvoCommand, type SalvoState, type SalvoView, type ShipId, type Trick } from '../src/index';
+import { closedBetween, type Auction } from '../src/whisper';
 
 export interface Example {
   name: string;
@@ -20,15 +21,27 @@ type Shot = [string, string] | [string, string, 'buoy'] | SalvoCommand;
 type Round = Record<string, Shot | Shot[]>;
 /**
  * A round's extras: the tricks the story's ghosts send and the tricks the volley must tell ("mine west east d6");
- * the crate picks the story makes (every other crate is passed); the items the volley must tell ("torpedo north east c").
+ * the crate picks the story makes (every other crate is passed); the items the volley must tell ("torpedo north east c");
+ * the whispers the volley must list ("whisper west east d4") and the auctions the round must close ("south unsold").
  */
 interface Plays {
   tricks?: Record<string, SalvoCommand>;
   told?: string[];
   crates?: Record<string, SalvoCommand>;
   items?: string[];
+  listed?: string[];
+  closed?: string[];
 }
 const trickKey = (t: Trick) => `${t.kind} ${t.ghost} ${t.sea} ${t.cell}`;
+const listingKey = (a: Auction) => `whisper ${a.ghost} ${a.sea} ${a.centre}`;
+/** An auction's close as the story names it: "south unsold", "west sold north". */
+const closeKey = (a: Auction) => `${a.ghost} ${a.state}${a.winner ? ` ${a.winner}` : ''}`;
+/** Two lists must name the same things, or the story is told wrong. */
+function same(what: string, start: number, got: string[], asked: string[]): void {
+  if (got.some((x) => !asked.includes(x)) || asked.some((x) => !got.includes(x))) {
+    throw new Error(`round ${start} told ${what} ${JSON.stringify(got)}, the story asked for ${JSON.stringify(asked)}`);
+  }
+}
 /** An item as the volley tells it: "cluster north east c5", "torpedo west east 5", "repair east f6", "decoy-laid south", "decoy south g5 h5". */
 function itemKey(x: ItemUse): string {
   if (x.item === 'cluster') return `cluster ${x.from} ${x.sea} ${x.cell}`;
@@ -60,6 +73,7 @@ function cellsOf(seat: string, x: Shot): string[] {
  */
 function round(s: SalvoState, shots: Round, story: Set<string>, plays: Plays = {}): SalvoState {
   const start = s.round;
+  const before = s;
   // The ghosts' tricks the story is about, played first (the round can't resolve while a ghost owes one).
   for (const [ghost, trick] of Object.entries(plays.tricks ?? {})) s = G.turn.apply(s, ghost, trick);
   for (const seat of s.seats) {
@@ -99,18 +113,14 @@ function round(s: SalvoState, shots: Round, story: Set<string>, plays: Plays = {
   }
   // A trick goes off only when the story names it (`plays.told`): one that went off unasked would change
   // the story without a word, and one the story names that doesn't go off would tell it wrong; both fail loudly.
-  const told = s.lastVolley?.round === start ? s.lastVolley.tricks.map(trickKey) : [];
-  const asked = plays.told ?? [];
-  if (told.some((x) => !asked.includes(x)) || asked.some((x) => !told.includes(x))) {
-    throw new Error(`round ${start} told tricks ${JSON.stringify(told)}, the story asked for ${JSON.stringify(asked)}`);
-  }
+  same('tricks', start, s.lastVolley?.round === start ? s.lastVolley.tricks.map(trickKey) : [], plays.told ?? []);
   // The same for items: the open-water shots never use one, but one of them landing on a story's decoy or
   // repaired cell would change what an item did; every item the volley tells must be one the story asked for.
-  const used = s.lastVolley?.round === start ? s.lastVolley.items.map(itemKey) : [];
-  const wanted = plays.items ?? [];
-  if (used.some((x) => !wanted.includes(x)) || wanted.some((x) => !used.includes(x))) {
-    throw new Error(`round ${start} told items ${JSON.stringify(used)}, the story asked for ${JSON.stringify(wanted)}`);
-  }
+  same('items', start, s.lastVolley?.round === start ? s.lastVolley.items.map(itemKey) : [], plays.items ?? []);
+  // And whispers: a ghost filled in above never lists one unasked (a listing would tell a line, and its
+  // close another, a round later), and every auction the round closes must be one the story closes.
+  same('whispers', start, s.auctions.slice(before.auctions.length).map(listingKey), plays.listed ?? []);
+  same('closes', start, closedBetween(before, s).map(closeKey), plays.closed ?? []);
   return s;
 }
 
@@ -211,14 +221,18 @@ function tiebreakGame() {
     const salvo = STANDARD_CELLS.slice(4 * i, 4 * i + guns('north')).map((c): Shot => ['south', c]);
     s = round(s, { north: salvo, east: ['north', WATER[i]], south: ['east', WATER[i]] }, story);
   }
-  // The duel: each fires as many ship cells as it has guns, the same cells both ways.
+  // The duel: each fires as many ship cells as it has guns, the same cells both ways. South's ghost owes a
+  // trick every round and has only three mines, so its first one is a whisper nobody bids on (closed the next
+  // round, far from the last); its three mines never go off, and the whisper it's left with in the last round
+  // fizzles with the match. Nothing the ghost does reaches the tiebreak's story.
+  const duel: Plays[] = [{ tricks: { south: { trick: 'whisper', at: 'east', cell: 'd4' } }, listed: ['whisper south east d4'] }, { closed: ['south unsold'] }];
   let fired = 0;
   let before = s;
-  while (s.phase === 'fire') {
+  for (let i = 0; s.phase === 'fire'; i++) {
     before = s;
     const next = STANDARD_CELLS.slice(fired, fired + guns('north'));
     fired += next.length;
-    s = round(s, { north: next.map((c): Shot => ['east', c]), east: next.map((c): Shot => ['north', c]) }, story);
+    s = round(s, { north: next.map((c): Shot => ['east', c]), east: next.map((c): Shot => ['north', c]) }, story, duel[i]);
   }
   return { before, after: s };
 }
@@ -253,7 +267,39 @@ function ghostGame() {
   for (const p of GHOST_PLAYS) for (const t of Object.values(p.tricks ?? {})) story.add(`${(t as { at: string }).at} ${(t as { cell: string }).cell}`);
   const after: SalvoState[] = [s];
   GHOST_ROUNDS.forEach((r, i) => after.push((s = round(s, r, story, GHOST_PLAYS[i]))));
-  return { beforeSinking: after[1], sunk: after[2], mined: after[3], boomerang: after[4], backfire: after[5], told: after[6] };
+  return { beforeSinking: after[1], sunk: after[2], mined: after[3], boomerang: after[4], backfire: after[5], told: after[6], story };
+}
+
+/**
+ * The same game, on: in round 7 west's ghost lists a whisper on east's c3–e5. Round 8 opens at 20:00:00 and
+ * the clock stamps the close 30 seconds on. North bids 4; east, whose sea it is, bids 4 too, to bury it;
+ * south abstains; west sets the number it will tell. At 20:00:30 the auction closes: the tie goes to north,
+ * who bid 4 first. Later east and south resign, the match ends, and the truth comes out.
+ */
+const WHISPER_ROUND: Round = { north: ['south', 'a3'], east: ['north', 'h5'], south: ['north', 'a4'] };
+const OPENS = Date.UTC(2026, 9, 8, 20, 0, 0);
+
+function whisperGame(h: ReturnType<typeof ghostGame>) {
+  const story = new Set([...h.story, ...storyOf([WHISPER_ROUND])]);
+  const listed = round(h.told, WHISPER_ROUND, story, {
+    tricks: { west: { trick: 'whisper', at: 'east', cell: 'd4' } },
+    listed: ['whisper west east d4'],
+  });
+  let s = G.turn.clock!(listed, OPENS);
+  const opened = s;
+  for (const [seat, command] of [
+    ['north', { bid: 4 }],
+    ['south', { bid: 0 }],
+    ['east', { bid: 4 }],
+    ['west', { tell: 4 }],
+  ] as const) {
+    s = G.turn.apply(s, seat, command);
+  }
+  const bidding = s;
+  const closed = G.turn.clock!(bidding, OPENS + AUCTION_MS);
+  const beforeEnd = G.forfeit(closed, 'east', 'resign');
+  const end = G.forfeit(beforeEnd, 'south', 'resign');
+  return { listed, opened, bidding, closed, beforeEnd, end };
 }
 
 // ── A four-seat game with the Arsenal: crates from sinkings, then each item in use ──
@@ -347,6 +393,20 @@ export function examples(): Example[] {
   add('ghost-splash', beside(sea(viewOf(h.backfire, 'east'), 'north'), sea(viewOf(h.told, 'east'), 'north')));
   add('ghost-splash-shells', json(viewOf(h.backfire, 'east').lastVolley!.shells.filter((x) => x.sea === 'north')));
   add('ghost-splash-summary', roundSummary(h.backfire, h.told).join('\n'));
+  const w = whisperGame(h);
+  add('whisper-pending', viewOf(G.turn.apply(h.told, 'west', { trick: 'whisper', at: 'east', cell: 'd4' }), 'west').ascii.split('\n\n')[0]);
+  add('whisper-listing', roundSummary(h.told, w.listed).join('\n'));
+  add('whisper-auctions', json(viewOf(w.opened, 'north').auctions));
+  add('whisper-ghost', viewOf(w.bidding, 'west').ascii.split('\n\n')[0]);
+  add('whisper-my-tricks', json(viewOf(w.bidding, 'west').myTricks));
+  add('whisper-bidder', viewOf(w.bidding, 'north').ascii.split('\n\n')[0]);
+  add('whisper-bids', json({ auctions: viewOf(w.bidding, 'north').auctions.map((a) => a.bids), myBids: viewOf(w.bidding, 'north').myBids }));
+  add('whisper-close', roundSummary(w.bidding, w.closed).join('\n'));
+  add('whisper-bought', viewOf(w.closed, 'north').ascii.split('\n\n')[0]);
+  add('whisper-whispers', json(viewOf(w.closed, 'north').whispers));
+  add('whisper-scrap', json({ before: viewOf(w.bidding, null).scrap, after: viewOf(w.closed, null).scrap }));
+  add('whisper-end', roundSummary(w.beforeEnd, w.end).join('\n'));
+  add('whisper-truths', json(viewOf(w.end, null).truths));
   const a = arsenalGame();
   const told = (n: number) => roundSummary(a[n - 1], a[n]).join('\n');
   add('crate-summary', told(1));
