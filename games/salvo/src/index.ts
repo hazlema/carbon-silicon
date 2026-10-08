@@ -1,10 +1,13 @@
 import { GameRuleError, createRng, type GameModule, type Outcome, type SeatId, type TurnRules } from '@cs/game-api';
 import { renderAscii } from './ascii';
+import { ITEM_LIMIT, dealCrate, isItemId, type ItemId } from './arsenal';
 import { MINE_LIMIT, SIZE, buoyCells, cellIndex, cellName, hullCells, isBuoyCentre, liftedRows, neighbours, rowOf, type Facing } from './board';
 
 export { FOG_FROM, MINE_LIMIT, SIZE, buoyCells, cellIndex, cellName, hullCells, isBuoyCentre, liftedRows, neighbours } from './board';
 export type { Facing } from './board';
 export { renderAscii } from './ascii';
+export { ITEMS, ITEM_LIMIT, clusterCells, lanesFor, torpedoLane } from './arsenal';
+export type { ItemId } from './arsenal';
 
 export const SEATS = ['north', 'east', 'south', 'west'] as const;
 /** A false splash needs a sea with at least this many ship cells afloat, or its fake would read "0 afloat". */
@@ -125,6 +128,10 @@ export interface SalvoState {
   /** Each ghost's trick for this round, secret until the volley. */
   pendingTrick: Record<SeatId, PendingTrick | null>;
   lastVolley: Volley | null;
+  /** Items each seat holds (at most ITEM_LIMIT). Each seat sees only its own; the table sees the counts. */
+  arsenal: Record<SeatId, ItemId[]>;
+  /** Crates each seat has earned and not yet opened, oldest first; the head is the open crate. Yours alone. */
+  crates: Record<SeatId, ItemId[][]>;
   scrap: Record<SeatId, number>;
   hitsLanded: Record<SeatId, number>;
   /** In order; reason 'sunk' | 'resign' | 'timeout' | … A tiebreak winner is taken back out of this list. */
@@ -142,7 +149,9 @@ export type SalvoCommand =
   | { fire: 'shell'; at: SeatId; cell: string }
   | { fire: 'buoy'; at: SeatId; cell: string }
   | { trick: 'mine'; at: SeatId; cell: string }
-  | { trick: 'splash'; fool: SeatId; at: SeatId; cell: string };
+  | { trick: 'splash'; fool: SeatId; at: SeatId; cell: string }
+  | { crate: ItemId; drop?: ItemId }
+  | { crate: 'pass' };
 
 export interface TargetView {
   sea: SeatId;
@@ -185,6 +194,10 @@ export interface SalvoView {
     splashes: { fool: SeatId; sea: SeatId; cell: string; round: number }[];
     pending: { trick: 'mine' | 'splash'; at: SeatId; cell: string; fool?: SeatId } | null;
   } | null;
+  /** How many items each living seat holds (public; never which). */
+  holding: Record<SeatId, number>;
+  /** Your items and your open crate's cards (null when none is open). Null for spectators and ghosts. */
+  myArsenal: { items: ItemId[]; crate: ItemId[] | null } | null;
   /** Your fleet: every ship, its cells and hits; ships still in port are listed with `cells: []`. Null for spectators. */
   mySea: { ships: Ship[]; port: ShipId[]; shots: Record<string, 'miss' | 'hit'> } | null;
   /** One per sea that is not yours (spectators: every sea), fleets that are out included (`out`). */
@@ -370,6 +383,9 @@ function applyFire(s: SalvoState, seat: SeatId, command: Record<string, unknown>
   if (at === seat || !s.seats.includes(at) || isEliminated(s, at)) {
     throw new GameRuleError('BAD_TARGET', `Fire at a living opponent's sea: ${living(s).filter((x) => x !== seat).join(', ')}.`);
   }
+  if (s.pending[seat].length >= gunsOf(s, seat)) {
+    throw new GameRuleError('SALVO_DONE', 'Your whole salvo is in; open your crate: {"crate":"pass"} or one of its cards.');
+  }
   const i = cellIndex(cell);
   if (i === null) throw new GameRuleError('BAD_CELL', `There is no cell "${cell}" on an 8×8 sea (a1 to h8).`);
   const name = cellName(i);
@@ -383,14 +399,43 @@ function applyFire(s: SalvoState, seat: SeatId, command: Record<string, unknown>
     throw new GameRuleError('ALREADY_AIMED', `One of this round's shells is already on ${at}'s ${name}.`);
   }
   s.pending[seat].push({ kind: fire, from: seat, sea: at, cell: name });
-  // Ready once the whole salvo is in: one shot per ship afloat.
-  if (s.pending[seat].length >= gunsOf(s, seat)) s.ready = bySeatOrder(s, [...s.ready, seat]);
+  markReady(s, seat);
+}
+
+/** A living seat is ready once its whole salvo is in (one shot per ship afloat) and every crate is opened; the round resolves when no one owes. Mutates `s`. */
+function markReady(s: SalvoState, seat: SeatId): void {
+  if (s.pending[seat].length >= gunsOf(s, seat) && s.crates[seat].length === 0 && !s.ready.includes(seat)) s.ready = bySeatOrder(s, [...s.ready, seat]);
   if (toMove(s).length === 0) resolve(s);
+}
+
+/** Open the head crate: take a card (dropping a held item when your hands are full), or pass. */
+function applyCrate(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
+  const { crate, drop } = command;
+  const open = s.crates[seat][0];
+  if (!open) throw new GameRuleError('NO_CRATE', 'You have no crate to open.');
+  if (crate !== 'pass') {
+    if (!isItemId(crate) || !open.includes(crate)) {
+      throw new GameRuleError('NOT_IN_CRATE', `Your crate holds ${open.join(', ')}: send {"crate":"${open[0]}"} or {"crate":"pass"}.`);
+    }
+    const held = s.arsenal[seat];
+    if (drop !== undefined) {
+      if (!isItemId(drop) || !held.includes(drop)) throw new GameRuleError('BAD_DROP', `You can only drop an item you hold: ${held.join(', ') || 'none'}.`);
+      held.splice(held.indexOf(drop), 1);
+    } else if (held.length >= ITEM_LIMIT) {
+      throw new GameRuleError('HANDS_FULL', `You hold ${ITEM_LIMIT} items: swap with {"crate":"${crate}","drop":"${held[0]}"}, or {"crate":"pass"}.`);
+    }
+    held.push(crate);
+  }
+  s.crates[seat].shift();
+  markReady(s, seat);
 }
 
 /** Is one of this seat's shells already aimed at that cell this round? */
 const aimedAt = (s: SalvoState, seat: SeatId, sea: SeatId, cell: string) =>
   s.pending[seat].some((x) => x.kind === 'shell' && x.sea === sea && x.cell === cell);
+
+/** Who pulls a crate from this volley's sinkings, one entry per crate: each credited seat not out after the volley. */
+const crateEarners = (s: SalvoState, sunk: Volley['sunk']): SeatId[] => sunk.flatMap((x) => x.by.filter((seat) => !isEliminated(s, seat)));
 
 /** Most of `score`, keeping ties; the first criterion that splits the field decides. */
 function best(seats: SeatId[], score: (x: SeatId) => number): SeatId[] {
@@ -592,6 +637,8 @@ function resolve(s: SalvoState): void {
     if (ends || isEliminated(s, x.sea) || unhitCells(s, x.sea) < SPLASH_MIN_AFLOAT) tricks.push({ kind: 'splash', ghost: x.ghost, fool: x.fool, sea: x.sea, cell: x.cell });
   }
   s.splashes = ends ? [] : s.splashes.filter((x) => !isEliminated(s, x.sea) && unhitCells(s, x.sea) >= SPLASH_MIN_AFLOAT);
+  // Crates: one per sinking to each credited seat still afloat (never a ghost), none once the match is over.
+  if (!ends) for (const x of crateEarners(s, sunk)) s.crates[x].push(dealCrate(s.seed, s.draws++));
 
   s.lastVolley = { round: s.round, shells: results, buoys, blasts, sunk, eliminated: out, tricks };
   for (const x of s.seats) s.pending[x] = [];
@@ -617,6 +664,8 @@ function apply(state: SalvoState, seat: SeatId, command: unknown): SalvoState {
     maybeOpenFire(s);
   } else if ('trick' in cmd) {
     applyTrick(s, seat, cmd);
+  } else if ('crate' in cmd) {
+    applyCrate(s, seat, cmd);
   } else {
     if (isGhost(s, seat)) throw new GameRuleError('BAD_COMMAND', 'You are a ghost: send {"trick":"mine","at":"east","cell":"e5"} or {"trick":"splash","fool":"south","at":"east","cell":"e5"}.');
     if (!('fire' in cmd)) throw new GameRuleError('BAD_COMMAND', 'The fleets are down: send {"fire":"shell","at":"east","cell":"e5"}.');
@@ -634,6 +683,17 @@ function legal(s: SalvoState, seat: SeatId): SalvoCommand[] {
     return out;
   }
   const out: SalvoCommand[] = [];
+  // An open crate first: each card (with each held item to drop, when full), then pass.
+  const open = s.crates[seat][0];
+  if (open) {
+    const held = s.arsenal[seat];
+    for (const card of open) {
+      if (held.length >= ITEM_LIMIT) for (const drop of held) out.push({ crate: card, drop });
+      else out.push({ crate: card });
+    }
+    out.push({ crate: 'pass' });
+  }
+  if (s.pending[seat].length >= gunsOf(s, seat)) return out;
   for (const sea of living(s)) {
     if (sea === seat) continue;
     for (let i = 0; i < SIZE * SIZE; i++) {
@@ -681,6 +741,7 @@ function forfeit(state: SalvoState, seat: SeatId, reason: string): SalvoState {
   if (s.phase === 'over' || !s.seats.includes(seat) || isEliminated(s, seat)) return s;
   s.eliminated.push({ seat, round: s.round, reason });
   s.pending[seat] = [];
+  s.crates[seat] = [];
   s.ready = s.ready.filter((x) => x !== seat);
   const alive = living(s);
   if (alive.length === 1) {
@@ -781,6 +842,8 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
             pending: s.pendingTrick[you] ? { trick: s.pendingTrick[you]!.kind, at: s.pendingTrick[you]!.sea, cell: s.pendingTrick[you]!.cell, ...(s.pendingTrick[you]!.fool ? { fool: s.pendingTrick[you]!.fool } : {}) } : null,
           }
         : null,
+    holding: Object.fromEntries(living(s).map((x) => [x, s.arsenal[x].length])),
+    myArsenal: you && !isEliminated(s, you) ? { items: [...s.arsenal[you]], crate: s.crates[you][0] ? [...s.crates[you][0]] : null } : null,
     mySea,
     targets: seas.map((x) => targetView(s, x, you, fakes)),
     lastVolley: volleyView(s, fakes),
@@ -799,8 +862,10 @@ const isFire = (c: unknown) => typeof c === 'object' && c !== null && 'fire' in 
 const isRandom = (c: unknown) => typeof c === 'object' && c !== null && (c as { place?: unknown }).place === 'random';
 
 const isTrick = (c: unknown) => typeof c === 'object' && c !== null && 'trick' in c;
+const isCrate = (c: unknown) => typeof c === 'object' && c !== null && 'crate' in c;
 
 function describe(command: unknown): string {
+  if (isCrate(command)) return 'opens a crate';
   if (isTrick(command)) return 'plays a dirty trick';
   if (isFire(command)) return 'fires';
   return isRandom(command) ? 'deploys the fleet' : 'deploys a ship';
@@ -808,6 +873,7 @@ function describe(command: unknown): string {
 
 function narrate(_before: SalvoState, _after: SalvoState, _seat: SeatId, command: unknown): string {
   if (isTrick(command)) return 'is up to something…';
+  if (isCrate(command)) return 'opens a crate';
   return isFire(command) ? 'is ready' : describe(command);
 }
 
@@ -859,6 +925,7 @@ export function roundSummary(before: SalvoState, after: SalvoState): string[] {
       const told = v.shells.some((sh) => !sh.blast && sh.result === 'sunk' && sh.sea === x.sea && sh.ship === x.ship);
       if (!told) lines.push(`${who(x.by)} ${x.by.length === 1 ? 'sinks' : 'sink'} {${x.sea}}'s ${x.ship}.`);
     }
+    if (!ended) for (const x of crateEarners(after, v.sunk)) lines.push(`{${x}} pulls a crate from the wreck.`);
     for (const t of v.tricks ?? []) lines.push(trickLine(t));
     for (const x of v.eliminated) {
       if (tied.includes(x)) continue;
@@ -922,6 +989,8 @@ export const salvoGame: GameModule<SalvoState> & { turn: TurnRules<SalvoState> &
       ghostsGone: [],
       pendingTrick: each<PendingTrick | null>(() => null),
       lastVolley: null,
+      arsenal: each<ItemId[]>(() => []),
+      crates: each<ItemId[][]>(() => []),
       scrap: each(() => 0),
       hitsLanded: each(() => 0),
       eliminated: [],

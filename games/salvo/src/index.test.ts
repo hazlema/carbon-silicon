@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   FOG_FROM,
+  ITEMS,
   MINE_LIMIT,
   ROUND_CAP,
   SEATS,
@@ -17,6 +18,7 @@ import {
   salvoGame as G,
   type SalvoCommand,
   type SalvoState,
+  type ItemId,
   type SalvoView,
   type ShipId,
 } from './index';
@@ -70,9 +72,10 @@ const fillSea = (s: SalvoState, seat: string) => s.seats.filter((x) => x !== sea
  * One seat's whole salvo: the shots given, then filler shells until every gun has fired. Fillers run down the
  * seat's own column of its last living opponent from row 8, skipping cells this seat has shot or anyone has
  * aimed this round, and any "sea cell" in `avoid` (shots others are about to send), so they never make a
- * Time on Target and never hit a STANDARD ship.
+ * Time on Target and never hit a STANDARD ship. Any crate the seat has open is passed first, unless `keepCrates`.
  */
-function salvo(s: SalvoState, seat: string, shots: Shot[] = [], avoid: string[] = []): SalvoState {
+function salvo(s: SalvoState, seat: string, shots: Shot[] = [], avoid: string[] = [], keepCrates = false): SalvoState {
+  while (!keepCrates && s.phase === 'fire' && s.crates[seat]?.length > 0 && turn.toMove(s).includes(seat)) s = turn.apply(s, seat, { crate: 'pass' });
   for (const [sea, cell, kind = 'shell'] of shots) s = turn.apply(s, seat, { fire: kind, at: sea, cell });
   if (!turn.toMove(s).includes(seat)) return s;
   const sea = fillSea(s, seat);
@@ -548,7 +551,7 @@ describe('one shot per ship afloat', () => {
     expect(Object.keys(s.shots.east).sort()).toEqual(['a1', 'b1', 'c1', 'd1']);
     expect(v.sunk).toEqual([{ sea: 'east', ship: 'cruiser', by: ['north'] }]);
     expect(s.scrap.north).toBe(4 + 3);
-    expect(roundSummary(deployed(2), s)).toEqual(["Round 1: {north} sinks {east}'s cruiser and 4 misses."]);
+    expect(roundSummary(deployed(2), s)).toEqual(["Round 1: {north} sinks {east}'s cruiser and 4 misses.", '{north} pulls a crate from the wreck.']);
   });
   test('the summary counts misses rather than naming them', () => {
     const s = deployed(2);
@@ -799,6 +802,9 @@ describe('roundSummary', () => {
       "Round 1: {east} sinks {north}'s submarine and 13 misses.",
       'Time on Target at {east} b2 by {north} and {south}: 9 cells, 6 hits.',
       "{north} and {south} sink {east}'s destroyer.",
+      '{east} pulls a crate from the wreck.',
+      '{north} pulls a crate from the wreck.',
+      '{south} pulls a crate from the wreck.',
     ]);
   });
   test('hits name the cell; eliminations and a fog line', () => {
@@ -810,6 +816,7 @@ describe('roundSummary', () => {
     expect(roundSummary(before, s)).toEqual([
       // east's one gun hits; north's three fillers, south's h8 and its three fillers miss
       `Round ${FOG_FROM - 1}: {north} sinks {east}'s cruiser, {east} hits {north} at a1 and 7 misses.`,
+      '{north} pulls a crate from the wreck.',
       '{east} is out, and comes back as a ghost.',
       'The fog lifts from row 8.',
     ]);
@@ -1412,5 +1419,122 @@ describe('tricks in the volley', () => {
     for (const seat of ['north', 'east', 'south']) s = salvo(s, seat);
     expect(viewOf(s, 'west').ascii).toMatch(/^8 .* M/m);
     expect(viewOf(s, 'north').ascii).not.toMatch(/ M( |$)/m);
+  });
+});
+
+describe('crates', () => {
+  /** North sinks east's submarine (a7–b7) in one volley: preHit a7, then shoot b7. */
+  function sinkSub(): SalvoState {
+    const s = deployed();
+    preHit(s, 'east', ['a7'], 'north');
+    return volley(s, { north: ['east', 'b7'] });
+  }
+  test('sinking a ship earns its shooter a crate of three items; the table hears it, never which', () => {
+    const s = sinkSub();
+    const mine = viewOf(s, 'north').myArsenal!;
+    expect(mine.items).toEqual([]);
+    expect(mine.crate).toHaveLength(3);
+    expect(viewOf(s, 'east').myArsenal!.crate).toBeNull();
+    expect(viewOf(s, null).myArsenal).toBeNull();
+    const summary = roundSummary(deployed(), s);
+    expect(summary).toContain('{north} pulls a crate from the wreck.');
+    expect(summary.join(' ')).not.toMatch(/cluster|torpedo|repair|decoy/);
+  });
+  test('an open crate is owed: legal leads with its cards and pass; the seat is not ready until it picks', () => {
+    let s = sinkSub();
+    const legal = turn.legal(s, 'north') as SalvoCommand[];
+    const crate = viewOf(s, 'north').myArsenal!.crate!;
+    expect(legal.slice(0, 4)).toEqual([...crate.map((x) => ({ crate: x })), { crate: 'pass' }]);
+    s = salvo(s, 'north', [], [], true); // all guns fired
+    expect(turn.toMove(s)).toContain('north');
+    expect(s.ready).not.toContain('north');
+    expect(turn.legal(s, 'north')).toEqual([...crate.map((x) => ({ crate: x })), { crate: 'pass' }]);
+    expect(codeOf(() => fire(s, 'north', 'west', 'a2'))).toBe('SALVO_DONE');
+    s = turn.apply(s, 'north', { crate: crate[0] });
+    expect(viewOf(s, 'north').myArsenal).toEqual({ items: [crate[0]], crate: null });
+    expect(viewOf(s, 'east').holding.north).toBe(1);
+    expect(s.ready).toContain('north');
+  });
+  test('a crate pick that is the last thing owed closes the round', () => {
+    let s = sinkSub();
+    const round = s.round;
+    s = salvo(s, 'north', [], [], true);
+    for (const x of ['east', 'south', 'west']) s = salvo(s, x);
+    expect(s.round).toBe(round);
+    expect(turn.toMove(s)).toEqual(['north']);
+    s = turn.apply(s, 'north', { crate: 'pass' });
+    expect(s.round).toBe(round + 1);
+    expect(s.crates.north).toEqual([]);
+    expect(s.arsenal.north).toEqual([]);
+  });
+  test('two held: a pick needs a drop; pass is always fine', () => {
+    let s = sinkSub();
+    s.arsenal.north = ['repair', 'decoy'];
+    const crate = s.crates.north[0];
+    const card = crate.find((x) => x !== 'repair' && x !== 'decoy') ?? crate[0];
+    const legal = turn.legal(s, 'north') as SalvoCommand[];
+    expect(legal.slice(0, 7)).toEqual([
+      ...crate.flatMap((x): SalvoCommand[] => [{ crate: x, drop: 'repair' }, { crate: x, drop: 'decoy' }]),
+      { crate: 'pass' },
+    ] as SalvoCommand[]);
+    expect(codeOf(() => turn.apply(s, 'north', { crate: card }))).toBe('HANDS_FULL');
+    expect(codeOf(() => turn.apply(s, 'north', { crate: card, drop: 'torpedo' }))).toBe('BAD_DROP');
+    s = turn.apply(s, 'north', { crate: card, drop: 'repair' });
+    expect(s.arsenal.north.sort()).toEqual((['decoy', card] as ItemId[]).sort());
+    expect(codeOf(() => turn.apply(s, 'north', { crate: 'pass' }))).toBe('NO_CRATE');
+  });
+  test('cards not in the crate are refused', () => {
+    const s = sinkSub();
+    const missing = ITEMS.find((x) => !s.crates.north[0].includes(x))!;
+    expect(codeOf(() => turn.apply(s, 'north', { crate: missing }))).toBe('NOT_IN_CRATE');
+  });
+  test('a shared sinking crates every shooter; ghosts and the finished match get none', () => {
+    let s = deployed();
+    preHit(s, 'east', ['a7'], 'north');
+    s = volley(s, { north: ['east', 'b7'], south: ['east', 'b7'] }); // Time on Target on b7
+    expect(s.crates.north).toHaveLength(1);
+    expect(s.crates.south).toHaveLength(1);
+    expect(s.crates.west).toEqual([]);
+  });
+  test('two sinkings in one volley queue two crates, one open at a time', () => {
+    let s = deployed();
+    preHit(s, 'east', ['a7'], 'north');
+    preHit(s, 'west', ['a7'], 'north');
+    s = volley(s, { north: [['east', 'b7'], ['west', 'b7']] });
+    expect(s.crates.north).toHaveLength(2);
+    expect(viewOf(s, 'north').myArsenal!.crate).toEqual(s.crates.north[0]);
+    expect(roundSummary(deployed(), s).filter((x) => x === '{north} pulls a crate from the wreck.')).toHaveLength(2);
+    s = turn.apply(s, 'north', { crate: 'pass' });
+    expect(s.crates.north).toHaveLength(1);
+    expect(turn.toMove(s)).toContain('north');
+  });
+  test('a seat whose fleet goes down in the volley gets no crate for its own sinking', () => {
+    let s = deployed();
+    preHit(s, 'north', ['a7'], 'east');
+    preHit(s, 'east', SHIP_CELLS.filter((c) => c !== 'b7'), 'north');
+    s = volley(s, { north: ['east', 'b7'], east: ['north', 'b7'] });
+    expect(s.lastVolley!.sunk.some((x) => x.sea === 'north' && x.by.includes('east'))).toBe(true);
+    expect(s.crates.north).toHaveLength(1);
+    expect(s.crates.east).toEqual([]);
+    expect(viewOf(s, 'east').myArsenal).toBeNull();
+  });
+  test('no crate once the match is over', () => {
+    let s = deployed(2);
+    preHit(s, 'east', SHIP_CELLS.filter((c) => c !== 'b7'));
+    s = volley(s, { north: ['east', 'b7'] });
+    expect(s.phase).toBe('over');
+    expect(s.crates.north).toEqual([]);
+    expect(roundSummary(deployed(2), s).join(' ')).not.toMatch(/crate/);
+  });
+  test('narration never names a crate card', () => {
+    const s = sinkSub();
+    const cmd = { crate: s.crates.north[0][0] };
+    expect(turn.describe!(cmd)).toBe('opens a crate');
+    expect(turn.narrate!(s, turn.apply(s, 'north', cmd), 'north', cmd)).toBe('opens a crate');
+  });
+  test('a random legal command always makes progress (the autopilot never stalls on a crate)', () => {
+    let s = sinkSub();
+    for (let k = 0; k < 20 && turn.toMove(s).includes('north'); k++) s = turn.apply(s, 'north', (turn.legal(s, 'north') as SalvoCommand[]).at(-1)!);
+    expect(turn.toMove(s)).not.toContain('north');
   });
 });

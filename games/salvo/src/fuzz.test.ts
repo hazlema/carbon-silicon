@@ -19,8 +19,8 @@ const turn = G.turn;
 const GAMES = 300;
 const CELL = /\b[a-h][1-8]\b/g;
 const SHIP_NAME = /cruiser|destroyer|frigate|submarine/g;
-const SAFE_DESCRIBE = ['fires', 'deploys a ship', 'deploys the fleet', 'plays a dirty trick'];
-const SAFE_NARRATE = ['is ready', 'deploys a ship', 'deploys the fleet', 'is up to something…'];
+const SAFE_DESCRIBE = ['fires', 'deploys a ship', 'deploys the fleet', 'plays a dirty trick', 'opens a crate'];
+const SAFE_NARRATE = ['is ready', 'deploys a ship', 'deploys the fleet', 'is up to something…', 'opens a crate'];
 const viewOf = (s: SalvoState, seat: string | null) => G.view(s, seat) as SalvoView;
 const isOut = (s: SalvoState, seat: string) => s.eliminated.some((x) => x.seat === seat);
 /** Sunk fleets still at the table, worked out from the state alone (the view's `ghosts` must agree). */
@@ -44,6 +44,9 @@ const codeOf = (fn: () => unknown): string | null => {
 function choose(v: SalvoView, legal: SalvoCommand[], rng: Rng): SalvoCommand {
   // A ghost plays random mischief, as the autopilot does.
   if (legal.length > 0 && 'trick' in (legal[0] as object)) return rng.pick(legal);
+  // An open crate comes first in legal: open it at random, as the autopilot does (Task 4 plays it properly).
+  const crate = legal.filter((c) => 'crate' in c);
+  if (crate.length > 0) return rng.pick(crate);
   if (v.phase === 'deploy') {
     const random = legal.find((c) => 'place' in c && c.place === 'random')!;
     return rng.next() < 0.5 ? random : rng.pick(legal);
@@ -218,10 +221,11 @@ function assertNoLeaks(s: SalvoState, step: number): void {
       for (const b of v.lastVolley.blasts) for (const c of b.cells) check(s.shots[b.sea][c] !== undefined, `${where}: unresolved blast cell`);
       for (const b of v.lastVolley.buoys) check(s.sonar[b.from].some((x) => x.sea === b.sea && x.cell === b.cell), `${where}: unresolved buoy`);
       check(!JSON.stringify(v.lastVolley.buoys).includes('afloat'), `${where}: a buoy's reading in the public volley`);
-      // Tricks are told once they are over: no live mine, no splash still on show.
+      // Tricks are told once they are over: no live mine, no splash still on show (a ghost may splash the same
+      // cell again in the round its last one is told: that one is first shown in this volley).
       for (const x of v.lastVolley.tricks) {
         if (x.kind === 'mine') check(!s.mines.some((m) => m.sea === x.sea && m.cell === x.cell && m.ghost === x.ghost), `${where}: a told mine still live`);
-        else check(!s.splashes.some((f) => f.sea === x.sea && f.cell === x.cell && f.ghost === x.ghost), `${where}: a told splash still on show`);
+        else check(!s.splashes.some((f) => f.sea === x.sea && f.cell === x.cell && f.ghost === x.ghost && f.round !== v.lastVolley!.round), `${where}: a told splash still on show`);
       }
     }
     // Nothing outside mySea, targets, lastVolley and the viewer's own myOrders and myTricks names a cell.
@@ -369,7 +373,7 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
         checkGhostTurn(s, seat, legal, rng, g, tally);
         tally.ghostMoves += 1;
       } else {
-        if (s.phase === 'fire') check(legal.length <= 192 + 108, `game ${g}: legal is ${legal.length} long`);
+        if (s.phase === 'fire') check(legal.length <= 192 + 108 + 7, `game ${g}: legal is ${legal.length} long`);
         // legal × apply: a few other entries apply cleanly too, and a spent cell is refused.
         turn.apply(s, seat, rng.pick(legal));
       }

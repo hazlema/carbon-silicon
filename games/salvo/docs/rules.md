@@ -319,6 +319,8 @@ misses:
 Round 5: 13 misses.
 Time on Target at {east} f2 by {north} and {south}: 9 cells, 3 hits.
 {north} and {south} sink {east}'s destroyer.
+{north} pulls a crate from the wreck.
+{south} pulls a crate from the wreck.
 The fog lifts from row 8.
 ```
 
@@ -532,6 +534,10 @@ The table hears west go under, and rise:
 
 ```
 Round 2: {north} sinks {west}'s cruiser, {north} sinks {west}'s destroyer, {north} sinks {west}'s frigate, {east} sinks {west}'s submarine and 10 misses.
+{north} pulls a crate from the wreck.
+{north} pulls a crate from the wreck.
+{north} pulls a crate from the wreck.
+{east} pulls a crate from the wreck.
 {west} is out, and comes back as a ghost.
 ```
 
@@ -686,6 +692,7 @@ south, scrap 2, 12 ship cells afloat     south, scrap 2, 8 ship cells afloat
 
 ```
 Round 5: {north} sinks {south}'s cruiser and 11 misses.
+{north} pulls a crate from the wreck.
 Backfire! {west}'s mine was sitting on {south}'s cruiser. {north}'s shell sends it to the bottom. Thanks for the help, {west}.
 The fog lifts from row 8.
 ```

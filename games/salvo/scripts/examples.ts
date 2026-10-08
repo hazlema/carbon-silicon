@@ -43,6 +43,11 @@ function round(s: SalvoState, shots: Round, story: Set<string>, plays: Plays = {
     // Until the salvo is in (the last one in resolves the round, and then the seat owes the next).
     while (s.round === start && s.phase === 'fire' && G.turn.toMove(s).includes(seat)) {
       const legal = G.turn.legal(s, seat) as { fire: string; at: string; cell: string }[];
+      // A crate from a sinking is owed too: the story passes it (the examples tell no items).
+      if (legal.some((c) => 'crate' in c)) {
+        s = G.turn.apply(s, seat, { crate: 'pass' });
+        continue;
+      }
       const water = legal
         .filter((c) => c.fire === 'shell' && c.at === sea && !named.has(`${sea} ${c.cell}`) && !s.fleets[sea].some((x) => x.cells.includes(c.cell)))
         .filter((c) => !s.seats.some((x) => s.pending[x].some((o) => o.sea === sea && o.cell === c.cell)))

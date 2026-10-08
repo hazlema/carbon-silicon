@@ -373,8 +373,10 @@ describe('Salvo on the engine', () => {
   const skirmish = async (ctx: Ctx) => {
     for (const [who, at] of [[ctx.north, 'east'], [ctx.east, 'south'], [ctx.south, 'north']] as const) {
       while (ctx.games.summary(ctx.id).toMove.includes(ctx.games.envelope(ctx.id, who.id).you!)) {
-        const legal = ctx.games.envelope(ctx.id, who.id).legal as { fire?: string; at?: string }[];
-        await ctx.games.move(ctx.id, who, ctx.games.summary(ctx.id).revision, legal.find((c) => c.fire === 'shell' && c.at === at)!);
+        const legal = ctx.games.envelope(ctx.id, who.id).legal as { fire?: string; at?: string; crate?: string }[];
+        // A crate from sinking west's fleet is owed too: passed once the shells are in.
+        const next = legal.find((c) => c.fire === 'shell' && c.at === at) ?? legal.find((c) => c.crate === 'pass');
+        await ctx.games.move(ctx.id, who, ctx.games.summary(ctx.id).revision, next!);
       }
     }
   };

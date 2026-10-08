@@ -17,6 +17,8 @@ const view = (targets: TargetView[], over: Partial<SalvoView> = {}): SalvoView =
   guns: { north: 4, east: 4, south: 4, west: 4 },
   myOrders: [],
   myTricks: null,
+  holding: {},
+  myArsenal: null,
   mySea: null,
   targets,
   lastVolley: null,
@@ -460,6 +462,9 @@ function volleyOf(s: SalvoState, shots: Record<string, [string, string][]>): Sal
   const round = s.round;
   for (const seat of s.seats) {
     if (s.round !== round || isOutIn(s, seat) || !turn.toMove(s).includes(seat)) continue;
+    // A crate from an earlier sinking is owed too: pass it.
+    while (s.round === round && s.crates[seat].length > 0 && turn.toMove(s).includes(seat)) s = turn.apply(s, seat, { crate: 'pass' });
+    if (s.round !== round) break;
     for (const [sea, cell] of shots[seat] ?? []) s = turn.apply(s, seat, { fire: 'shell', at: sea, cell });
     if (s.round !== round) break;
     const sea = s.seats.filter((x) => x !== seat && !isOutIn(s, x)).at(-1)!;
