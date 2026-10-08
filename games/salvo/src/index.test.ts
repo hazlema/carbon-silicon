@@ -1749,3 +1749,368 @@ describe('cluster and torpedo', () => {
     expect(volley(deployed(), {}).lastVolley!.items).toEqual([]);
   });
 });
+
+describe('repair and decoy', () => {
+  /** STANDARD fleets everywhere; `seat` holds `items`. */
+  function holding(seat: string, items: ItemId[], s = deployed()): SalvoState {
+    s.arsenal[seat] = items;
+    return s;
+  }
+  const use = (s: SalvoState, seat: string, cmd: Record<string, unknown>) => turn.apply(s, seat, cmd);
+  const repair = (s: SalvoState, seat: string, cell: string) => use(s, seat, { use: 'repair', cell });
+  const lay = (s: SalvoState, seat: string, at: string, facing: 'east' | 'north' = 'east') => use(s, seat, { use: 'decoy', at, facing });
+  const usesOf = (s: SalvoState, seat: string) => (turn.legal(s, seat) as SalvoCommand[]).filter((c) => 'use' in c);
+  const targetOf = (s: SalvoState, viewer: string | null, sea: string) => viewOf(s, viewer).targets.find((t) => t.sea === sea)!;
+  /** East's decoy at e5–f5, laid in round 1 (the fillers never reach east's sea: see `salvo`). */
+  function decoyed(): SalvoState {
+    return volley(lay(holding('east', ['decoy']), 'east', 'e5'), {});
+  }
+  /** As `preHit` for a live decoy's cell: north landed it earlier (a volley's fillers would run out of column). */
+  function decoyHit(s: SalvoState, cell = 'e5', by = 'north'): SalvoState {
+    s.shots.east[cell] = { result: 'hit', by: [by] };
+    s.decoys.east[0].hits.push(cell);
+    return s;
+  }
+
+  test('repair: legal on each hit cell of a ship afloat that you own; refusals carry precise codes', () => {
+    const s = holding('east', ['repair', 'cluster']);
+    preHit(s, 'east', ['a1', 'c1', 'a7', 'b7', 'e5']); // the submarine (a7–b7) is sunk; e5 is a miss
+    expect(usesOf(s, 'east')).toEqual([
+      { use: 'repair', cell: 'a1' },
+      { use: 'repair', cell: 'c1' },
+    ]);
+    expect(codeOf(() => repair(s, 'east', 'a1'))).toBeNull();
+    expect(codeOf(() => repair(s, 'east', 'b1'))).toBe('NOT_HIT'); // a ship cell, unhit
+    expect(codeOf(() => repair(s, 'east', 'e5'))).toBe('NOT_HIT'); // water
+    expect(codeOf(() => repair(s, 'east', 'a7'))).toBe('SHIP_SUNK');
+    expect(codeOf(() => repair(s, 'east', 'z9'))).toBe('BAD_CELL');
+    expect(codeOf(() => use(s, 'east', { use: 'repair' }))).toBe('BAD_COMMAND');
+    expect(codeOf(() => use(s, 'east', { use: 'jammer', cell: 'a1' }))).toBe('BAD_COMMAND');
+    expect(codeOf(() => repair(deployed(), 'east', 'a1'))).toBe('NO_ITEM');
+    // North's hits on its own sea are no business of east's repair; and it never repairs another sea.
+    const other = holding('east', ['repair']);
+    preHit(other, 'north', ['a1']);
+    expect(codeOf(() => repair(other, 'east', 'a1'))).toBe('NOT_HIT');
+    expect(usesOf(other, 'east')).toEqual([]);
+    // One item a round.
+    const after = use(s, 'east', { fire: 'cluster', at: 'north', cell: 'e5' });
+    expect(usesOf(after, 'east')).toEqual([]);
+    expect(codeOf(() => repair(after, 'east', 'a1'))).toBe('ONE_ITEM');
+    // Queued: yours in myOrders, out of your hand, still counted by the table, one gun used.
+    const queued = repair(s, 'east', 'c1');
+    expect(queued.arsenal.east).toEqual(['cluster']);
+    expect(viewOf(queued, 'east').myOrders).toEqual([{ fire: 'repair', at: 'east', cell: 'c1' }]);
+    expect(viewOf(queued, 'north').myOrders).toEqual([]);
+    expect(viewOf(queued, 'north').holding.east).toBe(2);
+    expect(shellsOf(queued, 'east').length).toBeGreaterThan(0);
+    expect(codeOf(() => use(queued, 'east', { fire: 'cluster', at: 'north', cell: 'e5' }))).toBe('ONE_ITEM');
+  });
+
+  test('repair lands before the shells: a cell repaired and shelled the same volley is hit again, the shooter credited', () => {
+    let s = holding('east', ['repair']);
+    preHit(s, 'east', ['d1'], 'west');
+    const before = s;
+    const scrap = s.scrap.north;
+    s = repair(s, 'east', 'd1');
+    s = volley(s, { north: ['east', 'd1'] }); // north never shot d1; west did
+    expect(s.shots.east.d1).toEqual({ result: 'hit', by: ['north'] });
+    expect(s.fleets.east.find((x) => x.id === 'cruiser')!.hits).toEqual(['d1']);
+    expect(s.lastVolley!.shells.find((x) => x.from === 'north' && x.cell === 'd1')!.result).toBe('hit');
+    expect(s.hitsLanded.north).toBe(1);
+    expect(s.scrap.north - scrap).toBe(1);
+    expect(s.lastVolley!.items).toEqual([{ item: 'repair', from: 'east', cell: 'd1' }]);
+    expect(s.repairs.east).toEqual([]); // shot again at once: no spark
+    expect(targetOf(s, 'south', 'east').repaired).toEqual([]);
+    const lines = roundSummary(before, s);
+    expect(lines).toContain('{east} welds the hit at d1 back together.');
+    expect(lines[0]).toContain('{north} hits {east} at d1');
+  });
+
+  test('a repair: the cell is unhit and unshot, afloat rises, the spark shows to everyone until the cell is shot again', () => {
+    let s = holding('east', ['repair']);
+    preHit(s, 'east', ['b1', 'c1'], 'west');
+    expect(targetOf(s, 'north', 'east').afloat).toBe(10);
+    s = volley(repair(s, 'east', 'c1'), {});
+    expect(s.shots.east.c1).toBeUndefined();
+    expect(s.fleets.east.find((x) => x.id === 'cruiser')!.hits).toEqual(['b1']);
+    expect(s.repairs.east).toEqual([{ cell: 'c1', round: 1 }]);
+    for (const viewer of ['north', 'south', 'west', null]) {
+      const t = targetOf(s, viewer, 'east');
+      expect(t.repaired).toEqual(['c1']);
+      expect(t.hits).toEqual(['b1']);
+      expect(t.afloat).toBe(11);
+    }
+    expect(viewOf(s, 'east').mySea!.repaired).toEqual(['c1']);
+    expect(viewOf(s, 'east').mySea!.shots.c1).toBeUndefined();
+    expect(targetOf(s, 'west', 'east').mine.map((x) => x.cell)).toEqual(['b1']); // west's hit is gone
+    expect(shellsOf(s, 'west')).toContainEqual({ fire: 'shell', at: 'east', cell: 'c1' }); // anyone may shoot it again
+    expect(viewOf(s, 'north').ascii).toContain('r = a repaired cell');
+    expect(viewOf(s, 'north').ascii.split('\n')).toContain('1 . X r . . . . .');
+    expect(viewOf(s, 'east').ascii.split('\n')).toContain('1 C X r C . . . .');
+    s = volley(s, { west: ['east', 'c1'] });
+    expect(s.repairs.east).toEqual([]);
+    expect(targetOf(s, 'north', 'east').repaired).toEqual([]);
+    expect(targetOf(s, 'north', 'east').hits).toEqual(['b1', 'c1']);
+  });
+
+  test('decoy: legal placements on your own sea; refusals carry precise codes', () => {
+    const s = holding('east', ['decoy']);
+    preHit(s, 'east', ['e5'], 'north'); // a shot cell
+    const offered = usesOf(s, 'east');
+    expect(offered).toContainEqual({ use: 'decoy', at: 'e4', facing: 'east' });
+    expect(offered).toContainEqual({ use: 'decoy', at: 'h1', facing: 'north' });
+    expect(offered).not.toContainEqual({ use: 'decoy', at: 'h1', facing: 'east' }); // off the sea
+    expect(offered).not.toContainEqual({ use: 'decoy', at: 'd1', facing: 'east' }); // on the cruiser
+    expect(offered).not.toContainEqual({ use: 'decoy', at: 'e4', facing: 'north' }); // over e5
+    expect(offered.every((c) => 'use' in c && c.use === 'decoy')).toBe(true);
+    expect(codeOf(() => lay(s, 'east', 'e4'))).toBeNull();
+    expect(codeOf(() => lay(s, 'east', 'h1'))).toBe('DECOY_PLACE');
+    expect(codeOf(() => lay(s, 'east', 'd1'))).toBe('DECOY_PLACE');
+    expect(codeOf(() => lay(s, 'east', 'e4', 'north'))).toBe('DECOY_PLACE');
+    expect(codeOf(() => lay(s, 'east', 'd5'))).toBe('DECOY_PLACE');
+    expect(codeOf(() => use(s, 'east', { use: 'decoy', at: 'e4', facing: 'west' }))).toBe('BAD_FACING');
+    expect(codeOf(() => use(s, 'east', { use: 'decoy', at: 'e4' }))).toBe('BAD_FACING');
+    expect(codeOf(() => use(s, 'east', { use: 'decoy', facing: 'east' }))).toBe('BAD_COMMAND');
+    expect(codeOf(() => lay(s, 'east', 'z9'))).toBe('BAD_CELL');
+    expect(codeOf(() => lay(deployed(), 'east', 'e4'))).toBe('NO_ITEM');
+    // Queued: yours in myOrders with its facing; the table sees nothing new.
+    const queued = lay(s, 'east', 'e4');
+    expect(viewOf(queued, 'east').myOrders).toEqual([{ fire: 'decoy', at: 'east', cell: 'e4', facing: 'east' }]);
+    expect(viewOf(queued, 'east').mySea!.decoy).toBeNull(); // laid at the reveal
+    expect(viewOf(queued, 'north').holding.east).toBe(1);
+    // One live decoy a sea: a second waits until the first is found.
+    const live = decoyed();
+    live.arsenal.east = ['decoy'];
+    expect(usesOf(live, 'east')).toEqual([]);
+    expect(codeOf(() => lay(live, 'east', 'e7'))).toBe('ONE_DECOY');
+  });
+
+  test('a decoy hit looks like any hit to everyone; its owner sees the truth', () => {
+    let s = decoyed();
+    expect(s.decoys.east).toEqual([{ cells: ['e5', 'f5'], hits: [], revealed: false }]);
+    expect(viewOf(s, 'east').mySea!.decoy).toEqual({ cells: ['e5', 'f5'], hits: [] });
+    expect(viewOf(s, 'north').mySea!.decoy).toBeNull();
+    expect(viewOf(s, 'north').holding.east).toBe(0);
+    expect(s.lastVolley!.items).toEqual([]); // laying one is never told
+    expect(JSON.stringify(viewOf(s, 'north').targets.find((t) => t.sea === 'east'))).not.toMatch(/e5|f5/);
+    expect(viewOf(s, 'east').ascii.split('\n')).toContain('5 F F F . d d . .');
+    const before = s;
+    const scrap = s.scrap.north;
+    s = volley(s, { north: ['east', 'e5'] });
+    expect(s.shots.east.e5).toEqual({ result: 'hit', by: ['north'] });
+    expect(s.lastVolley!.shells.find((x) => x.from === 'north' && x.cell === 'e5')).toMatchObject({ result: 'hit', ship: null });
+    expect(s.scrap.north - scrap).toBe(1);
+    expect(s.hitsLanded.north).toBe(1);
+    for (const viewer of ['north', 'south', 'west', null]) {
+      const t = targetOf(s, viewer, 'east');
+      expect(t.hits).toEqual(['e5']);
+      expect(t.afloat).toBe(11);
+      expect(t.decoys).toEqual([]);
+    }
+    expect(targetOf(s, 'north', 'east').mine).toEqual([{ cell: 'e5', result: 'hit' }]);
+    expect(viewOf(s, 'north').ascii.split('\n')).toContain('5 . . . . X . . .');
+    expect(viewOf(s, 'east').mySea!.decoy).toEqual({ cells: ['e5', 'f5'], hits: ['e5'] });
+    expect(viewOf(s, 'east').ascii.split('\n')).toContain('5 F F F . x d . .');
+    expect(roundSummary(before, s)[0]).toContain('{north} hits {east} at e5');
+    expect(roundSummary(before, s).join(' ')).not.toContain('DECOY');
+    // Guns and fleets never count a decoy.
+    expect(viewOf(s, 'north').guns.east).toBe(4);
+  });
+
+  test('fog counts and sonar readings count real ship cells only: a decoy is invisible to them', () => {
+    let s = decoyed();
+    s = volley(s, { north: [['east', 'e5'], ['east', 'f5', 'buoy']] });
+    // The buoy at f5 hears e4–g6: the decoy (one cell hit, one not) is all there is, and it hears nothing.
+    expect(targetOf(s, 'north', 'east').sonar).toEqual([{ cell: 'f5', round: 2, cells: buoyCells('f5'), afloat: 0 }]);
+    expect(targetOf(s, 'north', 'east').afloat).toBe(11); // the public count is fooled
+    // A decoy in a lifted row: the count is the real ships' alone.
+    let t = holding('east', ['decoy']);
+    t = volley(lay(t, 'east', 'e8'), {});
+    t.round = FOG_FROM; // row 8 lifts
+    expect(targetOf(t, 'north', 'east').lifted).toEqual([{ row: 8, afloat: 0 }]);
+    let u = holding('east', ['decoy']);
+    u = volley(lay(u, 'east', 'c7'), {}); // beside the submarine (a7–b7)
+    u.round = FOG_FROM + 1; // rows 8 and 1
+    u = { ...u };
+    expect(targetOf(u, 'north', 'east').lifted).toEqual([
+      { row: 8, afloat: 0 },
+      { row: 1, afloat: 4 },
+    ]);
+    u.round = FOG_FROM + 2; // and row 7: the submarine's two cells, never the decoy's
+    expect(targetOf(u, 'north', 'east').lifted.find((x) => x.row === 7)).toEqual({ row: 7, afloat: 2 });
+  });
+
+  test('both cells hit: the decoy is revealed — told, result decoy, no sinking scrap, no crate, afloat back', () => {
+    let s = decoyHit(decoyed());
+    s.hitsLanded.north = 1;
+    const before = s;
+    const scrap = s.scrap.north;
+    s = volley(s, { north: ['east', 'f5'] });
+    const v = s.lastVolley!;
+    expect(v.items).toEqual([{ item: 'decoy', sea: 'east', cells: ['e5', 'f5'], by: ['north'] }]);
+    expect(v.shells.find((x) => x.from === 'north' && x.cell === 'f5')).toMatchObject({ result: 'decoy', ship: null });
+    expect(v.sunk).toEqual([]);
+    expect(s.scrap.north - scrap).toBe(1); // the hit, nothing for the "sinking"
+    expect(s.hitsLanded.north).toBe(2);
+    expect(s.crates.north).toEqual([]);
+    expect(s.decoys.east).toEqual([{ cells: ['e5', 'f5'], hits: ['e5', 'f5'], revealed: true }]);
+    for (const viewer of ['north', 'south', null]) {
+      const t = targetOf(s, viewer, 'east');
+      expect(t.decoys).toEqual([['e5', 'f5']]);
+      expect(t.hits).toEqual([]);
+      expect(t.misses).toEqual([]);
+      expect(t.afloat).toBe(12);
+    }
+    expect(targetOf(s, 'north', 'east').mine).toEqual([
+      { cell: 'e5', result: 'decoy' },
+      { cell: 'f5', result: 'decoy' },
+    ]);
+    expect(viewOf(s, 'east').mySea!.decoy).toBeNull();
+    expect(viewOf(s, 'north').ascii.split('\n')).toContain('5 . . . . ~ ~ . .');
+    expect(viewOf(s, 'north').ascii).toContain('~ = a decoy, found: driftwood');
+    expect(viewOf(s, 'east').ascii.split('\n')).toContain('5 F F F . ~ ~ . .');
+    const lines = roundSummary(before, s);
+    expect(lines).toContain("{north}'s shell finds {east}'s DECOY — nothing but driftwood.");
+    expect(lines.join(' ')).not.toContain('crate');
+    expect(lines[0]).toBe('Round 2: 15 misses.'); // the fillers; the finding shell is told on its own line, never as a miss
+    // Found, it frees the sea for another decoy; a shell on driftwood is a miss.
+    s.arsenal.east = ['decoy'];
+    expect(usesOf(s, 'east')).toContainEqual({ use: 'decoy', at: 'e7', facing: 'east' });
+    // The fillers' columns (open water on every other sea) are nearly spent after three volleys: free them.
+    for (const sea of ['north', 'south', 'west']) for (const c of Object.keys(s.shots[sea])) if ('efgh'.includes(c[0])) delete s.shots[sea][c];
+    s = volley(s, { south: ['east', 'e5'] });
+    expect(s.lastVolley!.shells.find((x) => x.from === 'south' && x.cell === 'e5')!.result).toBe('miss');
+    expect(s.shots.east.e5).toEqual({ result: 'hit', by: ['north', 'south'] });
+    expect(targetOf(s, 'west', 'east')).toMatchObject({ decoys: [['e5', 'f5']], hits: [], afloat: 12 });
+  });
+
+  test('two shooters finish a decoy together; a cluster or a torpedo is named when it did', () => {
+    let s = decoyed();
+    const before = s;
+    s = volley(s, { north: ['east', 'e5'], south: ['east', 'f5'] });
+    expect(s.lastVolley!.items).toEqual([{ item: 'decoy', sea: 'east', cells: ['e5', 'f5'], by: ['north', 'south'] }]);
+    expect(s.lastVolley!.shells.filter((x) => x.sea === 'east').map((x) => x.result)).toEqual(['decoy', 'decoy']);
+    expect(roundSummary(before, s)).toContain("{north} and {south}'s shells find {east}'s DECOY — nothing but driftwood.");
+    let c = decoyed();
+    c.arsenal.north = ['cluster'];
+    const cBefore = c;
+    c = volley(use(c, 'north', { fire: 'cluster', at: 'east', cell: 'e5' }), {});
+    expect(c.lastVolley!.items).toEqual([
+      { item: 'cluster', from: 'north', sea: 'east', cell: 'e5', cells: ['e5', 'e4', 'd5', 'f5', 'e6'], hits: ['e5', 'f5'] },
+      { item: 'decoy', sea: 'east', cells: ['e5', 'f5'], by: ['north'] },
+    ]);
+    expect(roundSummary(cBefore, c)).toContain("{north}'s cluster finds {east}'s DECOY — nothing but driftwood.");
+    let t = holding('east', ['decoy']);
+    t = volley(lay(t, 'east', 'e5', 'north'), {}); // e5–e6
+    t.arsenal.north = ['torpedo'];
+    t = decoyHit(t);
+    const tBefore = t;
+    t = volley(use(t, 'north', { fire: 'torpedo', at: 'east', lane: 'e' }), {}); // down column e: e6 is the first unhit target
+    expect(t.lastVolley!.items[0]).toMatchObject({ item: 'torpedo', path: ['e8', 'e7', 'e6'], struck: 'e6' });
+    expect(roundSummary(tBefore, t)).toContain("{north}'s torpedo finds {east}'s DECOY — nothing but driftwood.");
+  });
+
+  test('a decoy finished in the volley that also sinks a real ship: the real sinking is credited and crated, the decoy only told', () => {
+    const s0 = decoyHit(decoyed());
+    preHit(s0, 'east', ['a7'], 'north');
+    let s = s0;
+    const before = s;
+    const scrap = s.scrap.north;
+    s = volley(s, { north: [['east', 'b7'], ['east', 'f5']] });
+    const v = s.lastVolley!;
+    expect(v.sunk).toEqual([{ sea: 'east', ship: 'submarine', by: ['north'] }]);
+    expect(v.items).toEqual([{ item: 'decoy', sea: 'east', cells: ['e5', 'f5'], by: ['north'] }]);
+    expect(v.shells.find((x) => x.cell === 'b7' && x.sea === 'east')).toMatchObject({ result: 'sunk', ship: 'submarine' });
+    expect(v.shells.find((x) => x.cell === 'f5' && x.sea === 'east')).toMatchObject({ result: 'decoy', ship: null });
+    expect(s.scrap.north - scrap).toBe(1 + 3 + 1); // b7, the sinking, f5
+    expect(s.crates.north).toHaveLength(1);
+    expect(viewOf(s, 'north').guns.east).toBe(3);
+    const lines = roundSummary(before, s);
+    expect(lines[0]).toContain("{north} sinks {east}'s submarine");
+    expect(lines).toContain("{north}'s shell finds {east}'s DECOY — nothing but driftwood.");
+    expect(lines.filter((x) => x.includes('crate'))).toEqual(['{north} pulls a crate from the wreck.']);
+  });
+
+  test("a fleet whose ships are all sunk is out, its live decoy notwithstanding", () => {
+    let s = decoyed();
+    preHit(s, 'east', SHIP_CELLS.filter((c) => c !== 'b7'), 'north');
+    s = volley(s, { north: ['east', 'b7'] });
+    expect(isOut(s, 'east')).toBe(true);
+    expect(s.lastVolley!.eliminated).toEqual(['east']);
+  });
+
+  test('a torpedo stops at a decoy cell; a decoy or a repair landed the same volley stops it too', () => {
+    // A decoy laid last round.
+    let s = decoyed();
+    s.arsenal.north = ['torpedo'];
+    s = volley(use(s, 'north', { fire: 'torpedo', at: 'east', lane: 'e' }), {});
+    expect(s.lastVolley!.items[0]).toMatchObject({ item: 'torpedo', path: ['e8', 'e7', 'e6', 'e5'], struck: 'e5' });
+    expect(s.shots.east.e5).toEqual({ result: 'hit', by: ['north'] });
+    expect(s.decoys.east[0].hits).toEqual(['e5']);
+    expect(targetOf(s, 'south', 'east').afloat).toBe(11);
+    // A decoy laid this very volley: decoys land before the torpedo reads the lane.
+    let t = holding('east', ['decoy']);
+    t.arsenal.north = ['torpedo'];
+    t = lay(t, 'east', 'e5');
+    t = volley(use(t, 'north', { fire: 'torpedo', at: 'east', lane: 'e' }), {});
+    expect(t.lastVolley!.items).toEqual([{ item: 'torpedo', from: 'north', sea: 'east', lane: 'e', path: ['e8', 'e7', 'e6', 'e5'], struck: 'e5' }]);
+    expect(t.decoys.east[0].hits).toEqual(['e5']);
+    // A cell repaired this very volley: unhit again before the torpedo reads the lane.
+    let r = holding('east', ['repair']);
+    r.arsenal.west = ['torpedo'];
+    preHit(r, 'east', ['a1'], 'north');
+    r = repair(r, 'east', 'a1');
+    r = volley(use(r, 'west', { fire: 'torpedo', at: 'east', lane: '1' }), {}); // east along row 1 from a1
+    expect(r.lastVolley!.items).toEqual([
+      { item: 'repair', from: 'east', cell: 'a1' },
+      { item: 'torpedo', from: 'west', sea: 'east', lane: '1', path: ['a1'], struck: 'a1' },
+    ]);
+    expect(r.shots.east.a1).toEqual({ result: 'hit', by: ['west'] });
+    expect(r.repairs.east).toEqual([]);
+  });
+
+  test('a Time on Target over a decoy hits it like a ship', () => {
+    let s = decoyed();
+    s = volley(s, { north: ['east', 'e4'], south: ['east', 'e4'] }); // the 3×3 takes e5 and f5
+    expect(s.lastVolley!.blasts[0]).toMatchObject({ sea: 'east', cell: 'e4', hits: ['e5', 'f5'] });
+    expect(s.lastVolley!.items).toEqual([{ item: 'decoy', sea: 'east', cells: ['e5', 'f5'], by: ['north', 'south'] }]);
+    expect(s.hitsLanded).toMatchObject({ north: 2, south: 2 });
+  });
+
+  test("a ghost's mine on a live decoy cell boomerangs as on open water; the shell still hits the decoy", () => {
+    let s = withGhost(); // west is a ghost; north sank west's submarine
+    s = turn.apply(s, 'north', { crate: 'pass' });
+    s.arsenal.east = ['decoy'];
+    s = lay(s, 'east', 'e5');
+    s = trick(s, 'west', { trick: 'mine', at: 'east', cell: 'e5' }); // the ghost can't know a decoy is landing there
+    s = volley(s, { north: ['east', 'e5'] });
+    expect(tricksIn(s)).toEqual([{ kind: 'mine', ghost: 'west', sea: 'east', cell: 'e5', shooters: ['north'], result: 'boomerang', hits: [{ sea: 'north', cell: 'c5' }] }]);
+    expect(s.decoys.east[0].hits).toEqual(['e5']);
+    expect(s.shots.east.e5).toEqual({ result: 'hit', by: ['north'] });
+    expect(s.shots.north.c5).toEqual({ result: 'hit', by: ['west'] });
+  });
+
+  test('a false splash reads the public afloat count: a sea fooled down to one by a decoy hit refuses it', () => {
+    let s = withGhost();
+    s = turn.apply(s, 'north', { crate: 'pass' });
+    s.arsenal.east = ['decoy'];
+    s = lay(s, 'east', 'e5');
+    s = haunt(volley(s, {}));
+    // East: every ship cell hit but a7 and b7 (two unhit), and its decoy hit once: the table reads one afloat.
+    preHit(s, 'east', SHIP_CELLS.filter((c) => c !== 'a7' && c !== 'b7'), 'north');
+    s = volley(s, { north: ['east', 'e5'] });
+    s = haunt(s);
+    expect(targetOf(s, 'north', 'east').afloat).toBe(1);
+    expect(codeOf(() => trick(s, 'west', { trick: 'splash', fool: 'north', at: 'east', cell: 'h8' }))).toBe('LAST_CELL');
+    expect(tricksOf(s, 'west').some((x) => x.trick === 'splash' && x.at === 'east')).toBe(false);
+  });
+
+  test('narration of a repair or a decoy never names it: "fires", "is ready"', () => {
+    const s = holding('east', ['repair', 'decoy']);
+    preHit(s, 'east', ['a1']);
+    for (const cmd of [{ use: 'repair', cell: 'a1' }, { use: 'decoy', at: 'e5', facing: 'east' }]) {
+      expect(turn.describe!(cmd)).toBe('fires');
+      expect(turn.narrate!(s, use(s, 'east', cmd), 'east', cmd)).toBe('is ready');
+    }
+  });
+});

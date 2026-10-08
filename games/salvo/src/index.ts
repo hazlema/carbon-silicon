@@ -25,13 +25,23 @@ export const SHIPS: readonly { id: ShipId; length: number }[] = [
 export const FLEET_CELLS = SHIPS.reduce((n, x) => n + x.length, 0);
 
 export type Phase = 'deploy' | 'fire' | 'over';
-export type ShotResult = 'miss' | 'hit' | 'sunk';
+/** 'decoy': the shot that finished a decoy (both its cells hit): driftwood, revealed. */
+export type ShotResult = 'miss' | 'hit' | 'sunk' | 'decoy';
 
 /** A placed ship; `hits` ⊆ `cells`. */
 export interface Ship {
   id: ShipId;
   cells: string[];
   hits: string[];
+}
+/**
+ * A decoy: a fake two-cell ship on its owner's sea. Live (unrevealed), its cells are secret to everyone but
+ * its owner and a hit on one reads as a hit; once both are hit it is revealed, public driftwood.
+ */
+export interface Decoy {
+  cells: string[];
+  hits: string[];
+  revealed: boolean;
 }
 /** One committed shot. */
 export interface Shell {
@@ -44,10 +54,13 @@ export type Buoy = Shell;
 /**
  * A seat's secret commit for the round: a shell, a sonar buoy instead of one, or an item for one.
  * A cluster's `cell` is its centre; a torpedo carries its `lane` and, as `cell`, the cell it enters at.
+ * A repair or a decoy is on the seat's own sea (`sea` is the seat): the hit cell it welds, or the decoy's
+ * first cell and its `facing`.
  */
 export interface Order extends Shell {
-  kind: 'shell' | 'buoy' | 'cluster' | 'torpedo';
+  kind: 'shell' | 'buoy' | 'cluster' | 'torpedo' | 'repair' | 'decoy';
   lane?: string;
+  facing?: Facing;
 }
 /** A ghost's mine: hidden from everyone but its ghost until a shell sets it off. */
 export interface Mine {
@@ -95,7 +108,9 @@ export type Trick =
 /**
  * An item used in a volley (public at the reveal). A cluster's `cells` are the cells it landed on (cells its
  * shooter had already shot are skipped), `hits` the new hits among them. A torpedo's `path` is every cell it
- * ran through, from its edge to `struck` (the first ship cell unhit at the start of the volley) or the whole lane.
+ * ran through, from its edge to `struck` (the first ship or live decoy cell unhit once repairs and decoys have
+ * landed) or the whole lane. A repair is the cell it welded on its owner's sea. A decoy is listed only when it
+ * is revealed (laying one is never told): `by` are the seats credited on the cells that finished it.
  */
 export type ItemUse =
   | { item: 'cluster'; from: SeatId; sea: SeatId; cell: string; cells: string[]; hits: string[] }
@@ -113,7 +128,7 @@ export interface Volley {
   eliminated: SeatId[];
   /** Tricks revealed in this volley: mines that went off, false splashes withdrawn. [] when none. */
   tricks: Trick[];
-  /** Items used in this volley, in seat order. [] when none. */
+  /** Items used in this volley, in seat order, then the decoys revealed in it. [] when none. */
   items: ItemUse[];
 }
 
@@ -148,6 +163,10 @@ export interface SalvoState {
   arsenal: Record<SeatId, ItemId[]>;
   /** Crates each seat has earned and not yet opened, oldest first; the head is the open crate. Yours alone. */
   crates: Record<SeatId, ItemId[][]>;
+  /** Each seat's decoys on its own sea, oldest first: at most one live (unrevealed, its owner's secret), then driftwood (public). */
+  decoys: Record<SeatId, Decoy[]>;
+  /** Welding sparks on each sea (public): cells repaired and not shot since, oldest first. */
+  repairs: Record<SeatId, { cell: string; round: number }[]>;
   scrap: Record<SeatId, number>;
   hitsLanded: Record<SeatId, number>;
   /** In order; reason 'sunk' | 'resign' | 'timeout' | … A tiebreak winner is taken back out of this list. */
@@ -168,24 +187,30 @@ export type SalvoCommand =
   | { fire: 'torpedo'; at: SeatId; lane: string }
   | { trick: 'mine'; at: SeatId; cell: string }
   | { trick: 'splash'; fool: SeatId; at: SeatId; cell: string }
+  | { use: 'repair'; cell: string }
+  | { use: 'decoy'; at: string; facing: Facing }
   | { crate: ItemId; drop?: ItemId }
   | { crate: 'pass' };
 
 export interface TargetView {
   sea: SeatId;
-  /** Your own shots at this sea, in the order the cells were first shot by anyone; 'sunk' once the ship there has gone down. */
+  /** Your own shots at this sea, in the order the cells were first shot by anyone; 'sunk' once the ship there has gone down, 'decoy' once the decoy there is revealed. */
   mine: { cell: string; result: ShotResult }[];
-  /** Every hit cell anyone landed (public), in board order. */
+  /** Every hit cell anyone landed (public), in board order: a live decoy's hits included (they look like any hit), a revealed decoy's not. */
   hits: string[];
   /** Every miss anyone landed (public), in board order. */
   misses: string[];
   /** Sunk ships with their cells (public). */
   sunk: { ship: ShipId; cells: string[] }[];
+  /** Revealed decoys, each its two cells (public), oldest first. */
+  decoys: string[][];
+  /** Welding sparks: cells repaired and not shot since (public), oldest first. */
+  repaired: string[];
   /** Lifted rows and how many ship cells in each are still afloat (unhit): a count, never where (public). */
   lifted: { row: number; afloat: number }[];
   /** Your sonar buoys on this sea, oldest first: the 3×3 each listens to and how many ship cells in it are afloat now. Yours alone. */
   sonar: { cell: string; round: number; cells: string[]; afloat: number }[];
-  /** Ship cells still unhit (public: 12 − hits). */
+  /** Ship cells still unhit as the table sees it (public: 12 − hits; a live decoy's hits fool it, so may a false splash). */
   afloat: number;
   /** This fleet is out (sunk, or its player forfeited): still on view, no longer a target. */
   out: boolean;
@@ -205,7 +230,7 @@ export interface SalvoView {
   /** How many shots each living seat fires this round: one per ship still afloat (public: sinkings are). */
   guns: Record<SeatId, number>;
   /** The shots you have sent this round, in order (yours alone; [] for spectators and outside a round). A torpedo's `cell` is where it enters its lane. */
-  myOrders: { fire: Order['kind']; at: SeatId; cell: string; lane?: string }[];
+  myOrders: { fire: Order['kind']; at: SeatId; cell: string; lane?: string; facing?: Facing }[];
   /** A ghost's own mischief: its live mines, its live splashes, this round's commit. Null for everyone else. */
   myTricks: {
     mines: { sea: SeatId; cell: string; round: number }[];
@@ -216,8 +241,17 @@ export interface SalvoView {
   holding: Record<SeatId, number>;
   /** Your items and your open crate's cards (null when none is open). Null for spectators and ghosts. */
   myArsenal: { items: ItemId[]; crate: ItemId[] | null } | null;
-  /** Your fleet: every ship, its cells and hits; ships still in port are listed with `cells: []`. Null for spectators. */
-  mySea: { ships: Ship[]; port: ShipId[]; shots: Record<string, 'miss' | 'hit'> } | null;
+  /**
+   * Your fleet: every ship, its cells and hits; ships still in port are listed with `cells: []`; your live decoy
+   * (null when none); the welding sparks on your sea. Null for spectators.
+   */
+  mySea: {
+    ships: Ship[];
+    port: ShipId[];
+    shots: Record<string, 'miss' | 'hit'>;
+    decoy: { cells: string[]; hits: string[] } | null;
+    repaired: string[];
+  } | null;
   /** One per sea that is not yours (spectators: every sea), fleets that are out included (`out`). */
   targets: TargetView[];
   lastVolley: Volley | null;
@@ -245,6 +279,21 @@ const bySeatOrder = (s: SalvoState, seats: Iterable<SeatId>) => {
   return s.seats.filter((x) => set.has(x));
 };
 const isShipId = (x: unknown): x is ShipId => SHIPS.some((ship) => ship.id === x);
+/** A seat's live decoy (unrevealed), if any: at most one. */
+const liveDecoy = (s: SalvoState, sea: SeatId) => s.decoys[sea].find((x) => !x.revealed);
+/** The live decoy on this cell of this sea, if any. */
+const liveDecoyAt = (s: SalvoState, sea: SeatId, cell: string) => s.decoys[sea].find((x) => !x.revealed && x.cells.includes(cell));
+/** Revealed decoy cells of a sea: public driftwood. */
+const driftwood = (s: SalvoState, sea: SeatId) => new Set(s.decoys[sea].filter((x) => x.revealed).flatMap((x) => x.cells));
+/**
+ * Ship cells afloat as the table sees a sea: 12 less every hit shown. A live decoy's hits count (the bluff), a
+ * revealed decoy's don't. Anything the table is told about a sea's afloat count must read this, never the fleet,
+ * or it would tell a decoy hit apart from a real one.
+ */
+const publicAfloat = (s: SalvoState, sea: SeatId) => {
+  const drift = driftwood(s, sea);
+  return FLEET_CELLS - Object.entries(s.shots[sea]).filter(([c, x]) => x.result === 'hit' && !drift.has(c)).length;
+};
 
 /** Shots a seat fires this round: one per ship still afloat. */
 const gunsOf = (s: SalvoState, seat: SeatId) => s.fleets[seat].filter((x) => !isSunk(x)).length;
@@ -259,9 +308,9 @@ const minesOf = (s: SalvoState, ghost: SeatId) => s.mines.filter((x) => x.ghost 
  * A ghost's tricks: a mine on any unshot cell of a living sea (not on one of its own; another ghost's
  * mine is no bar, or refusing would tell it where that mine is), while it has fewer than MINE_LIMIT;
  * then, with three fleets afloat, a false splash: a living fool, another living sea with at least
- * SPLASH_MIN_AFLOAT ship cells afloat (public; a fake hit on a sea's last cell would read "0 afloat"
- * and give itself away), an unshot cell. Ship cells are on offer like any other: nothing here may
- * depend on where a ship is.
+ * SPLASH_MIN_AFLOAT ship cells afloat (the public count; a fake hit on a sea's last cell would read "0 afloat"
+ * and give itself away), an unshot cell. Ship cells are on offer like any other, and so are a live decoy's:
+ * nothing here may depend on where a ship or a decoy is.
  */
 function trickLegal(s: SalvoState, ghost: SeatId): SalvoCommand[] {
   const out: SalvoCommand[] = [];
@@ -272,7 +321,7 @@ function trickLegal(s: SalvoState, ghost: SeatId): SalvoCommand[] {
     for (const sea of alive) for (const cell of unshot(sea)) if (!own.some((m) => m.sea === sea && m.cell === cell)) out.push({ trick: 'mine', at: sea, cell });
   }
   if (alive.length >= 3) {
-    const seas = alive.filter((x) => unhitCells(s, x) >= SPLASH_MIN_AFLOAT);
+    const seas = alive.filter((x) => publicAfloat(s, x) >= SPLASH_MIN_AFLOAT);
     for (const fool of alive) for (const sea of seas) if (sea !== fool) for (const cell of unshot(sea)) out.push({ trick: 'splash', fool, at: sea, cell });
   }
   return out;
@@ -381,7 +430,7 @@ function applyTrick(s: SalvoState, seat: SeatId, command: Record<string, unknown
     s.pendingTrick[seat] = { kind: 'mine', sea: at, cell: name };
   } else {
     if (alive.length < 3) throw new GameRuleError('TOO_FEW', 'A false splash needs three fleets afloat; plant a mine.');
-    if (unhitCells(s, at) < SPLASH_MIN_AFLOAT) {
+    if (publicAfloat(s, at) < SPLASH_MIN_AFLOAT) {
       throw new GameRuleError('LAST_CELL', `${at} is down to its last ship cell: a fake hit there would give itself away. Splash another sea, or plant a mine.`);
     }
     if (typeof fool !== 'string' || !alive.includes(fool) || fool === at) {
@@ -394,7 +443,7 @@ function applyTrick(s: SalvoState, seat: SeatId, command: Record<string, unknown
 }
 
 /** Is this order an item (one a round)? */
-const isItemOrder = (x: Order) => x.kind === 'cluster' || x.kind === 'torpedo';
+const isItemOrder = (x: Order) => x.kind === 'cluster' || x.kind === 'torpedo' || x.kind === 'repair' || x.kind === 'decoy';
 
 function applyFire(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
   const { fire, at, cell } = command;
@@ -466,6 +515,53 @@ function applyItemFire(s: SalvoState, seat: SeatId, command: Record<string, unkn
     order = { kind: 'torpedo', from: seat, sea: at, cell: cells[0], lane: lane! };
   }
   s.arsenal[seat].splice(s.arsenal[seat].indexOf(item), 1);
+  s.pending[seat].push(order);
+  markReady(s, seat);
+}
+
+/** Can a decoy lie on these cells of the seat's own sea? Unshot, clear of its ships and of its live decoy. */
+const decoyFits = (s: SalvoState, seat: SeatId, cells: string[]) =>
+  cells.every((c) => !s.shots[seat][c] && !shipAt(s, seat, c) && !liveDecoyAt(s, seat, c));
+
+/**
+ * A held repair or decoy as one shot of the salvo, on your own sea; it leaves your hand now. Both land at the
+ * reveal, before this volley's shots.
+ */
+function applyUse(s: SalvoState, seat: SeatId, command: Record<string, unknown>): void {
+  const { use, cell, at, facing } = command;
+  if (use !== 'repair' && use !== 'decoy') {
+    throw new GameRuleError('BAD_COMMAND', 'Send {"use":"repair","cell":"d1"} or {"use":"decoy","at":"c3","facing":"east"}.');
+  }
+  const where = use === 'repair' ? cell : at;
+  if (typeof where !== 'string') {
+    throw new GameRuleError('BAD_COMMAND', use === 'repair' ? 'Send {"use":"repair","cell":"d1"}.' : 'Send {"use":"decoy","at":"c3","facing":"east"}.');
+  }
+  if (s.pending[seat].some(isItemOrder)) throw new GameRuleError('ONE_ITEM', 'One item a round; the rest of your salvo is shells.');
+  if (!s.arsenal[seat].includes(use)) {
+    throw new GameRuleError('NO_ITEM', `You hold no ${use}${s.arsenal[seat].length > 0 ? `: you hold ${s.arsenal[seat].join(', ')}` : ''}.`);
+  }
+  if (s.pending[seat].length >= gunsOf(s, seat)) {
+    throw new GameRuleError('SALVO_DONE', 'Your whole salvo is in; open your crate: {"crate":"pass"} or one of its cards.');
+  }
+  const i = cellIndex(where);
+  if (i === null) throw new GameRuleError('BAD_CELL', `There is no cell "${where}" on an 8×8 sea (a1 to h8).`);
+  const name = cellName(i);
+  let order: Order;
+  if (use === 'repair') {
+    const ship = shipAt(s, seat, name);
+    if (!ship || !ship.hits.includes(name)) throw new GameRuleError('NOT_HIT', `${name} is not a hit on one of your ships; repair a hit cell of a ship still afloat.`);
+    if (isSunk(ship)) throw new GameRuleError('SHIP_SUNK', `Your ${ship.id} is already sunk; repair a ship still afloat.`);
+    order = { kind: 'repair', from: seat, sea: seat, cell: name };
+  } else {
+    if (facing !== 'east' && facing !== 'north') throw new GameRuleError('BAD_FACING', 'A decoy faces "east" or "north" from its first cell.');
+    if (liveDecoy(s, seat)) throw new GameRuleError('ONE_DECOY', 'Your decoy is still out there; one at a time.');
+    const cells = hullCells(name, 2, facing);
+    if (!cells || !decoyFits(s, seat, cells)) {
+      throw new GameRuleError('DECOY_PLACE', 'A decoy needs two cells of your own sea, both unshot, clear of your ships.');
+    }
+    order = { kind: 'decoy', from: seat, sea: seat, cell: name, facing };
+  }
+  s.arsenal[seat].splice(s.arsenal[seat].indexOf(use), 1);
   s.pending[seat].push(order);
   markReady(s, seat);
 }
@@ -552,10 +648,33 @@ function dressAs(s: SalvoState, fool: SeatId, sea: SeatId, shells: Shell[]): Sea
 /**
  * All shells land together. Grouped by sea and cell in seat order (never commit order): a cell two or
  * more seats hit is a Time on Target and takes its 3×3 with it (a seat never aims two shells at one cell). Every ship cell covered this volley and
- * not hit before becomes a hit credited to every seat that covered it. Mutates `s`.
+ * not hit before becomes a hit credited to every seat that covered it; so does every cell of a live decoy. Mutates `s`.
  */
 function resolve(s: SalvoState): void {
   const orders = s.seats.flatMap((x) => s.pending[x]);
+  // Repairs and decoys land first, before any shot. A repaired cell is unhit and unshot again, so this
+  // volley's shells may hit it; a decoy laid now is on the sea for this volley's shells. Everything below
+  // (the Time on Target hits, the cluster hits, the torpedo's "first cell unhit" snapshot) reads the sea
+  // after them: a fresh decoy or a fresh repair stops a torpedo.
+  const uses: ItemUse[] = [];
+  for (const o of orders) {
+    if (o.kind === 'repair') {
+      const ship = shipAt(s, o.sea, o.cell)!;
+      ship.hits = ship.hits.filter((c) => c !== o.cell);
+      delete s.shots[o.sea][o.cell];
+      s.repairs[o.sea].push({ cell: o.cell, round: s.round });
+      uses.push({ item: 'repair', from: o.from, cell: o.cell });
+    } else if (o.kind === 'decoy') {
+      s.decoys[o.sea].push({ cells: hullCells(o.cell, 2, o.facing!)!, hits: [], revealed: false });
+    }
+  }
+  /** A cell a shot can land a hit on: a ship cell or a live decoy cell, not yet hit. */
+  const unhitTarget = (sea: SeatId, c: string) => {
+    const ship = shipAt(s, sea, c);
+    if (ship) return !ship.hits.includes(c);
+    const decoy = liveDecoyAt(s, sea, c);
+    return !!decoy && !decoy.hits.includes(c);
+  };
   const shells: Shell[] = orders.filter((x) => x.kind === 'shell').map(({ from, sea, cell }) => ({ from, sea, cell }));
   // A buoy listens once the shells have landed; what it hears is worked out live, in the view.
   const buoys: Buoy[] = orders.filter((x) => x.kind === 'buoy').map(({ from, sea, cell }) => ({ from, sea, cell }));
@@ -595,42 +714,47 @@ function resolve(s: SalvoState): void {
     if (group.length >= 2) {
       const cells = [cell, ...neighbours(cell)];
       for (const c of cells) covered(sea, c, by);
-      blasts.push({ sea, cell, by, cells, hits: cells.filter((c) => shipAt(s, sea, c) && !shipAt(s, sea, c)!.hits.includes(c)) });
+      blasts.push({ sea, cell, by, cells, hits: cells.filter((c) => unhitTarget(sea, c)) });
     } else {
       covered(sea, cell, by);
     }
   }
 
   // Clusters and torpedoes land as lone shells from their shooter: never a Time on Target, never a mine's trigger.
-  // Both read the sea as it was at the start of the volley (nothing has landed yet), so commit order can't matter.
-  const unhitShip = (sea: SeatId, c: string) => {
-    const ship = shipAt(s, sea, c);
-    return !!ship && !ship.hits.includes(c);
-  };
-  const items: ItemUse[] = [];
+  // Both read the sea as it was before any shot landed (repairs and decoys already down), so commit order can't matter.
+  const items: ItemUse[] = uses;
   for (const o of orders) {
     if (o.kind === 'cluster') {
       const cells = clusterCells(o.cell).filter((c) => !firedAt(s, o.from, o.sea, c));
       for (const c of cells) covered(o.sea, c, [o.from]);
-      items.push({ item: 'cluster', from: o.from, sea: o.sea, cell: o.cell, cells, hits: cells.filter((c) => unhitShip(o.sea, c)) });
+      items.push({ item: 'cluster', from: o.from, sea: o.sea, cell: o.cell, cells, hits: cells.filter((c) => unhitTarget(o.sea, c)) });
     } else if (o.kind === 'torpedo') {
       const lane = torpedoLane(o.from, o.lane!)!;
-      const stop = lane.findIndex((c) => unhitShip(o.sea, c));
+      const stop = lane.findIndex((c) => unhitTarget(o.sea, c));
       const path = stop >= 0 ? lane.slice(0, stop + 1) : lane;
       for (const c of path) if (!firedAt(s, o.from, o.sea, c)) covered(o.sea, c, [o.from]);
       items.push({ item: 'torpedo', from: o.from, sea: o.sea, lane: o.lane!, path, struck: stop >= 0 ? lane[stop] : null });
     }
   }
 
-  // Record every covered cell, then land the new hits and their credit.
+  // Items in seat order (repairs were listed before the clusters and torpedoes).
+  items.sort((a, b) => s.seats.indexOf((a as { from: SeatId }).from) - s.seats.indexOf((b as { from: SeatId }).from));
+
+  // Record every covered cell, then land the new hits and their credit. A live decoy's cell is a hit like a
+  // ship's (in the record, paid, credited); a revealed decoy's keeps its record.
   const newHits = new Map<string, SeatId[]>(); // "sea cell" → credited seats
+  const decoyHits = new Map<string, SeatId[]>(); // the same, for live decoy cells
+  const onDecoy = new Set<string>(); // covered cells of a live decoy, hit before or not
   for (const [key, set] of cover) {
     const [sea, cell] = key.split(' ');
     const by = bySeatOrder(s, set);
     const ship = shipAt(s, sea, cell);
+    const decoy = liveDecoyAt(s, sea, cell);
     const prior = s.shots[sea][cell];
-    s.shots[sea][cell] = { result: ship ? 'hit' : 'miss', by: prior ? bySeatOrder(s, [...prior.by, ...by]) : by };
+    s.shots[sea][cell] = { result: ship || decoy ? 'hit' : (prior?.result ?? 'miss'), by: prior ? bySeatOrder(s, [...prior.by, ...by]) : by };
     if (ship && !ship.hits.includes(cell)) newHits.set(key, by);
+    else if (decoy && !decoy.hits.includes(cell)) decoyHits.set(key, by);
+    if (decoy) onDecoy.add(key);
   }
 
   const tricks: Trick[] = [];
@@ -649,6 +773,8 @@ function resolve(s: SalvoState): void {
     });
   for (const m of fired) {
     const shooters = bySeatOrder(s, groups.get(`${m.sea} ${m.cell}`)!.map((x) => x.from));
+    // A mine on a live decoy's cell (a ghost may plant one there: it can't know) boomerangs as on open water:
+    // a decoy is no ship to backfire. The shell still hit the decoy.
     const ship = shipAt(s, m.sea, m.cell);
     if (ship) {
       // Backfire: the hull goes up with the shot, every cell of it credited to the shooters.
@@ -684,6 +810,29 @@ function resolve(s: SalvoState): void {
     }
   }
   for (const sea of s.seats) for (const ship of s.fleets[sea]) ship.hits.sort((a, b) => ship.cells.indexOf(a) - ship.cells.indexOf(b));
+  // Decoy hits pay like any hit (+1 scrap, a hit landed); a decoy with both cells hit is revealed: no sinking
+  // scrap, no crate, never in `sunk`, and nothing that counts fleets (guns, eliminations) ever sees it.
+  for (const [key, by] of decoyHits) {
+    const [sea, cell] = key.split(' ');
+    const decoy = liveDecoyAt(s, sea, cell)!;
+    decoy.hits.push(cell);
+    decoy.hits.sort((a, b) => decoy.cells.indexOf(a) - decoy.cells.indexOf(b));
+    for (const x of by) {
+      s.scrap[x] += 1;
+      s.hitsLanded[x] += 1;
+    }
+  }
+  const finished = new Set<string>(); // "sea cell" of the decoys revealed this volley
+  for (const sea of s.seats) {
+    for (const d of s.decoys[sea]) {
+      if (d.revealed || d.hits.length < d.cells.length) continue;
+      d.revealed = true;
+      for (const c of d.cells) finished.add(`${sea} ${c}`);
+      items.push({ item: 'decoy', sea, cells: [...d.cells], by: bySeatOrder(s, d.cells.flatMap((c) => decoyHits.get(`${sea} ${c}`) ?? [])) });
+    }
+  }
+  // A spark is gone once its cell is shot again (a shell, a blast's spill, an item, a boomerang or a backfire hull).
+  for (const sea of s.seats) s.repairs[sea] = s.repairs[sea].filter((x) => !s.shots[sea][x.cell]);
 
   const sunk: Volley['sunk'] = [];
   for (const sea of s.seats) {
@@ -700,7 +849,10 @@ function resolve(s: SalvoState): void {
     const ship = shipAt(s, shell.sea, shell.cell);
     const blast = (groups.get(key)?.length ?? 0) >= 2;
     const sankIt = ship && newHits.get(key)?.includes(shell.from) && sunk.some((x) => x.sea === shell.sea && x.ship === ship.id);
-    return { ...shell, result: sankIt ? 'sunk' : ship ? 'hit' : 'miss', ship: sankIt ? ship.id : null, blast };
+    const fooled = finished.has(key) && !!decoyHits.get(key)?.includes(shell.from);
+    // A shell on a decoy already revealed is a miss: everyone knows it's driftwood.
+    const result: ShotResult = sankIt ? 'sunk' : fooled ? 'decoy' : ship || onDecoy.has(key) ? 'hit' : 'miss';
+    return { ...shell, result, ship: sankIt ? ship.id : null, blast };
   });
 
   // A false splash shows for one volley; at the next (or as soon as its cell is spent: a shell, a blast's
@@ -724,9 +876,9 @@ function resolve(s: SalvoState): void {
   s.mines = s.mines.filter((m) => !isEliminated(s, m.sea));
   const ends = living(s).length <= 1 || s.round >= ROUND_CAP;
   for (const x of s.splashes) {
-    if (ends || isEliminated(s, x.sea) || unhitCells(s, x.sea) < SPLASH_MIN_AFLOAT) tricks.push({ kind: 'splash', ghost: x.ghost, fool: x.fool, sea: x.sea, cell: x.cell });
+    if (ends || isEliminated(s, x.sea) || publicAfloat(s, x.sea) < SPLASH_MIN_AFLOAT) tricks.push({ kind: 'splash', ghost: x.ghost, fool: x.fool, sea: x.sea, cell: x.cell });
   }
-  s.splashes = ends ? [] : s.splashes.filter((x) => !isEliminated(s, x.sea) && unhitCells(s, x.sea) >= SPLASH_MIN_AFLOAT);
+  s.splashes = ends ? [] : s.splashes.filter((x) => !isEliminated(s, x.sea) && publicAfloat(s, x.sea) >= SPLASH_MIN_AFLOAT);
   // Crates: one per sinking to each credited seat still afloat (never a ghost), none once the match is over.
   if (!ends) for (const x of crateEarners(s, sunk)) s.crates[x].push(dealCrate(s.seed, s.draws++));
 
@@ -758,8 +910,9 @@ function apply(state: SalvoState, seat: SeatId, command: unknown): SalvoState {
     applyCrate(s, seat, cmd);
   } else {
     if (isGhost(s, seat)) throw new GameRuleError('BAD_COMMAND', 'You are a ghost: send {"trick":"mine","at":"east","cell":"e5"} or {"trick":"splash","fool":"south","at":"east","cell":"e5"}.');
-    if (!('fire' in cmd)) throw new GameRuleError('BAD_COMMAND', 'The fleets are down: send {"fire":"shell","at":"east","cell":"e5"}.');
-    applyFire(s, seat, cmd);
+    if ('use' in cmd) applyUse(s, seat, cmd);
+    else if (!('fire' in cmd)) throw new GameRuleError('BAD_COMMAND', 'The fleets are down: send {"fire":"shell","at":"east","cell":"e5"}.');
+    else applyFire(s, seat, cmd);
   }
   return s;
 }
@@ -803,6 +956,20 @@ function legal(s: SalvoState, seat: SeatId): SalvoCommand[] {
   // Or a held item for one of the shots: one a round, each kind held listed once.
   const held = s.pending[seat].some(isItemOrder) ? [] : [...new Set(s.arsenal[seat])];
   for (const item of held) {
+    if (item === 'repair') {
+      for (const ship of s.fleets[seat]) if (!isSunk(ship)) for (const cell of ship.hits) out.push({ use: 'repair', cell });
+      continue;
+    }
+    if (item === 'decoy') {
+      if (liveDecoy(s, seat)) continue;
+      for (let i = 0; i < SIZE * SIZE; i++) {
+        for (const facing of ['east', 'north'] as const) {
+          const cells = hullCells(cellName(i), 2, facing);
+          if (cells && decoyFits(s, seat, cells)) out.push({ use: 'decoy', at: cellName(i), facing });
+        }
+      }
+      continue;
+    }
     for (const sea of living(s)) {
       if (sea === seat) continue;
       if (item === 'cluster') {
@@ -870,17 +1037,24 @@ function targetView(s: SalvoState, sea: SeatId, you: SeatId | null, fakes: Splas
   const byBoard = (a: string, b: string) => cellIndex(a)! - cellIndex(b)!;
   const sunkShips = s.fleets[sea].filter(isSunk);
   const sunkCells = new Set(sunkShips.flatMap((x) => x.cells));
-  const real = shots.filter(([, x]) => x.result === 'hit').map(([c]) => c);
+  // A revealed decoy's cells leave the hits (so afloat comes back) for `decoys`.
+  const drift = driftwood(s, sea);
+  const real = shots.filter(([c, x]) => x.result === 'hit' && !drift.has(c)).map(([c]) => c);
   // A fool sees the false splashes played on them as hits like any other.
   const hits = [...new Set([...real, ...fakes.filter((x) => x.sea === sea).map((x) => x.cell)])].sort(byBoard);
   const t: TargetView = {
     sea,
     mine: you
-      ? shots.filter(([, x]) => x.by.includes(you)).map(([cell, x]) => ({ cell, result: sunkCells.has(cell) ? 'sunk' : x.result }))
+      ? shots
+          .filter(([, x]) => x.by.includes(you))
+          .map(([cell, x]): { cell: string; result: ShotResult } => ({ cell, result: sunkCells.has(cell) ? 'sunk' : drift.has(cell) ? 'decoy' : x.result }))
       : [],
     hits,
     misses: shots.filter(([, x]) => x.result === 'miss').map(([c]) => c).sort(byBoard),
     sunk: sunkShips.map((x) => ({ ship: x.id, cells: [...x.cells] })),
+    decoys: s.decoys[sea].filter((x) => x.revealed).map((x) => [...x.cells]),
+    repaired: s.repairs[sea].map((x) => x.cell),
+    // Fog counts and sonar readings count real ship cells only: a decoy is invisible to them (the counter-play).
     lifted: liftedRows(s.round).map((row) => ({ row, afloat: afloatIn(s, sea, (c) => rowOf(c) === row) })),
     sonar: you
       ? s.sonar[you]
@@ -928,6 +1102,8 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
         }),
         port: inPort(s, you).map((x) => x.id),
         shots: Object.fromEntries(Object.entries(s.shots[you]).map(([c, x]) => [c, x.result])),
+        decoy: liveDecoy(s, you) ? { cells: [...liveDecoy(s, you)!.cells], hits: [...liveDecoy(s, you)!.hits] } : null,
+        repaired: s.repairs[you].map((x) => x.cell),
       }
     : null;
   const v: Omit<SalvoView, 'ascii'> = {
@@ -938,7 +1114,7 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
     ready: [...s.ready],
     ghosts: ghosts(s),
     guns: s.phase === 'fire' ? Object.fromEntries(living(s).map((x) => [x, gunsOf(s, x)])) : {},
-    myOrders: you && s.phase === 'fire' ? s.pending[you].map((x) => ({ fire: x.kind, at: x.sea, cell: x.cell, ...(x.lane !== undefined ? { lane: x.lane } : {}) })) : [],
+    myOrders: you && s.phase === 'fire' ? s.pending[you].map((x) => ({ fire: x.kind, at: x.sea, cell: x.cell, ...(x.lane !== undefined ? { lane: x.lane } : {}), ...(x.facing !== undefined ? { facing: x.facing } : {}) })) : [],
     myTricks:
       you && isGhost(s, you)
         ? {
@@ -964,7 +1140,8 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
 
 // ── Narration: nothing here may name a cell, a sea or a ship before the volley lands. ──
 
-const isFire = (c: unknown) => typeof c === 'object' && c !== null && 'fire' in c;
+/** A shot of the salvo: a shell, a buoy, or an item (fired, or used on your own sea). */
+const isFire = (c: unknown) => typeof c === 'object' && c !== null && ('fire' in c || 'use' in c);
 const isRandom = (c: unknown) => typeof c === 'object' && c !== null && (c as { place?: unknown }).place === 'random';
 
 const isTrick = (c: unknown) => typeof c === 'object' && c !== null && 'trick' in c;
@@ -1000,6 +1177,15 @@ function trickLine(t: Trick): string {
   return `Dirty trick! {${t.ghost}}'s mine at {${t.sea}} ${t.cell} goes off under ${shell} — ${back}.`;
 }
 
+/** What finished a decoy for one seat: its shell (or a Time on Target it was in), else its cluster, else its torpedo. */
+function decoyFinder(v: Volley, d: { sea: SeatId; cells: string[] }, seat: SeatId): 'shell' | 'cluster' | 'torpedo' {
+  const on = (cells: string[]) => cells.some((c) => d.cells.includes(c));
+  if (v.shells.some((x) => x.from === seat && x.sea === d.sea && on([x.cell])) || v.blasts.some((b) => b.sea === d.sea && b.by.includes(seat) && on(b.cells))) return 'shell';
+  if (v.items.some((x) => x.item === 'cluster' && x.from === seat && x.sea === d.sea && on(x.cells))) return 'cluster';
+  if (v.items.some((x) => x.item === 'torpedo' && x.from === seat && x.sea === d.sea && on(x.path))) return 'torpedo';
+  return 'shell';
+}
+
 /** The round's story, told once it has landed, credited to no seat. Seats are written {seat}. */
 export function roundSummary(before: SalvoState, after: SalvoState): string[] {
   if (before.phase === 'deploy' && after.phase === 'fire') return ['All fleets are down. Round 1 begins.'];
@@ -1014,7 +1200,7 @@ export function roundSummary(before: SalvoState, after: SalvoState): string[] {
     const clauses: string[] = [];
     let misses = 0;
     for (const x of v.shells) {
-      if (x.blast) continue;
+      if (x.blast || x.result === 'decoy') continue; // a decoy that's found is told on its own line
       const clause =
         x.result === 'sunk' ? `{${x.from}} sinks {${x.sea}}'s ${x.ship}` : x.result === 'hit' ? `{${x.from}} hits {${x.sea}} at ${x.cell}` : null;
       if (clause === null) misses += 1;
@@ -1034,6 +1220,10 @@ export function roundSummary(before: SalvoState, after: SalvoState): string[] {
       } else if (x.item === 'torpedo') {
         const end = x.struck ? `strikes at ${x.struck}` : 'runs clean through';
         lines.push(`{${x.from}}'s torpedo runs down {${x.sea}}'s lane ${x.lane} and ${end}.`);
+      } else if (x.item === 'repair') {
+        lines.push(`{${x.from}} welds the hit at ${x.cell} back together.`);
+      } else {
+        lines.push(`${who(x.by)}'s ${x.by.length === 1 ? decoyFinder(v, x, x.by[0]) : 'shells'} ${x.by.length === 1 ? 'finds' : 'find'} {${x.sea}}'s DECOY — nothing but driftwood.`);
       }
     }
     for (const x of v.sunk) {
@@ -1106,6 +1296,8 @@ export const salvoGame: GameModule<SalvoState> & { turn: TurnRules<SalvoState> &
       lastVolley: null,
       arsenal: each<ItemId[]>(() => []),
       crates: each<ItemId[][]>(() => []),
+      decoys: each<Decoy[]>(() => []),
+      repairs: each<SalvoState['repairs'][SeatId]>(() => []),
       scrap: each(() => 0),
       hitsLanded: each(() => 0),
       eliminated: [],

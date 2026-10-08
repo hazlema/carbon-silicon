@@ -18,14 +18,24 @@ function grid(mark: (cell: string) => string, note: (row: number) => string = ()
   return lines;
 }
 
-/** A fleet seen whole: letters for unhit cells, X for hits, * for sunk ships, o for misses. */
-function wholeFleet(ships: Ship[], shots: Record<string, 'miss' | 'hit'>) {
+/**
+ * A fleet seen whole: letters for unhit cells, X for hits, * for sunk ships, o for misses. Your own sea adds
+ * `decoy` (your live decoy: d, x where hit), `repaired` (a spark: r) and draws a hit off your ships as ~
+ * (only a revealed decoy can be one).
+ */
+function wholeFleet(
+  ships: Ship[],
+  shots: Record<string, 'miss' | 'hit'>,
+  own: { decoy: { cells: string[]; hits: string[] } | null; repaired: string[] } = { decoy: null, repaired: [] },
+) {
   const marks = new Map<string, string>();
-  for (const [cell, result] of Object.entries(shots)) if (result === 'miss') marks.set(cell, 'o');
+  for (const [cell, result] of Object.entries(shots)) marks.set(cell, result === 'miss' ? 'o' : '~');
+  for (const cell of own.decoy?.cells ?? []) marks.set(cell, own.decoy!.hits.includes(cell) ? 'x' : 'd');
   for (const ship of ships) {
     const sunk = ship.cells.length > 0 && ship.hits.length === ship.cells.length;
     for (const cell of ship.cells) marks.set(cell, sunk ? '*' : ship.hits.includes(cell) ? 'X' : LETTER[ship.id]);
   }
+  for (const cell of own.repaired) marks.set(cell, 'r');
   return (cell: string): string => marks.get(cell) ?? '.';
 }
 
@@ -36,6 +46,8 @@ function publicSea(t: TargetView, mines: string[] = []) {
   for (const cell of t.misses) marks.set(cell, 'o');
   for (const cell of t.hits) marks.set(cell, 'X');
   for (const cell of t.sunk.flatMap((x) => x.cells)) marks.set(cell, '*');
+  for (const cell of t.decoys.flat()) marks.set(cell, '~');
+  for (const cell of t.repaired) marks.set(cell, 'r');
   return (cell: string): string => marks.get(cell) ?? '.';
 }
 
@@ -44,6 +56,10 @@ const fogNote = (t: TargetView) => (row: number) => {
   const lifted = t.lifted.find((x) => x.row === row);
   return lifted ? `fog lifted: ${lifted.afloat} afloat` : '';
 };
+
+/** Is a hit on your own sea off your ships? Only a revealed decoy of yours can be one. */
+const ownDriftwood = (view: Omit<SalvoView, 'ascii'>) =>
+  !!view.mySea && Object.entries(view.mySea.shots).some(([c, r]) => r === 'hit' && !view.mySea!.ships.some((x) => x.cells.includes(c)));
 
 /** The whole table in text, for language models: every sea in view, yours first with its ships. */
 export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
@@ -72,7 +88,7 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
     const afloat = view.mySea.ships.reduce((n, x) => n + x.cells.length - x.hits.length, 0);
     const port = view.mySea.port.length > 0 ? `, in port: ${view.mySea.port.join(', ')}` : '';
     lines.push('', `${view.you} (you), scrap ${view.scrap[view.you] ?? 0}, ${afloat} ship cells afloat${port}`);
-    lines.push(...grid(wholeFleet(view.mySea.ships, view.mySea.shots)));
+    lines.push(...grid(wholeFleet(view.mySea.ships, view.mySea.shots, view.mySea)));
   }
   for (const t of view.targets) {
     lines.push('', `${t.sea}${t.out ? ' (out)' : ''}, scrap ${view.scrap[t.sea] ?? 0}, ${t.afloat} ship cells afloat`);
@@ -81,7 +97,8 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
       for (const c of t.misses) shots[c] = 'miss';
       const whole = wholeFleet(t.revealed, shots);
       const mined = new Set((t.mines ?? []).map((x) => x.cell));
-      lines.push(...grid((c) => (mined.has(c) && whole(c) === '.' ? 'M' : whole(c))));
+      const drift = new Set(t.decoys.flat());
+      lines.push(...grid((c) => (drift.has(c) ? '~' : mined.has(c) && whole(c) === '.' ? 'M' : whole(c))));
     } else {
       const mines = (view.myTricks?.mines ?? []).filter((x) => x.sea === t.sea).map((x) => x.cell);
       lines.push(...grid(publicSea(t, mines), fogNote(t)));
@@ -96,5 +113,8 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
     'X = hit, * = sunk ship, o = miss, . = unknown or open water',
   );
   if (view.myTricks || view.targets.some((t) => (t.mines ?? []).length > 0)) lines.push('M = a mine (your own; every live mine once it is over)');
+  if (view.mySea?.decoy) lines.push('d = your decoy (x where it is hit)');
+  if (view.targets.some((t) => t.decoys.length > 0) || ownDriftwood(view)) lines.push('~ = a decoy, found: driftwood');
+  if (view.targets.some((t) => t.repaired.length > 0) || (view.mySea?.repaired.length ?? 0) > 0) lines.push('r = a repaired cell (a welding spark, until it is shot again)');
   return lines.join('\n');
 }

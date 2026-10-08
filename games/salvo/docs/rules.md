@@ -1171,7 +1171,9 @@ lists the ships not yet placed; `shots` maps every cell shot at your sea to
     {"id": "submarine", "cells": ["e5", "e6"], "hits": []}
   ],
   "port": [],
-  "shots": {"c2": "hit", "g8": "miss", "f8": "miss", "e8": "miss", "f7": "miss", "d8": "miss", "c8": "miss", "b8": "miss", "d2": "hit", "a1": "miss", "g7": "miss", "e7": "miss", "d7": "miss", "e2": "hit", "c7": "miss", "b7": "miss", "h1": "miss", "a7": "miss", "h6": "miss"}
+  "shots": {"c2": "hit", "g8": "miss", "f8": "miss", "e8": "miss", "f7": "miss", "d8": "miss", "c8": "miss", "b8": "miss", "d2": "hit", "a1": "miss", "g7": "miss", "e7": "miss", "d7": "miss", "e2": "hit", "c7": "miss", "b7": "miss", "h1": "miss", "a7": "miss", "h6": "miss"},
+  "decoy": null,
+  "repaired": []
 }
 ```
 
@@ -1225,6 +1227,8 @@ East's sea from north's view after round 4 (the [worked round](#a-worked-round))
   "hits": ["c4", "g4", "h4", "c5", "c6"],
   "misses": ["c3", "d4", "b5", "d6", "e6", "g6", "a7", "b7", "d7", "e7", "g7", "a8", "b8", "c8", "d8", "e8"],
   "sunk": [{"ship": "submarine", "cells": ["g4", "h4"]}],
+  "decoys": [],
+  "repaired": [],
   "lifted": [],
   "sonar": [],
   "afloat": 7,
