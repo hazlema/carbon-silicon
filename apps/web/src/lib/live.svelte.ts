@@ -235,11 +235,13 @@ class Live {
     return channel;
   }
 
-  /** `/msg`: send first, so a wrong name fails in the composer, then show the conversation. */
-  async sendDm(handle: string, text: string): Promise<void> {
+  /** `/msg`: send first, so a wrong name fails in the composer, then show the conversation. `open: false`
+   *  (a private line sent from a table's feed) sends without switching the chat to it. */
+  async sendDm(handle: string, text: string, opts: { open?: boolean } = {}): Promise<ChatMessage> {
     const r = await api<{ message: ChatMessage }>('POST', `/api/dms/${encodeURIComponent(handle)}`, { text });
     if (!this.dms.some((d) => d.channel === r.message.channel)) await this.loadDms();
-    this.#requestDm(r.message.channel);
+    if (opts.open !== false) this.#requestDm(r.message.channel);
+    return r.message;
   }
 
   /** You're looking at it: the dot goes here, and (through the server's dm.read) on your other devices. */
