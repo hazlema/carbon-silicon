@@ -1423,12 +1423,16 @@ and in the view, under `whispers`:
     "ghost": "west",
     "sea": "east",
     "cells": ["c3", "d3", "e3", "c4", "d4", "e4", "c5", "d5", "e5"],
-    "said": 4
+    "said": 4,
+    "paid": 4,
+    "at": 1791489630000
   }
 ]
 ```
 
-Nothing tells north whether that's a reading or a lie. North's own sonar, the
+`paid` is the scrap you paid for it and `at` when the auction closed (epoch
+milliseconds), so a client can put the whisper in its place in the table's
+talk. Nothing tells north whether that's a reading or a lie. North's own sonar, the
 fog's row counts and the hits that land will.
 
 **The truth comes out at the end.** When the match is over, every whisper
@@ -2000,7 +2004,7 @@ hit in everyone's view until the decoy is found.
 | `myTricks` | If you're a ghost, your own mischief: `{mines, splashes, pending, whisper}`, below. `null` for everyone else |
 | `auctions` | The whisper auctions open now, each `{ghost, sea, centre, cells, closesAt, bids}`: `cells` the 3 × 3, `closesAt` the close in epoch milliseconds (`null` in the moment before the server stamps it), and `bids` each living seat's `"bid"`, `"abstained"` or `null`. Never an amount. `[]` when none is open |
 | `myBids` | Yours alone: your bid on each open auction, by ghost, `{"west": 4}`. `{}` for everyone else |
-| `whispers` | Yours alone: every whisper you won, each `{ghost, sea, cells, said}`, `said` the number the ghost told you (its word, not a reading) |
+| `whispers` | Yours alone: every whisper you won, each `{ghost, sea, cells, said, paid, at}`, `said` the number the ghost told you (its word, not a reading), `paid` the scrap it cost, `at` when the auction closed (epoch ms; null only on a match saved before close times were kept) |
 | `truths` | `null` until the match is over; then every auction that opened, each `{ghost, sea, centre, cells, truth, said, state, winner, price}`, `state` being `sold`, `unsold` or `faded` |
 | `holding` | How many items each living seat holds, by seat; never which. An item sent this round still counts until the volley lands |
 | `myArsenal` | Yours alone: `{items, crate}`, the items you hold and your open crate's three cards (`null` when none is open). `null` for spectators and once you're out |

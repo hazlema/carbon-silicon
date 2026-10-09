@@ -32,6 +32,13 @@ export interface Auction {
   price: number;
   /** The round it closed (or faded) in; null while open. */
   closedRound: number | null;
+  /**
+   * When it was sold (epoch ms, the clock's time): stamped by the clock() that closes it, or (closed when
+   * its round resolved) by the clock() that follows the resolution; a close as the match ends takes the
+   * last clock time seen (state.lastNow). Null until then (and on auctions that weren't sold). Optional:
+   * states saved before it existed lack it.
+   */
+  closedAt?: number | null;
 }
 
 /** "c3–e5": a 3×3 by its corners. */
@@ -45,7 +52,7 @@ export const openAuctionOf = (s: SalvoState, ghost: SeatId) => s.auctions.find((
  * Close an auction now, with the bids so far: the highest bid from a living seat that can still pay it
  * wins, ties to the earliest; the winner's scrap moves to the ghost. Mutates `s`.
  */
-export function closeAuction(s: SalvoState, a: Auction, alive: SeatId[]): void {
+export function closeAuction(s: SalvoState, a: Auction, alive: SeatId[], now: number | null = null): void {
   const offers = Object.entries(a.bids)
     .filter((e): e is [SeatId, { n: number; at: number }] => e[1] !== null && alive.includes(e[0]) && e[1].n >= 1 && e[1].n <= s.scrap[e[0]])
     .sort((x, y) => y[1].n - x[1].n || x[1].at - y[1].at);
@@ -61,13 +68,17 @@ export function closeAuction(s: SalvoState, a: Auction, alive: SeatId[]): void {
   a.state = 'sold';
   a.winner = winner;
   a.price = n;
+  a.closedAt = now;
 }
 
-/** Close every open auction that is due by `due`, ghosts in seat order. Mutates `s`. */
-export function closeDue(s: SalvoState, alive: SeatId[], due: (a: Auction) => boolean): void {
+/** Close every open auction that is due by `due`, ghosts in seat order, sold ones stamped `now`. Mutates `s`. */
+export function closeDue(s: SalvoState, alive: SeatId[], due: (a: Auction) => boolean, now: number | null = null): void {
   const order = (a: Auction) => s.seats.indexOf(a.ghost);
-  for (const a of openAuctions(s).filter(due).sort((x, y) => order(x) - order(y))) closeAuction(s, a, alive);
+  for (const a of openAuctions(s).filter(due).sort((x, y) => order(x) - order(y))) closeAuction(s, a, alive, now);
 }
+
+/** Sold auctions still waiting for their close time (closed as a round resolved, with no clock to hand). */
+export const unstamped = (s: SalvoState) => s.auctions.filter((a) => a.state === 'sold' && a.closedAt == null);
 
 /** The listing, the close and the fade, told. Seats are written {seat}. */
 export const listingLine = (a: Auction) => `👻 {${a.ghost}} auctions a sonar reading on {${a.sea}}'s sea, ${areaName(a.cells)} — ${AUCTION_MS / 1000} seconds.`;

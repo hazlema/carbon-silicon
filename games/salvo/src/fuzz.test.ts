@@ -245,7 +245,7 @@ function assertNoLeaks(s: SalvoState, step: number, tally?: Tally): void {
     check(JSON.stringify(v.auctions) === JSON.stringify(auctions), `${where}: auctions are not the open ones, sealed`);
     const myBids = seat === null ? {} : Object.fromEntries(openAuctionsOf(s).flatMap((a) => (a.bids[seat] ? [[a.ghost, a.bids[seat]!.n]] : [])));
     check(JSON.stringify(v.myBids) === JSON.stringify(myBids), `${where}: myBids is not my own`);
-    const bought = s.auctions.filter((a) => seat !== null && a.state === 'sold' && a.winner === seat).map((a) => ({ ghost: a.ghost, sea: a.sea, cells: a.cells, said: a.tell ?? a.truth }));
+    const bought = s.auctions.filter((a) => seat !== null && a.state === 'sold' && a.winner === seat).map((a) => ({ ghost: a.ghost, sea: a.sea, cells: a.cells, said: a.tell ?? a.truth, paid: a.price, at: a.closedAt ?? null }));
     check(JSON.stringify(v.whispers) === JSON.stringify(bought), `${where}: whispers are not the ones I bought`);
     check((v.truths === null) === !over, `${where}: truths shown while live (or missing at the end)`);
     if (!over) {
@@ -662,7 +662,8 @@ function expectedSale(s: SalvoState, a: Auction, alive: string[]): { winner: str
 }
 
 /** Everything in a state but the auctions, the bid counter and the scrap: what a bid or a clock close may not touch. */
-const restOf = (s: SalvoState) => JSON.stringify({ ...s, auctions: null, bidSeq: null, scrap: null });
+/** Everything but the whisper's own bookkeeping (the auctions, the bid counter, scrap, the clock's last time). */
+const restOf = (s: SalvoState) => JSON.stringify({ ...s, auctions: null, bidSeq: null, scrap: null, lastNow: null });
 
 /**
  * How a state changed: by the clock at `now` (a wake-up, or the call after a move), by an optional bid or tell,
@@ -685,7 +686,16 @@ function checkWhisper(before: SalvoState, after: SalvoState, change: Change, g: 
   const times = after.phase === 'fire' ? open.flatMap((a) => (a.closesAt === null ? [] : [a.closesAt])) : [];
   check(turn.wakeAt!(after) === (times.length > 0 ? Math.min(...times) : null), `${where}: wakeAt ${turn.wakeAt!(after)} is not the earliest open close`);
   check(after.auctions.length >= before.auctions.length, `${where}: an auction vanished`);
-  before.auctions.forEach((a, i) => check(a.state === 'open' || JSON.stringify(after.auctions[i]) === JSON.stringify(a), `${where}: a closed auction changed`));
+  // Frozen once closed, but for its close time: a sale made as a round resolved is stamped by the next clock, at its now.
+  before.auctions.forEach((a, i) => {
+    if (a.state === 'open') return;
+    const b = after.auctions[i];
+    const stamped = change.kind === 'clock' && a.state === 'sold' && a.closedAt == null && b.closedAt === change.now;
+    if (stamped) bump(tally, 'whisper:stampedAfterResolution');
+    check(JSON.stringify(stamped ? { ...b, closedAt: a.closedAt } : b) === JSON.stringify(a), `${where}: a closed auction changed`);
+  });
+  // A sale by the clock carries that clock's time.
+  if (change.kind === 'clock') after.auctions.forEach((b, i) => check(b.state !== 'sold' || (before.auctions[i]?.state ?? 'open') !== 'open' || b.closedAt === change.now, `${where}: a clock sale not stamped at its now`));
   const resolved = after.round !== before.round || after.phase !== before.phase;
   for (const a of after.auctions.slice(before.auctions.length)) {
     check(change.kind !== 'clock' && change.kind !== 'optional' && resolved, `${where}: a whisper listed outside a resolution`);

@@ -2285,6 +2285,7 @@ describe('whisper: the listing', () => {
         winner: null,
         price: 0,
         closedRound: null,
+        closedAt: null,
       },
     ]);
     expect(roundSummary(before, s)).toContain("👻 {west} auctions a sonar reading on {east}'s sea, c3–e5 — 30 seconds.");
@@ -2470,7 +2471,7 @@ describe('whisper: bids', () => {
     s = bid(s, 'south', 3);
     let closed = clockAt(s, T0 + 30_000);
     expect(closed.scrap).toMatchObject({ north: 10, east: 4, south: 3, west: 5 });
-    expect(viewOf(closed, 'east').whispers).toEqual([{ ghost: 'west', sea: 'east', cells: buoyCells('d4'), said: 2 }]);
+    expect(viewOf(closed, 'east').whispers).toEqual([{ ghost: 'west', sea: 'east', cells: buoyCells('d4'), said: 2, paid: 4, at: T0 + 30_000 }]);
     for (const seat of [null, 'north', 'south', 'west']) expect(viewOf(closed, seat).whispers).toEqual([]);
     expect(viewOf(closed, null).auctions).toEqual([]);
     s = tell(s, 'west', 7);
@@ -2589,8 +2590,37 @@ describe('whisper: the close', () => {
     const lines = roundSummary(before, s);
     expect(lines[0]).toBe("{south} wins {west}'s whisper for 3 scrap.");
     expect(turn.wakeAt!(s)).toBeNull();
-    // A clock after the resolution has nothing left to close.
-    expect(clockAt(s, T0 + 31_000).auctions).toEqual(s.auctions);
+    // Sold with no clock to hand: the clock right after the resolution stamps when, and closes nothing else.
+    expect(s.auctions[0].closedAt).toBeNull();
+    expect(viewOf(s, 'south').whispers[0]).toMatchObject({ paid: 3, at: null });
+    const stamped = clockAt(s, T0 + 12_000);
+    expect(stamped.auctions).toEqual([{ ...s.auctions[0], closedAt: T0 + 12_000 }]);
+    expect(stamped.lastNow).toBe(T0 + 12_000);
+    expect(viewOf(stamped, 'south').whispers).toEqual([{ ghost: 'west', sea: 'east', cells: buoyCells('d4'), said: 2, paid: 3, at: T0 + 12_000 }]);
+    // …once: the next clock is no change.
+    expect(clockAt(stamped, T0 + 31_000)).toBe(stamped);
+  });
+
+  test('a won whisper carries its close time (the clock that closed it) and the price paid', () => {
+    let s = bidding({ north: 10, east: 10, south: 10 });
+    expect(s.lastNow).toBe(T0);
+    s = bid(s, 'north', 6);
+    const closed = clockAt(s, T0 + 30_250);
+    expect(whisperOf(closed).closedAt).toBe(T0 + 30_250);
+    expect(viewOf(closed, 'north').whispers).toEqual([{ ghost: 'west', sea: 'east', cells: buoyCells('d4'), said: 2, paid: 6, at: T0 + 30_250 }]);
+    // Unsold: no close time to tell (and nobody's whispers).
+    const unsold = clockAt(bidding(), T0 + 30_000);
+    expect(whisperOf(unsold)).toMatchObject({ state: 'unsold', closedAt: null });
+  });
+
+  test("a state saved before close times were kept reads at: null and isn't restamped on a sale it never had", () => {
+    let s = bidding();
+    s = bid(s, 'east', 2);
+    const closed = clockAt(s, T0 + 30_000);
+    const legacy = structuredClone(closed);
+    delete legacy.auctions[0].closedAt;
+    delete legacy.lastNow;
+    expect(viewOf({ ...legacy, auctions: legacy.auctions } as SalvoState, 'east').whispers[0].at).toBeNull();
   });
 
   test('an auction never stamped (no clock ran) still closes with its round', () => {
@@ -2718,7 +2748,7 @@ describe('whisper: the end of the match', () => {
         { ghost: 'west', sea: 'east', centre: 'd4', cells: buoyCells('d4'), truth: 2, said: 3, state: 'sold', winner: 'north', price: 3 },
       ]);
     }
-    expect(viewOf(after, 'north').whispers).toEqual([{ ghost: 'west', sea: 'east', cells: buoyCells('d4'), said: 3 }]);
+    expect(viewOf(after, 'north').whispers).toEqual([{ ghost: 'west', sea: 'east', cells: buoyCells('d4'), said: 3, paid: 3, at: T0 + 30_000 }]);
     expect(viewOf(after, null).ascii).toContain("west told north 3 in east's c3–e5; the truth was 2.");
   });
 
@@ -2730,6 +2760,8 @@ describe('whisper: the end of the match', () => {
     s = G.forfeit!(s, 'north', 'resign');
     expect(s.phase).toBe('over');
     expect(whisperOf(s)).toMatchObject({ state: 'sold', winner: 'east', price: 2 });
+    // No clock follows the end: the sale takes the last clock time seen (the auction's opening stamp here).
+    expect(viewOf(s, 'east').whispers[0]).toMatchObject({ paid: 2, at: T0 });
     expect(roundSummary(before, s)).toEqual([
       "{east} wins {west}'s whisper for 2 scrap.",
       'Everyone else is gone. {east} takes it.',

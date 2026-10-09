@@ -16,6 +16,7 @@ import {
   openAuctions,
   said,
   truthLine,
+  unstamped,
   type Auction,
 } from './whisper';
 
@@ -195,6 +196,12 @@ export interface SalvoState {
   auctions: Auction[];
   /** The bid clock: each new bid amount takes the next number (ties go to the earliest). */
   bidSeq: number;
+  /**
+   * The last time (epoch ms) a clock() that changed something heard (a clock() that changes nothing hands
+   * back the same state, so it can't record one). A close as the match ends, with no clock to follow, is
+   * stamped with it. Optional: states saved before it existed lack it.
+   */
+  lastNow?: number | null;
   hitsLanded: Record<SeatId, number>;
   /** In order; reason 'sunk' | 'resign' | 'timeout' | … A tiebreak winner is taken back out of this list. */
   eliminated: { seat: SeatId; round: number; reason: string }[];
@@ -276,8 +283,11 @@ export interface SalvoView {
   auctions: { ghost: SeatId; sea: SeatId; centre: string; cells: string[]; closesAt: number | null; bids: Record<SeatId, 'bid' | 'abstained' | null> }[];
   /** Your own bids on open auctions, by ghost. Yours alone ({} for spectators). */
   myBids: Record<SeatId, number>;
-  /** The whispers you bought: the ghost's word on that area (not a reading). Yours alone. */
-  whispers: { ghost: SeatId; sea: SeatId; cells: string[]; said: number }[];
+  /**
+   * The whispers you bought: the ghost's word on that area (not a reading), the scrap you paid, and when it
+   * was sold (epoch ms; null only on a match saved before close times were kept). Yours alone.
+   */
+  whispers: { ghost: SeatId; sea: SeatId; cells: string[]; said: number; paid: number; at: number | null }[];
   /** Once the match is over, every auction that opened, with its truth (public). Null until then. */
   truths: { ghost: SeatId; sea: SeatId; centre: string; cells: string[]; truth: number; said: number; state: Auction['state']; winner: SeatId | null; price: number }[] | null;
   /** How many items each living seat holds (public; never which). */
@@ -745,10 +755,13 @@ function clock(state: SalvoState, nowMs: number): SalvoState {
   const open = openAuctions(state);
   const stamp = open.filter((a) => a.closesAt === null && a.opensRound <= state.round);
   const due = open.filter((a) => a.closesAt !== null && nowMs >= a.closesAt);
-  if (stamp.length === 0 && due.length === 0) return state;
+  if (stamp.length === 0 && due.length === 0 && unstamped(state).length === 0) return state;
   const s = clone(state);
+  s.lastNow = nowMs;
+  // A sale made as the round resolved (no clock to hand) takes this clock's time: the one right after it.
+  for (const a of unstamped(s)) a.closedAt = nowMs;
   for (const a of openAuctions(s)) if (a.closesAt === null && a.opensRound <= s.round) a.closesAt = nowMs + AUCTION_MS;
-  closeDue(s, living(s), (a) => a.closesAt !== null && nowMs >= a.closesAt);
+  closeDue(s, living(s), (a) => a.closesAt !== null && nowMs >= a.closesAt, nowMs);
   return s;
 }
 
@@ -790,8 +803,10 @@ function finish(s: SalvoState, winner: SeatId, reason: string): void {
   // Nothing is still being played: a false splash on show is over with the match (a volley that ends it tells it first).
   s.splashes = [];
   for (const x of s.seats) s.pendingTrick[x] = null;
-  // An auction under way closes with its bids; one not yet open never will.
+  // An auction under way closes with its bids; one not yet open never will. No clock follows the end: a sale
+  // made now (or as the last volley resolved) takes the last clock time seen.
   closeDue(s, living(s), (a) => a.opensRound <= s.round);
+  for (const a of unstamped(s)) a.closedAt = s.lastNow ?? null;
   for (const a of s.auctions) if (a.state === 'open') a.state = 'void';
 }
 
@@ -1084,6 +1099,7 @@ function resolve(s: SalvoState): void {
         winner: null,
         price: 0,
         closedRound: null,
+        closedAt: null,
       });
     }
   }
@@ -1357,7 +1373,11 @@ function view(s: SalvoState, seat: SeatId | null): SalvoView {
       bids: Object.fromEntries(living(s).map((x) => [x, a.bids[x] ? 'bid' : a.abstained.includes(x) ? 'abstained' : null] as const)),
     })),
     myBids: you ? Object.fromEntries(openAuctions(s).flatMap((a) => (a.bids[you] ? [[a.ghost, a.bids[you]!.n]] : []))) : {},
-    whispers: you ? s.auctions.filter((a) => a.state === 'sold' && a.winner === you).map((a) => ({ ghost: a.ghost, sea: a.sea, cells: [...a.cells], said: said(a) })) : [],
+    whispers: you
+      ? s.auctions
+          .filter((a) => a.state === 'sold' && a.winner === you)
+          .map((a) => ({ ghost: a.ghost, sea: a.sea, cells: [...a.cells], said: said(a), paid: a.price, at: a.closedAt ?? null }))
+      : [],
     truths: over
       ? s.auctions
           .filter((a) => a.state !== 'void')
@@ -1568,6 +1588,7 @@ export const salvoGame: GameModule<SalvoState> & { turn: TurnRules<SalvoState> &
       scrap: each(() => 0),
       auctions: [],
       bidSeq: 0,
+      lastNow: null,
       hitsLanded: each(() => 0),
       eliminated: [],
       timeouts: each(() => 0),
