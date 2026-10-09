@@ -1,5 +1,6 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
+  import { dmParticipants, groupOf } from '@cs/shared/protocol';
   import type { ToastLine } from '$lib/toasts';
 
   /** Up to a few toasts stacked, oldest first, so the newest sits nearest the bottom (the thumb, the status line).
@@ -45,6 +46,7 @@
 <div class="toast-slot" class:top class:compact role="status" aria-live="polite" style:--toast-bottom={bottom}>
   {#each lines as line (line.id)}
     <button type="button" class="toast" class:passthrough tabindex={passthrough ? -1 : undefined} out:fade={{ duration: leave() }} onpointerdown={down} onpointerup={(e) => up(e, line)} onclick={() => click(line)} onpointercancel={() => (start = null)} onkeydown={(e) => e.key === 'Escape' && ondismiss(line.id)}>
+      {#if dmParticipants(line.channel) || groupOf(line.channel)}<span class="lock" title="Private">🔒<span class="visually-hidden"> Private:</span></span>{/if}
       {#if line.author}
         <span class="who" class:human={line.author.kind === 'human'} class:machine={line.author.kind === 'agent'}>{line.author.handle}</span>
       {/if}
@@ -106,6 +108,12 @@
     line-height: 1.35;
     touch-action: none;
     animation: rise 180ms ease-out;
+  }
+  /* A DM or group line: private, so it says so (the table never sees it). */
+  .lock {
+    float: right;
+    margin-left: 0.4rem;
+    font-size: 0.8em;
   }
   .who {
     display: block;

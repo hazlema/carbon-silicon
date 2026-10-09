@@ -25,6 +25,7 @@
   import { live } from '$lib/live.svelte';
   import { pollMatch } from '$lib/match-poll';
   import { pocket } from '$lib/pocket.svelte';
+  import { convLine, quietChannels, whisperLine, type ConvLookup, type PrivateLine } from '$lib/private-lines';
   import { clock, colorOf, tableColors } from '$lib/seats';
 
   const REASONS: Record<string, string> = {
@@ -79,6 +80,8 @@
     if (table) {
       if (ch === tableChannel(table.id)) tab = 'table';
       else if (ch === railChannel(table.id)) tab = 'rail';
+      // A resident's line during the match lives in your home feed, not a tab.
+      else if (quiet.has(ch)) tab = homeTab;
       else if ((dmParticipants(ch) && live.dms.some((d) => d.channel === ch)) || (groupOf(ch) && live.groups.some((g) => g.channel === ch))) tab = ch;
     }
     sheetOpen = true;
@@ -272,6 +275,88 @@
     if (inPocket && !sheetOpen) return;
     if (dmTab && dmTab.unread > 0) void live.readDm(dmTab.channel);
     if (groupTab && groupTab.unread > 0) void live.readGroup(groupTab.channel);
+  });
+
+  // ── Private lines: during a match your DMs and group lines (to or from you) also show inline in your home feed
+  // (the Table for players, the Rail for spectators), marked private; so do the Salvo whispers you won. Merged
+  // here only: the table's channel never hears them. The window opens at the match's start.
+  const homeTab = $derived(isPlayer ? 'table' : 'rail');
+  const privMatch = $derived(env?.match.id ?? null);
+  const since = $derived(env ? Date.parse(env.match.startsAt) : null);
+  /** Your DM and group lines since the match began, as they came (oldest first by id). */
+  let privMsgs = $state<ChatMessage[]>([]);
+  function takePrivate(list: ChatMessage[]) {
+    const from = untrack(() => since);
+    if (from === null) return;
+    const have = new Set(untrack(() => privMsgs).map((m) => m.id));
+    const fresh = list.filter((m) => (dmParticipants(m.channel) || groupOf(m.channel)) && !have.has(m.id) && Date.parse(m.createdAt) >= from);
+    if (fresh.length > 0) privMsgs = [...untrack(() => privMsgs), ...fresh].sort((a, b) => a.id - b.id);
+  }
+  $effect(() => {
+    void privMatch;
+    privMsgs = [];
+    whisperSeen.clear();
+    if (!privMatch) return;
+    return live.onConversation((m) => takePrivate([m]));
+  });
+  /** Conversations that spoke since the match began, so a reload (or a reconnect) reads their lines back. */
+  const activeConvs = $derived(
+    since === null
+      ? ''
+      : [...live.dms, ...live.groups]
+          .filter((c) => !!c.last && Date.parse(c.last.createdAt) >= since)
+          .map((c) => c.channel)
+          .sort()
+          .join(' '),
+  );
+  /** Conversations already read back, for this match and this connection (a reconnect reads them again: lines may have come meanwhile). */
+  let privFetched = { match: null as string | null, gen: -1, seen: new Set<string>() };
+  $effect(() => {
+    const channels = activeConvs;
+    const mid = privMatch;
+    const gen = live.reconnects;
+    if (privFetched.match !== mid || privFetched.gen !== gen) privFetched = { match: mid, gen, seen: new Set() };
+    if (!channels || !mid) return;
+    const seen = privFetched.seen;
+    for (const ch of channels.split(' ')) {
+      if (seen.has(ch)) continue;
+      seen.add(ch);
+      api<{ messages: ChatMessage[] }>('GET', `/api/chat/${encodeURIComponent(ch)}?limit=100`)
+        .then((r) => untrack(() => privMatch) === mid && takePrivate(r.messages))
+        .catch(() => seen.delete(ch));
+    }
+  });
+  const convLookup: ConvLookup = {
+    get meId() {
+      return live.me?.id ?? '';
+    },
+    dmWith: (ch) => live.dms.find((d) => d.channel === ch)?.with ?? null,
+    groupTitle: (ch) => {
+      const g = live.groups.find((x) => x.channel === ch);
+      return g ? groupTitle(g, live.me?.id ?? '') : null;
+    },
+  };
+  const convLines = $derived(
+    live.me ? privMsgs.filter((m) => !(m.author && live.hiddenAuthors.has(m.author.id))).flatMap((m) => convLine(m, convLookup) ?? []) : [],
+  );
+  /** When this page first saw each whisper (only for one the view gives no close time). */
+  const whisperSeen = new Map<number, number>();
+  const whisperLines = $derived(
+    (env?.match.gameId === 'salvo' ? ((env.view as SalvoView).whispers ?? []) : []).map((w, i) => {
+      if (!whisperSeen.has(i)) whisperSeen.set(i, Date.now());
+      return whisperLine(w, i, (seat) => env?.match.seats.find((s) => s.seat === seat)?.identity.handle ?? seat, whisperSeen.get(i)!);
+    }),
+  );
+  const privateLines: PrivateLine[] = $derived([...convLines, ...whisperLines]);
+  /** Residents (house bots) who spoke during the live match: inline only, off the tab row. */
+  const matchOn = $derived(env?.match.status === 'live' || env?.match.status === 'countdown');
+  const quiet = $derived(matchOn && since !== null ? quietChannels(live.dms, since, tab) : new Set<string>());
+  // Seeing a conversation's line in the feed reads it, as its tab would (in pocket, once the sheet is open).
+  $effect(() => {
+    if (tab !== homeTab || (inPocket && !sheetOpen)) return;
+    const inline = new Set(privMsgs.map((m) => m.id));
+    for (const d of live.dms) if (d.unread > 0 && d.last && inline.has(d.last.id)) void live.readDm(d.channel);
+    for (const g of live.groups) if (g.unread > 0 && g.last && inline.has(g.last.id)) void live.readGroup(g.channel);
   });
 
   const match = $derived(env?.match);
@@ -604,6 +689,8 @@
       readOnlyNote={dmTab ? 'This name was given back; nobody will read this.' : 'Only the players can talk at this table.'}
       placeholder={tab === 'table' ? 'Talk trash, play fair' : tab === 'rail' ? 'Cheer, heckle, speculate' : `Message ${convTitle}`}
       {focusKey}
+      privateLines={tab === homeTab && live.me ? privateLines : undefined}
+      onprivatesent={(m) => takePrivate([m])}
     >
       {#snippet header()}
         <div>
@@ -613,7 +700,7 @@
             <button role="tab" type="button" aria-selected={tab === 'rail'} onclick={() => (tab = 'rail')}
               >{railUnread > 0 ? `Rail (${railUnread})` : 'Rail'}</button
             >
-            <ConvTabs active={dmTab || groupTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} />
+            <ConvTabs active={dmTab || groupTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} hide={quiet} />
           </div>
           <ConvMenu channel={tab} />
           </div>

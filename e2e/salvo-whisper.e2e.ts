@@ -16,7 +16,7 @@ type Envelope = {
     mySea: { port: string[] } | null;
     auctions: AuctionView[];
     myBids: Record<string, number>;
-    whispers: { ghost: string; sea: string; cells: string[]; said: number }[];
+    whispers: { ghost: string; sea: string; cells: string[]; said: number; paid: number; at: number | null }[];
     scrap: Record<string, number>;
   };
   legal: Legal[];
@@ -205,7 +205,8 @@ test('Salvo whisper: a ghost auctions a reading, the human bids through the pane
     expect(Date.now()).toBeGreaterThanOrEqual(closesAt! - 2_000);
     expect(after.view.scrap[me]).toBe(before[me] - BID);
     expect(after.view.scrap[ghost]).toBe(before[ghost] + BID);
-    expect(after.view.whispers).toEqual([{ ghost, sea, cells: auction.cells, said: TELL }]);
+    expect(after.view.whispers).toEqual([{ ghost, sea, cells: auction.cells, said: TELL, paid: BID, at: expect.any(Number) }]);
+    expect(Math.abs(after.view.whispers[0].at! - closesAt!), 'sold at the clock that closed it').toBeLessThan(5_000);
     expect(after.recent.some((r) => r.text === `${handle(me)} wins ${handle(ghost)}'s whisper for ${BID} scrap.`), JSON.stringify(after.recent.map((r) => r.text))).toBe(true);
     // The rival, who bid 1, paid nothing.
     expect(after.view.scrap[rival]).toBe(before[rival]);
@@ -219,6 +220,12 @@ test('Salvo whisper: a ghost auctions a reading, the human bids through the pane
     await expect(mark).toHaveAttribute('data-said', String(TELL));
     await expect(mark).toHaveText(`👻 ${TELL}?`);
     await expect(main.locator(`[data-cell="${CENTRE}"]`)).toHaveAttribute('title', new RegExp(`👻 @${handle(ghost)} says ${TELL}`));
+
+    // …and the Table's feed carries it as a private line, for the winner alone (never a DM, never a tab).
+    const whisper = page.getByRole('log').locator('p.private.whisper');
+    await expect(whisper).toHaveCount(1);
+    await expect(whisper).toContainText(`@${handle(ghost)} whispers to you: ${TELL} ship cells in @${handle(sea)}'s a3–c5 (you paid ${BID} scrap)`);
+    await expect(whisper).toContainText('👻');
   } finally {
     done = true;
     await Promise.all(loops);

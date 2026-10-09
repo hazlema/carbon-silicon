@@ -6,10 +6,11 @@
 
   /** The conversations inline with a chat header's own tabs (spec M2c §5, M2d §1): buttons marked aria-current.
    *  Renders nothing until a conversation is visible. `onpick(null)` means "back to where you were":
-   *  the open tab closed. */
-  let { active, onpick }: { active: string | null; onpick: (channel: string | null) => void } = $props();
+   *  the open tab closed.
+   *  `hide`: conversations kept off the row (a table's residents during a match: their lines show inline), unless on screen. */
+  let { active, onpick, hide }: { active: string | null; onpick: (channel: string | null) => void; hide?: ReadonlySet<string> } = $props();
 
-  const row = $derived(convTabs(live.dms, live.groups, active));
+  const row = $derived(convTabs(hide?.size ? live.dms.filter((d) => d.channel === active || !hide.has(d.channel)) : live.dms, live.groups, active));
   const titleOf = (c: Conv) => (c.kind === 'dm' ? `@${c.dm.with.handle}` : groupTitle(c.group, live.me?.id ?? ''));
   let moreOpen = $state(false);
   let moreButton: HTMLButtonElement | undefined = $state();

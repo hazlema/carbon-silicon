@@ -7,6 +7,7 @@
   import { untilText } from '$lib/format';
   import { applyRemoval, chatItems, hiddenLabel } from '$lib/hidden';
   import { live } from '$lib/live.svelte';
+  import { mergeByTime, parsePrivateCommand, type PrivateLine, type ReplyTarget } from '$lib/private-lines';
   import { runInviteCommand } from '$lib/table-actions';
   import { parseInviteCommand } from '$lib/tables';
   import Avatar from './Avatar.svelte';
@@ -23,6 +24,8 @@
     readOnlyNote = 'Only the Proprietor posts here.',
     placeholder = 'Say something',
     focusKey = 0,
+    privateLines,
+    onprivatesent,
   }: {
     channel: string;
     title: string;
@@ -34,6 +37,12 @@
     placeholder?: string;
     /** Bumping it focuses the composer (a conversation someone asked to open). */
     focusKey?: number;
+    /** A table's home feed: your DMs, group lines and whispers, merged in by time and marked private. Given (even
+     *  empty), the composer also sends `/w @x text` (and `/msg`) without leaving the feed, and a click on a line
+     *  replies to it privately. Left out (the lobby, a DM tab), the chat behaves as it always has. */
+    privateLines?: PrivateLine[];
+    /** A private line this composer just sent (its own copy also arrives over the socket). */
+    onprivatesent?: (message: ChatMessage) => void;
   } = $props();
 
   let messages = $state<ChatMessage[]>([]);
@@ -46,6 +55,16 @@
   const inputId = $derived(`say-${channel.replace(/[^a-z0-9-]/gi, '-')}`);
   let revealed = $state(new Set<number>());
   const items = $derived(chatItems(messages, live.hiddenAuthors, revealed));
+  const privateFeed = $derived(privateLines !== undefined);
+  /** When each line was said (a hidden run: its first line), to slot the private lines in. */
+  const whenOf = $derived.by(() => {
+    const at = new Map(messages.map((m) => [m.id, Date.parse(m.createdAt)]));
+    return (item: (typeof items)[number]) => at.get(item.kind === 'message' ? item.message.id : item.key) ?? 0;
+  });
+  const feed = $derived(mergeByTime(items, whenOf, privateLines ?? []));
+  /** A private reply under way (a click on a private line): the next send goes there. */
+  let replyTo = $state<ReplyTarget | null>(null);
+  const replyName = (r: ReplyTarget) => (r.kind === 'dm' ? `@${r.handle}` : `#${r.title}`);
   const canMenu = (m: ChatMessage) => !!live.me && !!m.author && m.author.id !== live.me.id && !m.removed;
 
   function merge(list: ChatMessage[]) {
@@ -70,6 +89,7 @@
     revealed = new Set();
     error = '';
     notice = '';
+    replyTo = null;
     const off = live.onChat(ch, (m) => merge([m]));
     const isStaff = !!live.me && (live.me.role === 'mod' || live.me.role === 'admin');
     const offRemoved = live.onChatRemoved(ch, (r) => (messages = applyRemoval(messages, r.id, r.by, isStaff)));
@@ -99,6 +119,7 @@
 
   $effect(() => {
     void messages.length;
+    void privateLines?.length;
     if (!pinned || !log) return;
     void tick().then(() => log && (log.scrollTop = log.scrollHeight));
   });
@@ -155,10 +176,53 @@
     draft = t.value;
   }
 
+  /** A click on a private line: the composer replies there, privately. */
+  function startReply(r: ReplyTarget) {
+    replyTo = r;
+    error = '';
+    void tick().then(() => document.getElementById(inputId)?.focus());
+  }
+  function cancelReply() {
+    replyTo = null;
+    document.getElementById(inputId)?.focus();
+  }
+
+  /** In a table's home feed: `/w @x text` (or `/msg`) sends privately and stays here; a reply under way goes to
+   *  its conversation. Returns false when the line is neither (it's for the feed's own channel). */
+  async function sendPrivate(text: string): Promise<boolean> {
+    const cmd = parsePrivateCommand(text);
+    if (!cmd && !replyTo) return false;
+    error = '';
+    notice = '';
+    if (cmd && (!cmd.handle || !cmd.text)) {
+      error = 'Try /w @name hello.';
+      return true;
+    }
+    if (sending) return true;
+    sending = true;
+    try {
+      let sent: ChatMessage;
+      if (cmd) sent = await live.sendDm(cmd.handle, cmd.text, { open: false });
+      else {
+        sent = (await api<{ message: ChatMessage }>('POST', `/api/chat/${encodeURIComponent(replyTo!.channel)}`, { text })).message;
+        replyTo = null;
+      }
+      onprivatesent?.(sent);
+      if (draft.trim() === text) draft = '';
+      pinned = true;
+    } catch (err) {
+      error = (err as Error).message;
+    } finally {
+      sending = false;
+    }
+    return true;
+  }
+
   async function send(e: SubmitEvent) {
     e.preventDefault();
     const text = draft.trim();
     if (!text) return;
+    if (privateFeed && (await sendPrivate(text))) return;
     const dm = parseMsgCommand(text);
     if (dm) {
       error = '';
@@ -219,15 +283,39 @@
     </header>
   {/if}
   <div class="log" bind:this={log} onscroll={onScroll} role="log" aria-live="polite" aria-relevant="additions">
-    {#each items as item (item.kind === 'message' ? item.message.id : `hidden-${item.key}`)}
-      {#if item.kind === 'hidden'}
+    {#each feed as entry (entry.kind === 'private' ? `private-${entry.line.key}` : entry.item.kind === 'message' ? entry.item.message.id : `hidden-${entry.item.key}`)}
+      {#if entry.kind === 'private'}
+        {@const p = entry.line}
+        {#snippet privateBody()}
+          <span class="lock" aria-hidden="true">{p.kind === 'whisper' ? '👻' : '🔒'}</span>
+          <span class="ptext"
+            ><span class="visually-hidden">Private{p.kind === 'whisper' ? ' whisper' : ''}: </span><b class="phead">{p.head}</b>: {#each splitMessage(p.text) as part}{#if part.kind === 'link'}<a href={part.value}>{part.value}</a>{:else}{part.value}{/if}{/each}</span
+          >
+          <time datetime={new Date(p.at).toISOString()}>{time(new Date(p.at).toISOString())}</time>
+        {/snippet}
+        {#if p.reply}
+          {@const r = p.reply}
+          <button
+            type="button"
+            class="private"
+            class:mine={p.mine}
+            class:replying={replyTo?.channel === r.channel}
+            title="Private: only you see this here. Click to reply to {replyName(r)}."
+            aria-label="Private line, {p.head}: {p.text}. Reply privately to {replyName(r)}"
+            onclick={() => startReply(r)}>{@render privateBody()}</button
+          >
+        {:else}
+          <p class="private whisper" title="Private: only you see this.">{@render privateBody()}</p>
+        {/if}
+      {:else if entry.item.kind === 'hidden'}
+        {@const item = entry.item}
         <p class="hidden-run">
           <button type="button" class="link" onclick={() => (revealed = new Set([...revealed, ...item.ids]))}
             >{hiddenLabel(item.ids.length)} · show</button
           >
         </p>
       {:else}
-        {@const m = item.message}
+        {@const m = entry.item.message}
         {#if m.system}
           <p class="sys">
             {#each splitMessage(m.text) as p}{#if p.kind === 'link'}<a href={p.value}>{p.value}</a>{:else}{p.value}{/if}{/each}
@@ -277,10 +365,16 @@
         : `Your account is suspended ${untilText(live.sanction.endsAt)}. You can read, but not chat.`}
     </p>
   {:else if live.me}
+    {#if replyTo}
+      <p class="reply-chip" data-testid="reply-chip">
+        <span>🔒 Replying to <b>{replyName(replyTo)}</b></span>
+        <button type="button" class="x" aria-label="Stop replying to {replyName(replyTo)}" onclick={cancelReply}>✕</button>
+      </p>
+    {/if}
     <form onsubmit={send}>
       <label class="visually-hidden" for={inputId}>Message {title}</label>
       <!-- A one-line textarea, not an <input>: a lone text input in a form makes Chrome Android offer its password/autofill row. -->
-      <textarea id={inputId} rows="1" bind:value={draft} maxlength="500" {placeholder} autocomplete="off" {...{ autocorrect: "on" }} spellcheck="true" enterkeyhint="send" onkeydown={onComposerKey} onbeforeinput={onComposerBeforeInput} oninput={flattenPaste}></textarea>
+      <textarea id={inputId} rows="1" bind:value={draft} maxlength="500" placeholder={replyTo ? 'Private reply' : placeholder} autocomplete="off" {...{ autocorrect: "on" }} spellcheck="true" enterkeyhint="send" onkeydown={(e) => (replyTo && e.key === 'Escape' && !draft ? cancelReply() : onComposerKey(e))} onbeforeinput={onComposerBeforeInput} oninput={flattenPaste}></textarea>
       <button class="btn light" type="submit" disabled={sending || !draft.trim()}>Send</button>
     </form>
   {/if}
@@ -440,5 +534,78 @@
   }
   .link:hover {
     color: var(--fog);
+  }
+  /* Private lines in a table's feed (your DMs, group lines, whispers): only you see them, so they read as an
+     aside — a muted violet tint and rule, a lock, smaller type — never as table talk. */
+  .private {
+    --private: var(--playing);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 0.55rem;
+    width: 100%;
+    margin: 0 0 0 -0.6rem;
+    padding: 0.45rem 0.6rem;
+    border: 0;
+    border-left: 2px solid color-mix(in srgb, var(--private) 70%, transparent);
+    border-radius: 0 var(--r-tile) var(--r-tile) 0;
+    background: color-mix(in srgb, var(--private) 9%, transparent);
+    color: color-mix(in srgb, var(--private) 35%, var(--chalk));
+    font: inherit;
+    font-size: var(--step--1);
+    line-height: 1.45;
+    text-align: left;
+  }
+  button.private {
+    cursor: pointer;
+  }
+  button.private:hover,
+  button.private:focus-visible,
+  .private.replying {
+    background: color-mix(in srgb, var(--private) 17%, transparent);
+  }
+  .private.mine {
+    color: color-mix(in srgb, var(--private) 20%, var(--fog));
+  }
+  .private.whisper {
+    --private: var(--silicon);
+  }
+  .lock {
+    flex: none;
+  }
+  .ptext {
+    overflow-wrap: anywhere;
+  }
+  .phead {
+    font-weight: 600;
+    color: color-mix(in srgb, var(--private) 75%, var(--chalk));
+  }
+  .reply-chip {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: fit-content;
+    max-width: calc(100% - 2.5rem);
+    margin: 0.6rem 1.25rem -0.3rem;
+    padding: 0.2rem 0.3rem 0.2rem 0.65rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--playing) 16%, transparent);
+    color: color-mix(in srgb, var(--playing) 40%, var(--chalk));
+    font-size: var(--step--1);
+  }
+  .reply-chip span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .reply-chip .x {
+    padding: 0 0.35rem;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+  }
+  .reply-chip .x:hover {
+    color: var(--chalk);
   }
 </style>
