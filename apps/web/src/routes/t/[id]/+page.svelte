@@ -471,6 +471,14 @@
     ),
   );
   const handleOf = (seat: string) => match?.seats.find((s) => s.seat === seat)?.identity.handle ?? seat;
+  /** Salvo's whispers once the match is over: lies first (the ones worth telling), then honest sales, then the rest. */
+  const whispers = $derived.by(() => {
+    const truths = sv?.truths ?? [];
+    const rank = (t: (typeof truths)[number]) => (t.state === 'sold' ? (t.said !== t.truth ? 0 : 1) : 2);
+    return [...truths]
+      .map((t) => ({ ...t, area: `${t.cells[0]}–${t.cells.at(-1)}`, lie: t.state === 'sold' && t.said !== t.truth }))
+      .sort((x, y) => rank(x) - rank(y));
+  });
   const verdict = $derived.by(() => {
     const o = match?.outcome;
     if (!o) return '';
@@ -890,6 +898,27 @@
     <div class="verdict panel" class:pocket={inPocket} role="dialog" aria-labelledby="verdict-title">
       <h2 id="verdict-title" bind:this={verdictHeading} tabindex="-1">{verdict}</h2>
       <p>{REASONS[match.endReason ?? ''] ?? match.endReason}</p>
+      {#if whispers.length > 0}
+        <section class="whispers" aria-label="The whispers, and the truth" data-testid="truths">
+          <p class="wh-head">👻 The whispers, and the truth</p>
+          <ul>
+            {#each whispers as w, i (i)}
+              <li class:lie={w.lie} class:honest={w.state === 'sold' && !w.lie} data-testid="truth" data-ghost={w.ghost}>
+                {#if w.state === 'sold' && w.winner}
+                  <span class="who">@{handleOf(w.ghost)} → @{handleOf(w.winner)}</span>
+                  <span class="where">@{handleOf(w.sea)}'s {w.area}</span>
+                  <span class="nums">said <b>{w.said}</b> · truth <b>{w.truth}</b></span>
+                  {#if w.lie}<span class="stamp">LIED</span>{:else}<span class="ok" aria-label="honest">✓</span>{/if}
+                {:else}
+                  <span class="who">@{handleOf(w.ghost)}</span>
+                  <span class="where">@{handleOf(w.sea)}'s {w.area}</span>
+                  <span class="nums">{w.state === 'faded' ? 'faded unsold' : 'no bids'} · truth <b>{w.truth}</b></span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
       {#if regathering && table.status === 'forming'}
         <GatheringCard {table} />
       {/if}
@@ -1130,6 +1159,66 @@
   .verdict p {
     margin: 0 0 0.8rem;
     color: var(--fog);
+  }
+  .whispers {
+    margin: 0 0 0.9rem;
+  }
+  .verdict .whispers .wh-head {
+    margin: 0 0 0.4rem;
+    color: #c9a2ff;
+    font-weight: 600;
+    font-size: var(--step--1);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .whispers ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 4px;
+    max-height: 12rem;
+    overflow-y: auto;
+  }
+  .whispers li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.15rem 0.6rem;
+    padding: 6px 10px;
+    border-radius: var(--r-control);
+    background: color-mix(in oklab, var(--panel-2) 80%, transparent);
+    color: var(--fog);
+    font-size: var(--step--1);
+  }
+  .whispers .who {
+    color: var(--chalk);
+    font-weight: 600;
+  }
+  .whispers b {
+    color: var(--chalk);
+  }
+  .whispers li.lie {
+    background: color-mix(in oklab, #ff3b4f 14%, var(--panel-2));
+    box-shadow: inset 3px 0 0 #ff3b4f;
+  }
+  .whispers li.lie b {
+    color: #ff8a96;
+  }
+  .whispers .stamp {
+    margin-left: auto;
+    padding: 0 6px;
+    border: 2px solid #ff3b4f;
+    border-radius: 4px;
+    color: #ff3b4f;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    transform: rotate(-4deg);
+  }
+  .whispers .ok {
+    margin-left: auto;
+    color: var(--ready);
+    font-weight: 700;
   }
   .verdict .note {
     font-size: var(--step--1);

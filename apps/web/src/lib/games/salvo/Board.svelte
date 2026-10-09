@@ -538,20 +538,8 @@
   const auctionSecs = (closesAt: number | null) => (closesAt === null ? AUCTION_MS / 1000 : Math.max(0, Math.ceil((closesAt - now) / 1000)));
   const auctionTone = (secs: number): 'ready' | 'warn' | 'urgent' => (secs <= 5 ? 'urgent' : secs <= 10 ? 'warn' : 'ready');
   const BID_TEXT = { bid: 'bid', abstained: 'abstained' } as const;
-  /** Every whisper with its truth, once the match is over, as the summary tells them (handles for seats). */
-  const truthLines = $derived(
-    (view.truths ?? []).map((t) => {
-      const where = `${handleOf(t.sea)}'s ${areaName(t.cells)}`;
-      const truth = `The truth was ${t.truth}.`;
-      if (t.state === 'sold' && t.winner)
-        return { t, text: `${handleOf(t.ghost)} told ${handleOf(t.winner)} ${t.said} in ${where}. ${truth}${t.said === t.truth ? ' An honest ghost!' : ''}` };
-      if (t.state === 'faded') return { t, text: `${handleOf(t.ghost)}'s whisper on ${where} faded with them. ${truth}` };
-      return { t, text: `Nobody bid on ${handleOf(t.ghost)}'s whisper on ${where}. ${truth}` };
-    }),
-  );
   /** The side column's whisper band: the auctions under way (your own, as a ghost, first), or the truths once it's over. */
   const auctionBand = $derived.by(() => live && (otherAuctions.length > 0 || (haunting && !!myAuction)));
-  const truthsBand = $derived(!live && !settling && truthLines.length > 0);
   /**
    * The 3×3s to outline, by `sea cell`, with the sides of each cell on the area's edge: your whisper's pick and
    * the one under the pointer, this round's listing, open auctions, and the whispers you bought.
@@ -2067,14 +2055,7 @@
         <p class="slot">{settling ? 'The volley is landing…' : 'Your fleet is sunk. Watch any sea: the others play on.'}</p>
       {:else if !live}
         <p class="slot">{settling ? 'The last volley is landing…' : 'Every fleet is shown.'}</p>
-        {#if truthsBand}
-        <section class="told" aria-label="The whispers, and the truth" data-testid="truths">
-          <p class="head">👻 The whispers, and the truth</p>
-          {#each truthLines as x, i (i)}
-            <p class="truth" class:lie={x.t.state === 'sold' && x.t.said !== x.t.truth} data-testid="truth" data-ghost={x.t.ghost}>{x.text}</p>
-          {/each}
-        </section>
-        {/if}
+        <!-- The whispers and their truths are told in the table's end-of-match panel. -->
       {/if}
     </div>
   </aside>
@@ -4280,25 +4261,6 @@
     .tells .tell:nth-of-type(6) {
       grid-column-start: 2;
     }
-  }
-  .told {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .told .head {
-    margin: 0;
-  }
-  .truth {
-    margin: 0;
-    padding: 6px 8px;
-    border-left: 2px solid color-mix(in oklab, #b06bff 50%, transparent);
-    color: var(--fog);
-    font-size: 13px;
-  }
-  .truth.lie {
-    border-left-color: #b06bff;
-    color: var(--chalk);
   }
   /* The three tricks share the ghost's toggle. */
   .kind.haunt {
