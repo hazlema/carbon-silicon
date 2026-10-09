@@ -108,4 +108,6 @@ test('Crown & Steel: clicking a knight and then a gold square submits the march'
   await page.getByRole('button', { name: 'Resign' }).click();
   await page.getByRole('button', { name: 'Yes, resign' }).click();
   await expect(page.getByRole('button', { name: 'Rematch' })).toBeVisible({ timeout: 10_000 });
+  // The game's own post-game box is a billboard, not a modal: nothing blocks the site's end panel.
+  await page.getByRole('button', { name: 'Rematch' }).click({ trial: true });
 });

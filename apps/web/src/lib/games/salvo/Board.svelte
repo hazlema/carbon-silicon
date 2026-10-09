@@ -538,6 +538,12 @@
   const auctionSecs = (closesAt: number | null) => (closesAt === null ? AUCTION_MS / 1000 : Math.max(0, Math.ceil((closesAt - now) / 1000)));
   const auctionTone = (secs: number): 'ready' | 'warn' | 'urgent' => (secs <= 5 ? 'urgent' : secs <= 10 ? 'warn' : 'ready');
   const BID_TEXT = { bid: 'bid', abstained: 'abstained' } as const;
+  /** Every whisper with its truth once the match is over: lies first (the ones worth telling), then honest sales, then the rest. */
+  const whisperTruths = $derived.by(() => {
+    const truths = view.truths ?? [];
+    const rank = (t: (typeof truths)[number]) => (t.state === 'sold' ? (t.said !== t.truth ? 0 : 1) : 2);
+    return truths.map((t) => ({ ...t, lie: t.state === 'sold' && t.said !== t.truth })).sort((x, y) => rank(x) - rank(y));
+  });
   /** The side column's whisper band: the auctions under way (your own, as a ghost, first), or the truths once it's over. */
   const auctionBand = $derived.by(() => live && (otherAuctions.length > 0 || (haunting && !!myAuction)));
   /**
@@ -1705,6 +1711,32 @@
           </g>
         </svg>
       {/if}
+    {/if}
+    {#if !live && !settling && view.winner}
+      <!-- The game's own post-game billboard: no buttons, nothing to click. The site's end panel does the rest. -->
+      <section class="billboard" aria-label="Match over" data-testid="billboard">
+        <p class="bb-trophy" aria-hidden="true">🏆</p>
+        <p class="bb-winner"><span style:color={kindColor(view.winner)}>@{handleOf(view.winner)}</span> takes the sea</p>
+        {#if whisperTruths.length > 0}
+          <p class="bb-head">👻 The whispers, and the truth</p>
+          <ul class="bb-list" data-testid="truths">
+            {#each whisperTruths as w, i (i)}
+              <li class:lie={w.lie} data-testid="truth" data-ghost={w.ghost}>
+                {#if w.state === 'sold' && w.winner}
+                  <span class="who">@{handleOf(w.ghost)} → @{handleOf(w.winner)}</span>
+                  <span class="where">@{handleOf(w.sea)}'s {areaName(w.cells)}</span>
+                  <span class="nums">said <b>{w.said}</b> · truth <b>{w.truth}</b></span>
+                  {#if w.lie}<span class="stamp">LIED</span>{:else}<span class="ok" aria-label="honest">✓</span>{/if}
+                {:else}
+                  <span class="who">@{handleOf(w.ghost)}</span>
+                  <span class="where">@{handleOf(w.sea)}'s {areaName(w.cells)}</span>
+                  <span class="nums">{w.state === 'faded' ? 'faded unsold' : 'no bids'} · truth <b>{w.truth}</b></span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
     {/if}
     <div class="pill" role="toolbar" aria-label="Board view">
       <button type="button" class="turn" aria-label="Turn left" onclick={() => turn(-90)}>⟲ 90°</button>
@@ -4261,6 +4293,97 @@
     .tells .tell:nth-of-type(6) {
       grid-column-start: 2;
     }
+  }
+  /* The post-game billboard: over the sea, nothing to click (only its list scrolls when it's long). */
+  .billboard {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    translate: -50% -50%;
+    z-index: 6;
+    width: min(30rem, calc(100% - 24px));
+    max-height: calc(100% - 24px);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 18px 20px 16px;
+    border: 1px solid color-mix(in oklab, #ffd36b 45%, transparent);
+    border-radius: 14px;
+    background: color-mix(in oklab, #0d0f20 88%, transparent);
+    box-shadow: 0 18px 60px rgb(0 0 0 / 0.55);
+    text-align: center;
+    pointer-events: none;
+  }
+  .bb-trophy {
+    margin: 0;
+    font-size: 44px;
+    line-height: 1;
+    filter: drop-shadow(0 4px 14px rgb(255 211 107 / 0.45));
+  }
+  .bb-winner {
+    margin: 0 0 4px;
+    font-size: var(--step-1);
+    font-weight: 700;
+    color: var(--chalk);
+  }
+  .bb-head {
+    margin: 6px 0 2px;
+    color: #c9a2ff;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .bb-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 4px;
+    overflow-y: auto;
+    min-height: 0;
+    pointer-events: auto;
+    text-align: left;
+  }
+  .bb-list li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.15rem 0.6rem;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: color-mix(in oklab, var(--panel-2) 85%, transparent);
+    color: var(--fog);
+    font-size: 13px;
+  }
+  .bb-list .who,
+  .bb-list b {
+    color: var(--chalk);
+  }
+  .bb-list .who {
+    font-weight: 600;
+  }
+  .bb-list li.lie {
+    background: color-mix(in oklab, #ff3b4f 16%, var(--panel-2));
+    box-shadow: inset 3px 0 0 #ff3b4f;
+  }
+  .bb-list li.lie b {
+    color: #ff8a96;
+  }
+  .bb-list .stamp {
+    margin-left: auto;
+    padding: 0 6px;
+    border: 2px solid #ff3b4f;
+    border-radius: 4px;
+    color: #ff3b4f;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    transform: rotate(-4deg);
+  }
+  .bb-list .ok {
+    margin-left: auto;
+    color: var(--ready);
+    font-weight: 700;
   }
   /* The three tricks share the ghost's toggle. */
   .kind.haunt {

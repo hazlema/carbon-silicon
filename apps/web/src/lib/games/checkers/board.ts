@@ -101,7 +101,8 @@ function showVerdict(winner:Side|'draw'){
   $('verdict-text').textContent=won?`${title(winner)} claims the crown. The field is yours, commander — the bards will sing of this.`:lost?`${title(winner)} claims the crown. Your army fought to the last knight. Raise the banners and answer.`:'The battle is decided. Raise the armies to contest the throne again.';
   playVerdictSound(won?'won':lost?'lost':'neutral');
  }
- $<HTMLDialogElement>('verdict-dialog').showModal();
+ // A billboard over the field, not a modal: the site's own end panel (rematch, lobby) stays usable.
+ $<HTMLDialogElement>('verdict-dialog').show();
 }
 function render(){
  if(!state)return;const {game,moves}=state;

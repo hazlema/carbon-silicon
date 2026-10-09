@@ -113,7 +113,7 @@ dialog>p:not(.eyebrow){font-size:13px;line-height:1.8;color:#b0c0ba;margin-botto
 .verdict-emblem{width:64px;height:64px;margin:0 auto 20px;border-radius:50%;display:grid;place-items:center;font-size:34px;border:1px solid #c6ac7845;background:#c6ac7815;color:var(--gold);box-shadow:0 0 35px #c6ac7818}
 .verdict-emblem.red{border-color:#ba655355;background:#ba655318;color:var(--red);box-shadow:0 0 35px #ba655322}
 .verdict-emblem.blue{border-color:#719cd155;background:#719cd118;color:var(--blue);box-shadow:0 0 35px #719cd122}
-.verdict-actions{justify-content:center;margin-top:28px}
+.verdict-dialog[open]{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);margin:0;z-index:5;width:min(440px,calc(100% - 24px));max-height:calc(100% - 24px);overflow:auto}
 
 /* Sized by the stage, not the window (the chat column takes its share): the footer wraps first, then the cards fold. */
 @container (max-width:880px){
