@@ -22,7 +22,8 @@
     let last = '';
     const step = () => {
       const r = a.getBoundingClientRect();
-      const next = r.width === 0 && r.height === 0 ? null : bubbleSpot(r, el?.offsetWidth ?? 0, el?.offsetHeight ?? 0, innerWidth, innerHeight, how);
+      // Not laid out yet (the button binds a frame late) or the anchor isn't rendered (display: none): no spot, so no balloon.
+      const next = !el || a.getClientRects().length === 0 || (r.width === 0 && r.height === 0) ? null : bubbleSpot(r, el.offsetWidth, el.offsetHeight, innerWidth, innerHeight, how);
       const key = JSON.stringify(next);
       if (key !== last) {
         last = key;
@@ -36,12 +37,14 @@
 </script>
 
 <div class="bubble-host" use:portal>
+  <!-- Deliberately announced even when the anchor is hidden (a closed sheet, a narrow layout): the news is still news. -->
   <p class="visually-hidden" aria-live="polite">{text}</p>
   {#if text && anchor}
     <button
       bind:this={el}
       type="button"
       class="bubble {spot?.side ?? 'top'}"
+      class:shown={!!spot}
       data-testid="chat-bubble"
       style:left="{spot?.left ?? 0}px"
       style:top="{spot?.top ?? 0}px"
@@ -110,7 +113,8 @@
     transform: rotate(45deg);
   }
   @media (prefers-reduced-motion: no-preference) {
-    .bubble {
+    /* The pop starts once the balloon has its spot, not while it's still measuring itself out of sight. */
+    .bubble.shown {
       animation: pop 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
     }
     .bubble.top {

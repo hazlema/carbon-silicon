@@ -9,6 +9,7 @@
   import WhoList from '$lib/components/WhoList.svelte';
   import { groupTitle } from '$lib/groups';
   import { live } from '$lib/live.svelte';
+  import { MediaQuery } from 'svelte/reactivity';
 
   const channels = [
     { id: 'lobby', about: 'Everyone, everything' },
@@ -24,6 +25,9 @@
   });
   let tab = $state<'chat' | 'who'>('chat');
   let chatTabBtn: HTMLButtonElement | undefined = $state();
+  /** The one-column layout, where `tab` decides between the chat and Here now; wider, the chat is always on screen. */
+  const narrow = new MediaQuery('max-width: 960px');
+  const chatSeen = $derived(tab === 'chat' || !narrow.current);
   let focusKey = $state(0);
   /** The conversation on screen, when the chat shows a DM. */
   const dm = $derived(dmParticipants(channel) ? (live.dms.find((d) => d.channel === channel) ?? null) : null);
@@ -84,8 +88,8 @@
               <ConvTabs
                 active={dm || group ? channel : null}
                 onpick={(c) => (channel = c ?? 'lobby')}
-                seen={tab === 'chat'}
-                bubbleAt={tab === 'who' ? chatTabBtn : undefined}
+                seen={chatSeen}
+                bubbleAt={chatSeen ? undefined : chatTabBtn}
                 onbubble={(c) => {
                   channel = c;
                   tab = 'chat';
