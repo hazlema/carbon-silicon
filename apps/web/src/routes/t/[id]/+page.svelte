@@ -701,7 +701,19 @@
             <button role="tab" type="button" aria-selected={tab === 'rail'} onclick={() => (tab = 'rail')}
               >{railUnread > 0 ? `Rail (${railUnread})` : 'Rail'}</button
             >
-            <ConvTabs active={dmTab || groupTab ? tab : null} onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))} hide={quiet} />
+            <!-- In pocket with the sheet closed, the new-message balloon points at the chat button; a tap opens the sheet there. -->
+            <ConvTabs
+              active={dmTab || groupTab ? tab : null}
+              onpick={(c) => (tab = c ?? (isPlayer ? 'table' : 'rail'))}
+              hide={quiet}
+              seen={!inPocket || sheetOpen}
+              bubbleAt={inPocket && !sheetOpen ? chatBtn : undefined}
+              bubbleSide="left"
+              onbubble={(c) => {
+                tab = c;
+                if (inPocket) sheetOpen = true;
+              }}
+            />
           </div>
           <ConvMenu channel={tab} />
           </div>

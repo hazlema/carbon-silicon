@@ -1,14 +1,36 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
+  import { BUBBLE_MS, bubbleArrival, bubbleText, withArrival, type Arrival } from '$lib/bubble';
   import { convTabs, convUnread, groupTitle, type Conv } from '$lib/groups';
+  import ChatBubble from './ChatBubble.svelte';
   import { live } from '$lib/live.svelte';
   import { portal } from '$lib/portal';
 
   /** The conversations inline with a chat header's own tabs (spec M2c §5, M2d §1): buttons marked aria-current.
    *  Renders nothing until a conversation is visible. `onpick(null)` means "back to where you were":
    *  the open tab closed.
-   *  `hide`: conversations kept off the row (a table's residents during a match: their lines show inline), unless on screen. */
-  let { active, onpick, hide }: { active: string | null; onpick: (channel: string | null) => void; hide?: ReadonlySet<string> } = $props();
+   *  `hide`: conversations kept off the row (a table's residents during a match: their lines show inline), unless on screen.
+   *  A line from someone else in a conversation you aren't looking at pops a speech balloon at its tab ("💬 New message
+   *  from @x!"), until you open it or BUBBLE_MS pass. `seen`: whether the chat is on screen at all (a phone's closed
+   *  sheet, the lobby's Here now); `bubbleAt`: point the balloon there instead (the chat button, the Chat tab), with
+   *  `bubbleSide`; `onbubble`: what a click on the balloon does (defaults to picking the tab). */
+  let {
+    active,
+    onpick,
+    hide,
+    seen = true,
+    bubbleAt,
+    bubbleSide = 'below',
+    onbubble,
+  }: {
+    active: string | null;
+    onpick: (channel: string | null) => void;
+    hide?: ReadonlySet<string>;
+    seen?: boolean;
+    bubbleAt?: HTMLElement | null;
+    bubbleSide?: 'below' | 'left';
+    onbubble?: (channel: string) => void;
+  } = $props();
 
   const row = $derived(convTabs(hide?.size ? live.dms.filter((d) => d.channel === active || !hide.has(d.channel)) : live.dms, live.groups, active));
   const titleOf = (c: Conv) => (c.kind === 'dm' ? `@${c.dm.with.handle}` : groupTitle(c.group, live.me?.id ?? ''));
@@ -56,6 +78,47 @@
     await tick(); // the popover turns visible once `pos` lands; a hidden item can't take focus
     items()[0]?.focus();
   }
+  // ── The "new message" balloon.
+  let arrivals = $state<Arrival[]>([]);
+  const target = $derived(arrivals.at(-1)?.channel ?? null);
+  const groupLabel = (ch: string) => {
+    const g = live.groups.find((x) => x.channel === ch);
+    return g ? `#${g.name ?? groupTitle(g, live.me?.id ?? '').replace(/^you, /, '')}` : null;
+  };
+  $effect(() =>
+    live.onConversation((m) => {
+      const a = bubbleArrival(m, { meId: live.me?.id ?? null, hidden: live.hiddenAuthors, open: seen ? active : null, hide, groupLabel });
+      if (a) arrivals = withArrival(untrack(() => arrivals), a);
+    }),
+  );
+  // Ten seconds from the latest line it tells of.
+  $effect(() => {
+    if (arrivals.length === 0) return;
+    const t = setTimeout(() => (arrivals = []), BUBBLE_MS);
+    return () => clearTimeout(t);
+  });
+  // Opening a conversation (its tab, a toast, a name menu) settles its lines.
+  $effect(() => {
+    const open = seen ? active : null;
+    if (open && untrack(() => arrivals).some((a) => a.channel === open)) arrivals = untrack(() => arrivals).filter((a) => a.channel !== open);
+  });
+  let row_: HTMLDivElement | undefined = $state();
+  /** What the balloon points at: the given spot, else its conversation's tab, else More (it's folded there). Found
+   *  after the row has rendered (a tab that just opened is in the DOM by then). */
+  let bubbleAnchor = $state<HTMLElement | null>(null);
+  $effect(() => {
+    const ch = target;
+    const { shown, more } = row;
+    void shown;
+    bubbleAnchor = !ch
+      ? null
+      : (bubbleAt ?? row_?.querySelector<HTMLElement>(`[data-channel="${CSS.escape(ch)}"]`) ?? (more.some((c) => c.channel === ch) ? (moreButton ?? null) : null));
+  });
+  function openBubble() {
+    const ch = target;
+    arrivals = [];
+    if (ch) (onbubble ?? onpick)(ch);
+  }
   $effect(() => {
     if (!moreOpen) return;
     const onDown = (e: PointerEvent) => {
@@ -75,12 +138,13 @@
 {/snippet}
 
 {#if row.shown.length > 0}
-  <div class="dmrow" aria-label="Conversations" role="group">
+  <div class="dmrow" aria-label="Conversations" role="group" bind:this={row_}>
     {#each row.shown as c (c.channel)}
       <span class="dm">
         <button
           type="button"
           class="pick"
+          data-channel={c.channel}
           title={titleOf(c)}
           aria-current={active === c.channel ? 'true' : undefined}
           onclick={() => onpick(c.channel)}>{@render label(c, active !== c.channel)}</button
@@ -124,6 +188,7 @@
     {/if}
   </div>
 {/if}
+<ChatBubble text={bubbleText(arrivals)} anchor={bubbleAnchor} place={bubbleAt ? bubbleSide : 'below'} onopen={openBubble} />
 
 <style>
   .dmrow {

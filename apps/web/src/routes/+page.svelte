@@ -23,6 +23,7 @@
     };
   });
   let tab = $state<'chat' | 'who'>('chat');
+  let chatTabBtn: HTMLButtonElement | undefined = $state();
   let focusKey = $state(0);
   /** The conversation on screen, when the chat shows a DM. */
   const dm = $derived(dmParticipants(channel) ? (live.dms.find((d) => d.channel === channel) ?? null) : null);
@@ -57,7 +58,7 @@
 
 <div class="lobby">
   <div class="tabs" role="tablist" aria-label="Lobby">
-    <button role="tab" type="button" aria-selected={tab === 'chat'} onclick={() => (tab = 'chat')}>Chat</button>
+    <button role="tab" type="button" aria-selected={tab === 'chat'} bind:this={chatTabBtn} onclick={() => (tab = 'chat')}>Chat</button>
     <button role="tab" type="button" aria-selected={tab === 'who'} onclick={() => (tab = 'who')}>Here now</button>
   </div>
 
@@ -79,7 +80,17 @@
                   <span class="hash" aria-hidden="true">#</span>{c.id}
                 </button>
               {/each}
-              <ConvTabs active={dm || group ? channel : null} onpick={(c) => (channel = c ?? 'lobby')} />
+              <!-- On a phone showing Here now, the new-message balloon points at the Chat tab instead. -->
+              <ConvTabs
+                active={dm || group ? channel : null}
+                onpick={(c) => (channel = c ?? 'lobby')}
+                seen={tab === 'chat'}
+                bubbleAt={tab === 'who' ? chatTabBtn : undefined}
+                onbubble={(c) => {
+                  channel = c;
+                  tab = 'chat';
+                }}
+              />
             </nav>
             <ConvMenu {channel} />
             <p class="about">{about}</p>
