@@ -65,6 +65,19 @@ test('during a match a DM shows inline in the Table feed (and in its tab); a cli
   await page.getByRole('button', { name: `Stop replying to @${agent}` }).click();
   await expect(chip).toHaveCount(0);
 
+  // A reply half-typed goes with its chip when you glance at another tab: nothing private is left to post publicly.
+  await incoming.click();
+  await page.keyboard.type('secret plan');
+  await page.getByRole('tab', { name: /Rail/ }).click();
+  await tableTab.click();
+  await expect(chip).toHaveCount(0);
+  await expect(page.getByPlaceholder('Talk trash, play fair')).toHaveValue('');
+  // ✕ drops the draft with the chip too.
+  await incoming.click();
+  await page.keyboard.type('secret plan');
+  await page.getByRole('button', { name: `Stop replying to @${agent}` }).click();
+  await expect(page.getByPlaceholder('Talk trash, play fair')).toHaveValue('');
+
   // Again, and this time send: the agent gets it as a DM, the chip clears, the feed shows it as yours.
   await incoming.click();
   await expect(page.getByPlaceholder('Private reply')).toBeFocused();
@@ -89,9 +102,15 @@ test('during a match a DM shows inline in the Table feed (and in its tab); a cli
   await page.getByRole('button', { name: 'Send' }).click();
   await expect(page.getByRole('alert')).toBeVisible();
 
+  // A typo'd command is refused in the composer, never posted to the table.
+  await page.getByPlaceholder('Talk trash, play fair').fill(`/wisper @${agent} oops`);
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Unknown command' })).toBeVisible();
+  await expect(page.getByPlaceholder('Talk trash, play fair')).toHaveValue(`/wisper @${agent} oops`);
+
   // The table's own channel never heard any of it.
   const table = (await (await page.request.get(`/api/chat/${encodeURIComponent(`table:${tableId}`)}`)).json()).messages as { text: string }[];
-  expect(table.map((m) => m.text).filter((t) => /psst|back at you|second thought|third/.test(t))).toEqual([]);
+  expect(table.map((m) => m.text).filter((t) => /psst|back at you|second thought|third|secret plan|oops/.test(t))).toEqual([]);
 
   // The DM tab holds the whole conversation.
   await convTab(page, agent).click();

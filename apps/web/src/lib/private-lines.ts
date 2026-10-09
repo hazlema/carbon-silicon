@@ -13,6 +13,8 @@ export type ReplyTarget = { kind: 'dm'; channel: string; handle: string } | { ki
 export interface PrivateLine {
   /** Unique across kinds: `m<message id>` or `w<n>`. */
   key: string;
+  /** The message id (a DM or group line) or the whisper's index: the tie-break between lines said at the same time. */
+  seq: number;
   /** Epoch ms, for its place among the table's lines. */
   at: number;
   kind: 'dm' | 'group' | 'whisper';
@@ -46,6 +48,7 @@ export function convLine(m: ChatMessage, c: ConvLookup): PrivateLine | null {
     if (!other) return null;
     return {
       key: `m${m.id}`,
+      seq: m.id,
       at,
       kind: 'dm',
       mine,
@@ -60,6 +63,7 @@ export function convLine(m: ChatMessage, c: ConvLookup): PrivateLine | null {
     if (title === null) return null;
     return {
       key: `m${m.id}`,
+      seq: m.id,
       at,
       kind: 'group',
       mine,
@@ -94,6 +98,7 @@ export function whisperLine(w: WhisperWon, n: number, handleOf: (seat: string) =
   const paid = typeof w.paid === 'number' ? ` (you paid ${w.paid} scrap)` : '';
   return {
     key: `w${n}`,
+    seq: n,
     at: typeof w.at === 'number' ? w.at : fallbackAt,
     kind: 'whisper',
     mine: false,
@@ -108,10 +113,12 @@ export type Merged<T> = { kind: 'feed'; item: T } | { kind: 'private'; line: Pri
 
 /**
  * The feed's own items (already in order) with the private lines slotted in by time: each private line goes
- * before the first item said after it (ties stay after the table's line). Private lines are ordered by time, then key.
+ * before the first item said after it (ties stay after the table's line). Private lines are ordered by time, then
+ * conversation lines before whispers, then by number (message id or whisper index).
  */
 export function mergeByTime<T>(items: T[], timeOf: (item: T) => number, lines: PrivateLine[]): Merged<T>[] {
-  const priv = [...lines].sort((a, b) => a.at - b.at || a.key.localeCompare(b.key));
+  const whisper = (l: PrivateLine) => (l.kind === 'whisper' ? 1 : 0);
+  const priv = [...lines].sort((a, b) => a.at - b.at || whisper(a) - whisper(b) || a.seq - b.seq);
   const out: Merged<T>[] = [];
   let i = 0;
   for (const item of items) {
@@ -124,14 +131,17 @@ export function mergeByTime<T>(items: T[], timeOf: (item: T) => number, lines: P
 }
 
 /**
- * `/w @bob hi` or `/msg @bob hi` → { handle: 'bob', text: 'hi' } (handle or text may be empty: the composer then says
- * how to use it); null when the line is neither command.
+ * `/w @bob hi`, `/msg @bob hi` (or `/w@bob hi`) → { handle: 'bob', text: 'hi' } (handle or text may be empty: the
+ * composer then says how to use it); null when the line is neither command.
  */
 export function parsePrivateCommand(text: string): { handle: string; text: string } | null {
-  const m = /^\/(?:w|msg)(?:\s+@?(\S+))?(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  const m = /^\/(?:w|msg)(?:(?:\s+@?|@)(\S+))?(?:\s+([\s\S]*))?$/i.exec(text.trim());
   if (!m) return null;
   return { handle: m[1] ?? '', text: (m[2] ?? '').trim() };
 }
+
+/** A line that reads as a slash command (`/wisper @bob hi`): in a table's feed one the composer doesn't know is refused, never posted. */
+export const looksLikeCommand = (text: string): boolean => /^\/[a-z]/i.test(text.trim());
 
 /**
  * During a live match, conversations with residents (house bots) stay inline only: the DMs with a house identity

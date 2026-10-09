@@ -77,8 +77,9 @@ export function closeDue(s: SalvoState, alive: SeatId[], due: (a: Auction) => bo
   for (const a of openAuctions(s).filter(due).sort((x, y) => order(x) - order(y))) closeAuction(s, a, alive, now);
 }
 
-/** Sold auctions still waiting for their close time (closed as a round resolved, with no clock to hand). */
-export const unstamped = (s: SalvoState) => s.auctions.filter((a) => a.state === 'sold' && a.closedAt == null);
+/** Sold auctions still waiting for their close time (closed as a round resolved, with no clock to hand). A legacy
+ *  auction (saved before close times, no field at all) is never stamped: its time is unknown, not now. */
+export const unstamped = (s: SalvoState) => s.auctions.filter((a) => a.state === 'sold' && a.closedAt === null);
 
 /** The listing, the close and the fade, told. Seats are written {seat}. */
 export const listingLine = (a: Auction) => `👻 {${a.ghost}} auctions a sonar reading on {${a.sea}}'s sea, ${areaName(a.cells)} — ${AUCTION_MS / 1000} seconds.`;

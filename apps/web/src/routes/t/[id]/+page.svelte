@@ -354,7 +354,8 @@
   // Seeing a conversation's line in the feed reads it, as its tab would (in pocket, once the sheet is open).
   $effect(() => {
     if (tab !== homeTab || (inPocket && !sheetOpen)) return;
-    const inline = new Set(privMsgs.map((m) => m.id));
+    // Only lines actually shown (not a blocked author's): a conversation is read when you could have read it.
+    const inline = new Set(convLines.map((l) => l.seq));
     for (const d of live.dms) if (d.unread > 0 && d.last && inline.has(d.last.id)) void live.readDm(d.channel);
     for (const g of live.groups) if (g.unread > 0 && g.last && inline.has(g.last.id)) void live.readGroup(g.channel);
   });

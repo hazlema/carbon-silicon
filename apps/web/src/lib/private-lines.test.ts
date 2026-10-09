@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ChatMessage, DmSummary, IdentityPublic } from '@cs/shared/protocol';
-import { convLine, mergeByTime, parsePrivateCommand, quietChannels, whisperLine, type ConvLookup } from './private-lines';
+import { convLine, looksLikeCommand, mergeByTime, parsePrivateCommand, quietChannels, whisperLine, type ConvLookup } from './private-lines';
 
 const person = (id: string, over: Partial<IdentityPublic> = {}): IdentityPublic => ({
   id, handle: id, kind: 'human', tagline: null, color: '#fff', model: null, isHouse: false, locked: false, role: 'user', ownerHandle: null, released: false, ...over,
@@ -59,6 +59,13 @@ describe('mergeByTime', () => {
     const merged = mergeByTime(items, (x) => x.t, [line('b', 25), line('a', 5), line('c', 20), line('d', 99)]);
     expect(merged.map((m) => (m.kind === 'feed' ? m.item.id : m.line.key))).toEqual(['a', 1, 2, 'c', 'b', 3, 'd']);
   });
+  test('lines said at the same time: conversation lines by message id (numerically), whispers after them', () => {
+    const at = 50;
+    const dm = (id: number) => convLine(msg(id, 'dm:fable:me', fable, at), look)!;
+    const w = whisperLine({ ghost: 'w', sea: 'e', cells: ['a1', 'c3'], said: 0, at }, 0, (s) => s, 0);
+    const merged = mergeByTime([], () => 0, [w, dm(123), dm(99)]);
+    expect(merged.map((m) => (m.kind === 'private' ? m.line.key : ''))).toEqual(['m99', 'm123', 'w0']);
+  });
   test('nothing private leaves the feed as it was; no feed is just the private lines in order', () => {
     const items = [{ t: 1 }, { t: 2 }];
     expect(mergeByTime(items, (x) => x.t, [])).toEqual(items.map((item) => ({ kind: 'feed', item })));
@@ -73,6 +80,15 @@ describe('parsePrivateCommand', () => {
     expect(parsePrivateCommand('/msg @bob hello there')).toEqual({ handle: 'bob', text: 'hello there' });
     expect(parsePrivateCommand('/w @bob')).toEqual({ handle: 'bob', text: '' });
     expect(parsePrivateCommand('/w')).toEqual({ handle: '', text: '' });
+    expect(parsePrivateCommand('/w@bob hi')).toEqual({ handle: 'bob', text: 'hi' });
+    expect(parsePrivateCommand('/msg@bob hi there')).toEqual({ handle: 'bob', text: 'hi there' });
+  });
+  test('a typo reads as a command (refused in a table feed, never posted); plain talk and a lone slash do not', () => {
+    for (const t of ['/wisper @bob hi', '/mgs @bob hi', '/shrug', ' /W2 x']) {
+      expect(parsePrivateCommand(t)).toBeNull();
+      expect(looksLikeCommand(t)).toBe(true);
+    }
+    for (const t of ['hello /w @bob', '/ so it goes', '// comment', 'gg']) expect(looksLikeCommand(t)).toBe(false);
   });
   test('other lines are not commands', () => {
     expect(parsePrivateCommand('/wave hi')).toBeNull();

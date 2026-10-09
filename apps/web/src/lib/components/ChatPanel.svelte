@@ -7,7 +7,7 @@
   import { untilText } from '$lib/format';
   import { applyRemoval, chatItems, hiddenLabel } from '$lib/hidden';
   import { live } from '$lib/live.svelte';
-  import { mergeByTime, parsePrivateCommand, type PrivateLine, type ReplyTarget } from '$lib/private-lines';
+  import { looksLikeCommand, mergeByTime, parsePrivateCommand, type PrivateLine, type ReplyTarget } from '$lib/private-lines';
   import { runInviteCommand } from '$lib/table-actions';
   import { parseInviteCommand } from '$lib/tables';
   import Avatar from './Avatar.svelte';
@@ -89,7 +89,11 @@
     revealed = new Set();
     error = '';
     notice = '';
-    replyTo = null;
+    // A private reply under way goes with its draft: left behind, the text would post to the next channel.
+    untrack(() => {
+      if (replyTo) draft = '';
+      replyTo = null;
+    });
     const off = live.onChat(ch, (m) => merge([m]));
     const isStaff = !!live.me && (live.me.role === 'mod' || live.me.role === 'admin');
     const offRemoved = live.onChatRemoved(ch, (r) => (messages = applyRemoval(messages, r.id, r.by, isStaff)));
@@ -184,16 +188,25 @@
   }
   function cancelReply() {
     replyTo = null;
+    draft = '';
     document.getElementById(inputId)?.focus();
   }
 
   /** In a table's home feed: `/w @x text` (or `/msg`) sends privately and stays here; a reply under way goes to
    *  its conversation. Returns false when the line is neither (it's for the feed's own channel). */
   async function sendPrivate(text: string): Promise<boolean> {
+    // The composer's own /invite does its job as ever, reply or not.
+    if (parseInviteCommand(text)) return false;
     const cmd = parsePrivateCommand(text);
-    if (!cmd && !replyTo) return false;
+    // A typo'd command never goes out, to the table or to a reply.
+    const unknown = !cmd && looksLikeCommand(text);
+    if (!cmd && !replyTo && !unknown) return false;
     error = '';
     notice = '';
+    if (unknown) {
+      error = 'Unknown command — try /w @name hello.';
+      return true;
+    }
     if (cmd && (!cmd.handle || !cmd.text)) {
       error = 'Try /w @name hello.';
       return true;
@@ -204,8 +217,10 @@
       let sent: ChatMessage;
       if (cmd) sent = await live.sendDm(cmd.handle, cmd.text, { open: false });
       else {
-        sent = (await api<{ message: ChatMessage }>('POST', `/api/chat/${encodeURIComponent(replyTo!.channel)}`, { text })).message;
-        replyTo = null;
+        const target = replyTo!.channel;
+        sent = (await api<{ message: ChatMessage }>('POST', `/api/chat/${encodeURIComponent(target)}`, { text })).message;
+        // A new target picked while this one was sending stays.
+        if (replyTo?.channel === target) replyTo = null;
       }
       onprivatesent?.(sent);
       if (draft.trim() === text) draft = '';

@@ -2620,7 +2620,11 @@ describe('whisper: the close', () => {
     const legacy = structuredClone(closed);
     delete legacy.auctions[0].closedAt;
     delete legacy.lastNow;
-    expect(viewOf({ ...legacy, auctions: legacy.auctions } as SalvoState, 'east').whispers[0].at).toBeNull();
+    expect(viewOf(legacy, 'east').whispers[0].at).toBeNull();
+    // A later clock leaves it alone: no close time to invent.
+    const later = clockAt(legacy, T0 + 60_000);
+    expect(later).toBe(legacy);
+    expect(viewOf(later, 'east').whispers[0].at).toBeNull();
   });
 
   test('an auction never stamped (no clock ran) still closes with its round', () => {
