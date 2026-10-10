@@ -132,7 +132,7 @@ export type Trick =
  * shooter had already shot are skipped), `hits` the new hits among them. A torpedo's `path` is every cell it
  * ran through, from its edge to `struck` (the first ship or live decoy cell unhit once repairs and decoys have
  * landed) or the whole lane. A repair is told to all, its cell (welded on its owner's sea) to the owner alone:
- * the table goes on seeing the old hit there. Laying a decoy is told without
+ * to the rest the cell is unshot sea again. Laying a decoy is told without
  * its place ('decoy-laid'); a decoy is listed with its cells once revealed: `by` are the seats credited on the
  * cells that finished it.
  */
@@ -191,8 +191,9 @@ export interface SalvoState {
   /** Each seat's decoys on its own sea, oldest first: at most one live (unrevealed, its owner's secret), then driftwood (public). */
   decoys: Record<SeatId, Decoy[]>;
   /**
-   * Welding sparks on each sea: cells repaired and not shot since, oldest first. Secret to the sea's owner: the
-   * table goes on seeing the old hit (`by` are the seats that landed it, so their own record keeps it too).
+   * Welding sparks on each sea: cells repaired and not shot since, oldest first. The owner's alone: to everyone
+   * else the cell is plain unshot sea again (R-78). `by` are the seats that landed the hit, back in their record
+   * once it's hit again.
    */
   repairs: Record<SeatId, { cell: string; round: number; by?: SeatId[] }[]>;
   scrap: Record<SeatId, number>;
@@ -305,7 +306,7 @@ export interface SalvoView {
     port: ShipId[];
     shots: Record<string, 'miss' | 'hit'>;
     decoy: { cells: string[]; hits: string[] } | null;
-    /** Your welding sparks: cells you repaired and not shot since, oldest first. The table still sees a hit there. */
+    /** Your welding sparks: cells you repaired and not shot since, oldest first. To everyone else the cell is unshot sea. */
     repaired: string[];
   } | null;
   /** One per sea that is not yours (spectators: every sea), fleets that are out included (`out`). */
@@ -348,10 +349,8 @@ const driftwood = (s: SalvoState, sea: SeatId) => new Set(s.decoys[sea].filter((
  */
 const publicAfloat = (s: SalvoState, sea: SeatId) => {
   const drift = driftwood(s, sea);
-  return FLEET_CELLS - Object.entries(s.shots[sea]).filter(([c, x]) => x.result === 'hit' && !drift.has(c)).length - s.repairs[sea].length;
+  return FLEET_CELLS - Object.entries(s.shots[sea]).filter(([c, x]) => x.result === 'hit' && !drift.has(c)).length;
 };
-/** A repaired cell (unhit again; the table still sees the old hit there). */
-const repairedAt = (s: SalvoState, sea: SeatId, cell: string) => s.repairs[sea].some((x) => x.cell === cell);
 
 /** Shots a seat fires this round: one per ship still afloat. */
 const gunsOf = (s: SalvoState, seat: SeatId) => s.fleets[seat].filter((x) => !isSunk(x)).length;
@@ -375,7 +374,7 @@ function trickLegal(s: SalvoState, ghost: SeatId): SalvoCommand[] {
   const out: SalvoCommand[] = [];
   const alive = living(s);
   const own = minesOf(s, ghost);
-  const unshot = (sea: SeatId) => Array.from({ length: SIZE * SIZE }, (_, i) => cellName(i)).filter((c) => !s.shots[sea][c] && !repairedAt(s, sea, c));
+  const unshot = (sea: SeatId) => Array.from({ length: SIZE * SIZE }, (_, i) => cellName(i)).filter((c) => !s.shots[sea][c]);
   if (own.length < MINE_LIMIT) {
     for (const sea of alive) for (const cell of unshot(sea)) if (!own.some((m) => m.sea === sea && m.cell === cell)) out.push({ trick: 'mine', at: sea, cell });
   }
@@ -471,12 +470,7 @@ function applyPlace(s: SalvoState, seat: SeatId, command: Record<string, unknown
 
 /** Cells this seat has already shot at a sea (directly or in a blast it was part of). */
 const firedAt = (s: SalvoState, seat: SeatId, sea: SeatId, cell: string) => s.shots[sea][cell]?.by.includes(seat) ?? false;
-/**
- * Cells this seat has shot at a sea and may not aim at again: water, a sunk ship's cell, driftwood. A hit on a ship
- * afloat may be shot again (it only pays if it was repaired), so no rule tells a welded hit from a standing one.
- */
-const spentAt = (s: SalvoState, seat: SeatId, sea: SeatId, cell: string) =>
-  firedAt(s, seat, sea, cell) && (s.shots[sea][cell].result === 'miss' || driftwood(s, sea).has(cell) || s.fleets[sea].some((x) => isSunk(x) && x.cells.includes(cell)));
+
 
 /** Has this seat already dropped a buoy at this centre of this sea? */
 const buoyedAt = (s: SalvoState, seat: SeatId, sea: SeatId, cell: string) => s.sonar[seat].some((x) => x.sea === sea && x.cell === cell);
@@ -504,7 +498,7 @@ function applyTrick(s: SalvoState, seat: SeatId, command: Record<string, unknown
     if (toMove(s).length === 0) resolve(s);
     return;
   }
-  if (s.shots[at][name] || repairedAt(s, at, name)) throw new GameRuleError('ALREADY_SHOT', `A shell has already landed on ${at}'s ${name}.`);
+  if (s.shots[at][name]) throw new GameRuleError('ALREADY_SHOT', `A shell has already landed on ${at}'s ${name}.`);
   if (trick === 'mine') {
     if (minesOf(s, seat).length >= MINE_LIMIT) throw new GameRuleError('MINE_LIMIT', `You have ${MINE_LIMIT} live mines; wait for one to go off, or play a false splash.`);
     if (minesOf(s, seat).some((m) => m.sea === at && m.cell === name)) throw new GameRuleError('YOUR_MINE', `Your mine is already on ${at}'s ${name}.`);
@@ -543,8 +537,8 @@ function applyFire(s: SalvoState, seat: SeatId, command: Record<string, unknown>
     if (!isBuoyCentre(name)) throw new GameRuleError('BAD_BUOY', `A buoy's 3×3 must lie on the sea: drop it on b2 to g7, not ${name}.`);
     if (s.pending[seat].some((x) => x.kind === 'buoy')) throw new GameRuleError('ONE_BUOY', 'One sonar buoy a round; the rest of your salvo is shells.');
     if (buoyedAt(s, seat, at, name)) throw new GameRuleError('ALREADY_BUOYED', `You already have a buoy at ${at}'s ${name}; its reading stays live.`);
-  } else if (spentAt(s, seat, at, name)) {
-    throw new GameRuleError('ALREADY_FIRED', `You have already shot ${at}'s ${name}; only a hit on a ship afloat may be shot again.`);
+  } else if (firedAt(s, seat, at, name)) {
+    throw new GameRuleError('ALREADY_FIRED', `You have already shot ${at}'s ${name}.`);
   } else if (aimedAt(s, seat, at, name)) {
     throw new GameRuleError('ALREADY_AIMED', `One of this round's shots is already on ${at}'s ${name}.`);
   }
@@ -583,7 +577,7 @@ function applyItemFire(s: SalvoState, seat: SeatId, command: Record<string, unkn
     const i = cellIndex(cell as string);
     if (i === null) throw new GameRuleError('BAD_CELL', `There is no cell "${cell}" on an 8×8 sea (a1 to h8).`);
     const name = cellName(i);
-    if (spentAt(s, seat, at, name)) throw new GameRuleError('ALREADY_FIRED', `You have already shot ${at}'s ${name}; centre your cluster elsewhere (a hit on a ship afloat may be shot again).`);
+    if (firedAt(s, seat, at, name)) throw new GameRuleError('ALREADY_FIRED', `You have already shot ${at}'s ${name}; centre your cluster on a cell you haven't.`);
     if (aimedAt(s, seat, at, name)) throw new GameRuleError('ALREADY_AIMED', `One of this round's shots is already on ${at}'s ${name}.`);
     order = { kind: 'cluster', from: seat, sea: at, cell: name };
   } else {
@@ -592,7 +586,7 @@ function applyItemFire(s: SalvoState, seat: SeatId, command: Record<string, unkn
       const which = seat === 'east' || seat === 'west' ? 'a row, "1" to "8"' : 'a column, "a" to "h"';
       throw new GameRuleError('BAD_LANE', `From ${seat} a torpedo runs down ${which}; there is no lane "${command.lane}".`);
     }
-    if (cells.every((c) => spentAt(s, seat, at, c))) throw new GameRuleError('LANE_SPENT', `You have already shot every cell of ${at}'s lane ${lane}.`);
+    if (cells.every((c) => firedAt(s, seat, at, c))) throw new GameRuleError('LANE_SPENT', `You have shot every cell of ${at}'s lane ${lane}.`);
     order = { kind: 'torpedo', from: seat, sea: at, cell: cells[0], lane: lane! };
   }
   s.arsenal[seat].splice(s.arsenal[seat].indexOf(item), 1);
@@ -1187,7 +1181,7 @@ function owedLegal(s: SalvoState, seat: SeatId): SalvoCommand[] {
     if (sea === seat) continue;
     for (let i = 0; i < SIZE * SIZE; i++) {
       const cell = cellName(i);
-      if (!spentAt(s, seat, sea, cell) && !aimedAt(s, seat, sea, cell)) out.push({ fire: 'shell', at: sea, cell });
+      if (!firedAt(s, seat, sea, cell) && !aimedAt(s, seat, sea, cell)) out.push({ fire: 'shell', at: sea, cell });
     }
   }
   // Or a sonar buoy for one of the shots: one a round, any centre whose 3×3 lies on the sea, once per centre per sea.
@@ -1221,10 +1215,10 @@ function owedLegal(s: SalvoState, seat: SeatId): SalvoCommand[] {
       if (item === 'cluster') {
         for (let i = 0; i < SIZE * SIZE; i++) {
           const cell = cellName(i);
-          if (!spentAt(s, seat, sea, cell) && !aimedAt(s, seat, sea, cell)) out.push({ fire: 'cluster', at: sea, cell });
+          if (!firedAt(s, seat, sea, cell) && !aimedAt(s, seat, sea, cell)) out.push({ fire: 'cluster', at: sea, cell });
         }
       } else if (item === 'torpedo') {
-        for (const lane of lanesFor(seat)) if (torpedoLane(seat, lane)!.some((c) => !spentAt(s, seat, sea, c))) out.push({ fire: 'torpedo', at: sea, lane });
+        for (const lane of lanesFor(seat)) if (torpedoLane(seat, lane)!.some((c) => !firedAt(s, seat, sea, c))) out.push({ fire: 'torpedo', at: sea, lane });
       }
     }
   }
@@ -1280,12 +1274,9 @@ function forfeit(state: SalvoState, seat: SeatId, reason: string): SalvoState {
   return s;
 }
 
-/**
- * Unhit ship cells of a sea among the cells `where` accepts, as the instruments hear them (fog, sonar, a whisper's
- * truth): a welded cell is the hit the table saw until it's shot again, or a count would give the repair away (R-77).
- */
+/** Unhit ship cells of a sea among the cells `where` accepts (a welded cell is unhit again). */
 const afloatIn = (s: SalvoState, sea: SeatId, where: (cell: string) => boolean) =>
-  s.fleets[sea].reduce((n, x) => n + x.cells.filter((c) => where(c) && !x.hits.includes(c) && !repairedAt(s, sea, c)).length, 0);
+  s.fleets[sea].reduce((n, x) => n + x.cells.filter((c) => where(c) && !x.hits.includes(c)).length, 0);
 
 function targetView(s: SalvoState, sea: SeatId, you: SeatId | null, fakes: Splash[]): TargetView {
   const shots = Object.entries(s.shots[sea]);
@@ -1294,9 +1285,8 @@ function targetView(s: SalvoState, sea: SeatId, you: SeatId | null, fakes: Splas
   const sunkCells = new Set(sunkShips.flatMap((x) => x.cells));
   // A revealed decoy's cells leave the hits (so afloat comes back) for `decoys`.
   const drift = driftwood(s, sea);
-  // A repaired cell still reads as the hit it was (the repair is its owner's secret).
-  const welded = s.repairs[sea];
-  const real = [...shots.filter(([c, x]) => x.result === 'hit' && !drift.has(c)).map(([c]) => c), ...welded.map((x) => x.cell)];
+  // A repaired cell is plain unshot sea to everyone but its owner (R-78): not here at all.
+  const real = shots.filter(([c, x]) => x.result === 'hit' && !drift.has(c)).map(([c]) => c);
   // A fool sees the false splashes played on them as hits like any other.
   const hits = [...new Set([...real, ...fakes.filter((x) => x.sea === sea).map((x) => x.cell)])].sort(byBoard);
   const t: TargetView = {
@@ -1305,8 +1295,6 @@ function targetView(s: SalvoState, sea: SeatId, you: SeatId | null, fakes: Splas
       ? shots
           .filter(([, x]) => x.by.includes(you))
           .map(([cell, x]): { cell: string; result: ShotResult } => ({ cell, result: sunkCells.has(cell) ? 'sunk' : drift.has(cell) ? 'decoy' : x.result }))
-          .concat(welded.filter((x) => (x.by ?? []).includes(you)).map((x) => ({ cell: x.cell, result: 'hit' as const })))
-          // Board order: the order cells were shot in would move a welded hit to the end, and give it away.
           .sort((a, b) => byBoard(a.cell, b.cell))
       : [],
     hits,

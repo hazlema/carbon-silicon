@@ -137,7 +137,7 @@
   const ITEM_HINT: Record<ItemId, string> = {
     cluster: 'Cluster: five shells in a plus. Click the centre cell.',
     torpedo: 'Torpedo: runs a lane from your side to the first ship. Click any cell of the lane.',
-    repair: 'Repair: weld a hit back together; only you will know which. Click a hit on your fleet.',
+    repair: 'Repair: weld a hit back together; it vanishes from their maps. Click a hit on your fleet.',
     decoy: 'Decoy: a fake two-cell ship on your sea, one at a time. Click to lay it; R turns it.',
   };
   let kind = $state<Kind>('shell');
@@ -895,7 +895,7 @@
   const ITEM_LINE: Record<ItemId, string> = {
     cluster: 'A plus of five cells. Deadly next to a hit.',
     torpedo: 'Runs a lane from your side to the first ship; the water it passes shows.',
-    repair: 'Patch one hit on your own ship. Only you know which.',
+    repair: 'Patch one hit on your own ship. It vanishes from their maps.',
     decoy: 'A fake two-cell ship. Hits on it look real. Only one on your sea at a time.',
   };
   const crate = $derived(live && !amOut ? (view.myArsenal?.crate ?? null) : null);
@@ -3652,7 +3652,7 @@
   .dstamp.land {
     animation: sv-stamp 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) var(--d) both;
   }
-  /* A welding spark: a repaired cell, yours alone until it's shot again (the table still sees the hit). */
+  /* A welding spark: a repaired cell, yours alone until it's shot again (to the table it's unshot sea). */
   .weld {
     position: absolute;
     right: 8%;

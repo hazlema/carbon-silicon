@@ -92,9 +92,7 @@ test('Salvo: a human deploys at random, fires a whole salvo, and the volley carr
   expect([...volley.shells, ...volley.buoys].filter((x) => x.from === sprocket && x.sea === me)).toHaveLength(4);
   await expect(page.getByTestId('sv-round')).toHaveText('round 2');
   await expect(cell).toHaveAttribute('aria-label', /^e5, (miss|hit|sunk \w+)$/);
-  // Water and a sunk ship are spent; a hit on a ship afloat may be shot again (in case it was welded).
-  const shotAs = (await cell.getAttribute('aria-label'))!;
-  await expect(cell).toHaveAttribute('aria-disabled', shotAs === 'e5, hit' ? 'false' : 'true');
+  await expect(cell).toHaveAttribute('aria-disabled', 'true');
 
   // Round 2: part of the salvo first (the rest stays owed), then a sonar buoy and shells for the rest.
   await expect(page.locator(`.chip[data-seat="${sprocket}"]`)).toHaveAttribute('data-ready', 'true', { timeout: 10_000 });

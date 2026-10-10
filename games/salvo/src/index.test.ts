@@ -398,8 +398,8 @@ describe('fire', () => {
     // a lone shell hits one cell only (every filler went at west's or south's sea)
     expect(s.shots.east.e5).toEqual({ result: 'miss', by: ['west'] });
     expect(Object.keys(s.shots.east)).toHaveLength(10);
-    // blast cells leave the shooters' legal, as do their three fillers each; a hit on a ship afloat stays (a1 b1 c1)
-    expect(shellsOf(s, 'north')).toHaveLength(192 - 9 - 3 + 3);
+    // blast cells leave the shooters' legal, as do their three fillers each
+    expect(shellsOf(s, 'north')).toHaveLength(192 - 9 - 3);
     expect(shellsOf(s, 'west')).toHaveLength(192 - 1 - 3);
   });
   test('a sinking shared by two lone shells credits both', () => {
@@ -1847,60 +1847,48 @@ describe('repair and decoy', () => {
     expect(lines[0]).toContain('{north} hits {east} at d1');
   });
 
-  test('a repair is its owner’s secret: the table still sees the old hit, and nothing it may do tells them apart', () => {
+  test('a repair is the owner’s secret: to everyone else the cell is unshot sea again (no hit, no spark), afloat rises', () => {
     let s = holding('east', ['repair']);
     preHit(s, 'east', ['b1', 'c1'], 'west');
-    preHit(s, 'north', ['b5'], 'west'); // a standing hit of west's elsewhere, to compare with
     expect(targetOf(s, 'north', 'east').afloat).toBe(10);
-    const shownBefore = { north: targetOf(s, 'north', 'east'), west: targetOf(s, 'west', 'east'), spectator: targetOf(s, null, 'east') };
     s = volley(repair(s, 'east', 'c1'), {});
     expect(s.shots.east.c1).toBeUndefined();
     expect(s.fleets.east.find((x) => x.id === 'cruiser')!.hits).toEqual(['b1']);
     expect(s.repairs.east).toEqual([{ cell: 'c1', round: 1, by: ['west'] }]);
-    // Every other seat (and a spectator) sees the sea exactly as before: c1 a hit, west's own record keeps it.
-    expect(targetOf(s, 'north', 'east')).toEqual(shownBefore.north);
-    expect(targetOf(s, 'west', 'east')).toEqual(shownBefore.west);
-    expect(targetOf(s, null, 'east')).toEqual(shownBefore.spectator);
+    for (const viewer of ['north', 'south', 'west', null]) {
+      const t = targetOf(s, viewer, 'east');
+      expect(t.hits).toEqual(['b1']);
+      expect(t.afloat).toBe(11);
+      expect('repaired' in t).toBe(false);
+      expect(viewOf(s, viewer).lastVolley!.items).toEqual([{ item: 'repair', from: 'east' }]);
+    }
+    expect(targetOf(s, 'west', 'east').mine.map((x) => x.cell)).toEqual(['b1']); // west's hit is gone from its record
     expect(viewOf(s, 'east').mySea!.repaired).toEqual(['c1']);
     expect(viewOf(s, 'east').mySea!.shots.c1).toBeUndefined();
-    expect(viewOf(s, 'north').ascii).not.toContain('repaired');
-    expect(viewOf(s, 'north').ascii.split('\n')).toContain('1 . X X . . . . .');
+    expect(viewOf(s, 'north').ascii.split('\n')).toContain('1 . X . . . . . .');
     expect(viewOf(s, 'east').ascii.split('\n')).toContain('1 C X r C . . . .');
-    // A hit may be shot again, welded or not: west may aim at c1 and at its standing hit on north alike.
+    // Anyone may shoot it again, whoever hit it first; a hit still standing stays spent for its shooter.
     expect(shellsOf(s, 'west')).toContainEqual({ fire: 'shell', at: 'east', cell: 'c1' });
-    expect(shellsOf(s, 'west')).toContainEqual({ fire: 'shell', at: 'north', cell: 'b5' });
-    expect(shellsOf(s, 'west')).toContainEqual({ fire: 'shell', at: 'east', cell: 'b1' });
-    // A ghost's tricks treat it as shot, like any hit.
-    s = volley(s, { west: ['east', 'c1'] });
+    expect(shellsOf(s, 'west')).not.toContainEqual({ fire: 'shell', at: 'east', cell: 'b1' });
+    expect(codeOf(() => use(s, 'west', { fire: 'shell', at: 'east', cell: 'b1' }))).toBe('ALREADY_FIRED');
+    // Hit again: back in the record of whoever first landed it, and the spark is gone.
+    s = volley(s, { north: ['east', 'c1'] });
     expect(s.repairs.east).toEqual([]);
-    expect(targetOf(s, 'north', 'east').hits).toEqual(['b1', 'c1']);
-    expect(s.fleets.east.find((x) => x.id === 'cruiser')!.hits).toEqual(['b1', 'c1']);
+    expect(s.shots.east.c1).toEqual({ result: 'hit', by: ['north', 'west'] });
+    expect(targetOf(s, 'west', 'east').mine.map((x) => x.cell)).toEqual(['b1', 'c1']);
+    expect(targetOf(s, 'south', 'east').hits).toEqual(['b1', 'c1']);
   });
 
-  test('fog, sonar and a whisper’s truth hear a welded cell as the hit the table saw, until it is shot again', () => {
+  test('fog and sonar count a welded cell afloat, like any unhit ship cell', () => {
     let s = holding('east', ['repair']);
     preHit(s, 'east', ['a1'], 'north');
     s.sonar.north.push({ sea: 'east', cell: 'b2', round: 1 });
     const reading = () => targetOf(s, 'north', 'east').sonar[0].afloat;
     const before = reading();
     s = volley(repair(s, 'east', 'a1'), {});
-    expect(s.repairs.east.map((x) => x.cell)).toEqual(['a1']);
-    expect(reading()).toBe(before);
+    expect(reading()).toBe(before + 1);
     s.round = 8; // rows lift from round 6
-    expect(targetOf(s, 'south', 'east').lifted.find((x) => x.row === 1)?.afloat).toBe(3); // the cruiser a1–d1, a1 heard as hit
-  });
-
-  test('a shell on a standing hit is spent: no hit, no scrap; water already shot stays refused', () => {
-    let s = holding('east', ['repair']);
-    preHit(s, 'north', ['b5', 'e5'], 'west'); // b5 the frigate, e5 water
-    expect(shellsOf(s, 'west')).not.toContainEqual({ fire: 'shell', at: 'north', cell: 'e5' });
-    expect(codeOf(() => use(s, 'west', { fire: 'shell', at: 'north', cell: 'e5' }))).toBe('ALREADY_FIRED');
-    const scrap = s.scrap.west;
-    s = volley(s, { west: ['north', 'b5'] });
-    expect(s.scrap.west).toBe(scrap);
-    expect(s.hitsLanded.west).toBe(0);
-    expect(s.shots.north.b5).toEqual({ result: 'hit', by: ['west'] });
-    expect(s.fleets.north.find((x) => x.id === 'frigate')!.hits).toEqual(['b5']);
+    expect(targetOf(s, 'south', 'east').lifted.find((x) => x.row === 1)?.afloat).toBe(4); // the whole cruiser a1–d1
   });
 
   test('decoy: legal placements on your own sea; refusals carry precise codes', () => {

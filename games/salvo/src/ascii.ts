@@ -139,6 +139,6 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
   if (view.myTricks || view.targets.some((t) => (t.mines ?? []).length > 0)) lines.push('M = a mine (your own; every live mine once it is over)');
   if (view.mySea?.decoy) lines.push('d = your decoy (x where it is hit)');
   if (view.targets.some((t) => t.decoys.length > 0) || ownDriftwood(view)) lines.push('~ = a decoy, found: driftwood');
-  if ((view.mySea?.repaired.length ?? 0) > 0) lines.push('r = a cell you repaired (the table still sees a hit there, until it is shot again)');
+  if ((view.mySea?.repaired.length ?? 0) > 0) lines.push('r = a cell you repaired (unhit again; to everyone else it is unshot sea, until it is shot again)');
   return lines.join('\n');
 }
