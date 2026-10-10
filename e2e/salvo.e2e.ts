@@ -75,8 +75,8 @@ test('Salvo: a human deploys at random, fires a whole salvo, and the volley carr
   await expect(sea.locator('[data-cell="a1"]')).toHaveAttribute('aria-disabled', 'true');
   await page.getByTestId('fire').click();
   // Before anything flies, you're warned what's coming at your sea, and from whom (Sprocket's salvo may hold a sonar buoy); then round 2 is called.
-  await expect(page.getByTestId('banner')).toHaveText(/^⚠ \d shells? incoming on your sea — from Sprocket( · 1 sonar buoy)?$/, { timeout: 10_000 });
-  await expect(page.getByTestId('banner')).toHaveText('Round 2 — fire!', { timeout: 10_000 });
+  await expect(page.getByTestId('banner').last()).toHaveText(/^⚠ \d shells? incoming on your sea — from Sprocket( · 1 sonar buoy)?$/, { timeout: 10_000 });
+  await expect(page.getByTestId('banner').last()).toHaveText('Round 2 — fire!', { timeout: 10_000 });
   // The warning stays in your table chat as a game line (the round's call doesn't).
   await expect(page.locator('.private.game').first()).toContainText(/⚠ \d shells? incoming on your sea — from Sprocket/);
   await expect(page.locator('.private.game', { hasText: 'Round 2' })).toHaveCount(0);
@@ -119,7 +119,7 @@ test('Salvo: a human deploys at random, fires a whole salvo, and the volley carr
   for (const c of rest) await sea.locator(`[data-cell="${c}"]`).click();
   await expect(page.getByTestId('fire')).toHaveText(rest.length ? `Fire ${rest.length} shell${rest.length === 1 ? '' : 's'} + buoy` : 'Drop buoy');
   await page.getByTestId('fire').click();
-  await expect(page.getByTestId('banner')).toHaveText('Round 3 — fire!', { timeout: 10_000 });
+  await expect(page.getByTestId('banner').last()).toHaveText('Round 3 — fire!', { timeout: 10_000 });
   await expect.poll(async () => (await envelope()).view.lastVolley?.round ?? 0, { timeout: 10_000 }).toBe(2);
   const second = (await envelope()).view.lastVolley!;
   expect(second.buoys).toContainEqual({ from: me, sea: sprocket, cell: 'd4' });

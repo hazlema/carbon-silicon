@@ -1833,7 +1833,7 @@ describe('repair and decoy', () => {
     const scrap = s.scrap.north;
     s = repair(s, 'east', 'd1');
     s = volley(s, { north: ['east', 'd1'] }); // north never shot d1; west did
-    expect(s.shots.east.d1).toEqual({ result: 'hit', by: ['north'] });
+    expect(s.shots.east.d1).toEqual({ result: 'hit', by: ['north', 'west'] }); // west's first hit stays in its record; north is credited
     expect(s.fleets.east.find((x) => x.id === 'cruiser')!.hits).toEqual(['d1']);
     expect(s.lastVolley!.shells.find((x) => x.from === 'north' && x.cell === 'd1')!.result).toBe('hit');
     expect(s.hitsLanded.north).toBe(1);
@@ -1875,6 +1875,19 @@ describe('repair and decoy', () => {
     expect(s.repairs.east).toEqual([]);
     expect(targetOf(s, 'north', 'east').hits).toEqual(['b1', 'c1']);
     expect(s.fleets.east.find((x) => x.id === 'cruiser')!.hits).toEqual(['b1', 'c1']);
+  });
+
+  test('fog, sonar and a whisper’s truth hear a welded cell as the hit the table saw, until it is shot again', () => {
+    let s = holding('east', ['repair']);
+    preHit(s, 'east', ['a1'], 'north');
+    s.sonar.north.push({ sea: 'east', cell: 'b2', round: 1 });
+    const reading = () => targetOf(s, 'north', 'east').sonar[0].afloat;
+    const before = reading();
+    s = volley(repair(s, 'east', 'a1'), {});
+    expect(s.repairs.east.map((x) => x.cell)).toEqual(['a1']);
+    expect(reading()).toBe(before);
+    s.round = 8; // rows lift from round 6
+    expect(targetOf(s, 'south', 'east').lifted.find((x) => x.row === 1)?.afloat).toBe(3); // the cruiser a1–d1, a1 heard as hit
   });
 
   test('a shell on a standing hit is spent: no hit, no scrap; water already shot stays refused', () => {
@@ -2111,7 +2124,7 @@ describe('repair and decoy', () => {
       { item: 'repair', from: 'east', cell: 'a1' },
       { item: 'torpedo', from: 'west', sea: 'east', lane: '1', path: ['a1'], struck: 'a1' },
     ]);
-    expect(r.shots.east.a1).toEqual({ result: 'hit', by: ['west'] });
+    expect(r.shots.east.a1).toEqual({ result: 'hit', by: ['north', 'west'] }); // the welded hit's first shooter keeps it
     expect(r.repairs.east).toEqual([]);
   });
 

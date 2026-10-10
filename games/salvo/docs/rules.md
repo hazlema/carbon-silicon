@@ -810,6 +810,8 @@ In the volley, `path` is every cell the torpedo ran through, from its edge, and
   whoever landed it. On a standing hit the shell is wasted; on a welded one it
   hits all over again. So no rule tells the two apart: when a ship won't sink,
   suspect a weld and shoot its old hits.
+- **The instruments can't hear a weld either.** Fog counts, sonar readings and
+  a whisper's truth count a welded cell as the hit it was, until it's shot again.
 - **Repairs land before the shells.** A shell aimed at that cell in the same
   volley hits it all over again.
 
@@ -964,7 +966,7 @@ Targets:
 {north}'s cluster lands on {east} around c5: all water.
 {north}'s torpedo runs down {east}'s lane c and strikes at c7.
 {north}'s torpedo runs down {east}'s lane c and runs clean through.
-{east} welds the hit at f6 back together.
+{east} welds a hit back together.
 {south} slips a decoy into the water.
 {west}'s shell finds {south}'s DECOY — nothing but driftwood.
 Backfire! {west}'s mine was sitting on {south}'s DECOY. {north}'s shell blows it out of the water.

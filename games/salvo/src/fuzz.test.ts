@@ -135,7 +135,8 @@ const driftwoodOf = (s: SalvoState, sea: string) => new Set(s.decoys[sea].filter
 
 /** Unhit ship cells of a sea among `cells`: what a fog row or a buoy may report. */
 const afloatAmong = (s: SalvoState, sea: string, cells: (c: string) => boolean) =>
-  s.fleets[sea].reduce((n, x) => n + x.cells.filter((c) => cells(c) && !x.hits.includes(c)).length, 0);
+  // A welded cell is heard as the hit the table saw (R-77).
+  s.fleets[sea].reduce((n, x) => n + x.cells.filter((c) => cells(c) && !x.hits.includes(c) && !s.repairs[sea].some((r) => r.cell === c)).length, 0);
 
 /** Plain checks inside the hot loops (a bun `expect` per string costs too much over 300 games). */
 function check(ok: boolean, what: string): void {

@@ -947,8 +947,9 @@ function resolve(s: SalvoState): void {
     const by = bySeatOrder(s, set);
     const ship = shipAt(s, sea, cell);
     const decoy = liveDecoyAt(s, sea, cell);
-    const prior = s.shots[sea][cell];
-    s.shots[sea][cell] = { result: ship || decoy ? 'hit' : (prior?.result ?? 'miss'), by: prior ? bySeatOrder(s, [...prior.by, ...by]) : by };
+    // A welded cell's first shooters keep it in their record when it's hit again.
+    const prior = s.shots[sea][cell] ?? s.repairs[sea].find((x) => x.cell === cell && x.by?.length);
+    s.shots[sea][cell] = { result: ship || decoy ? 'hit' : (prior?.result ?? 'miss'), by: prior ? bySeatOrder(s, [...prior.by!, ...by]) : by };
     if (ship && !ship.hits.includes(cell)) newHits.set(key, by);
     else if (decoy && !decoy.hits.includes(cell)) decoyHits.set(key, by);
     if (decoy) onDecoy.add(key);
@@ -1279,9 +1280,12 @@ function forfeit(state: SalvoState, seat: SeatId, reason: string): SalvoState {
   return s;
 }
 
-/** Unhit ship cells of a sea among the cells `where` accepts. */
+/**
+ * Unhit ship cells of a sea among the cells `where` accepts, as the instruments hear them (fog, sonar, a whisper's
+ * truth): a welded cell is the hit the table saw until it's shot again, or a count would give the repair away (R-77).
+ */
 const afloatIn = (s: SalvoState, sea: SeatId, where: (cell: string) => boolean) =>
-  s.fleets[sea].reduce((n, x) => n + x.cells.filter((c) => where(c) && !x.hits.includes(c)).length, 0);
+  s.fleets[sea].reduce((n, x) => n + x.cells.filter((c) => where(c) && !x.hits.includes(c) && !repairedAt(s, sea, c)).length, 0);
 
 function targetView(s: SalvoState, sea: SeatId, you: SeatId | null, fakes: Splash[]): TargetView {
   const shots = Object.entries(s.shots[sea]);
