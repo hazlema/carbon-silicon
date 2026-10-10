@@ -138,7 +138,7 @@
     cluster: 'Cluster: five shells in a plus. Click the centre cell.',
     torpedo: 'Torpedo: runs a lane from your side to the first ship. Click any cell of the lane.',
     repair: 'Repair: weld a hit back together; only you will know which. Click a hit on your fleet.',
-    decoy: 'Decoy: a fake two-cell ship on your sea. Click to lay it; R turns it.',
+    decoy: 'Decoy: a fake two-cell ship on your sea, one at a time. Click to lay it; R turns it.',
   };
   let kind = $state<Kind>('shell');
   let aims = $state<Aim[]>([]);
@@ -895,8 +895,8 @@
   const ITEM_LINE: Record<ItemId, string> = {
     cluster: 'A plus of five cells. Deadly next to a hit.',
     torpedo: 'Runs a lane from your side to the first ship; the water it passes shows.',
-    repair: 'Patch one hit on your own ship.',
-    decoy: 'A fake two-cell ship. Hits on it look real.',
+    repair: 'Patch one hit on your own ship. Only you know which.',
+    decoy: 'A fake two-cell ship. Hits on it look real. Only one on your sea at a time.',
   };
   const crate = $derived(live && !amOut ? (view.myArsenal?.crate ?? null) : null);
   const crateLegal = $derived(legal.filter(isCrate));
