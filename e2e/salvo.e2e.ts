@@ -77,6 +77,9 @@ test('Salvo: a human deploys at random, fires a whole salvo, and the volley carr
   // Before anything flies, you're warned what's coming at your sea, and from whom (Sprocket's salvo may hold a sonar buoy); then round 2 is called.
   await expect(page.getByTestId('banner')).toHaveText(/^⚠ \d shells? incoming on your sea — from Sprocket( · 1 sonar buoy)?$/, { timeout: 10_000 });
   await expect(page.getByTestId('banner')).toHaveText('Round 2 — fire!', { timeout: 10_000 });
+  // The warning stays in your table chat as a game line (the round's call doesn't).
+  await expect(page.locator('.private.game').first()).toContainText(/⚠ \d shells? incoming on your sea — from Sprocket/);
+  await expect(page.locator('.private.game', { hasText: 'Round 2' })).toHaveCount(0);
 
   // The resolved volley, read back from the server, holds all four shells from you, and Sprocket's salvo at you.
   await expect
@@ -89,7 +92,9 @@ test('Salvo: a human deploys at random, fires a whole salvo, and the volley carr
   expect([...volley.shells, ...volley.buoys].filter((x) => x.from === sprocket && x.sea === me)).toHaveLength(4);
   await expect(page.getByTestId('sv-round')).toHaveText('round 2');
   await expect(cell).toHaveAttribute('aria-label', /^e5, (miss|hit|sunk \w+)$/);
-  await expect(cell).toHaveAttribute('aria-disabled', 'true');
+  // Water and a sunk ship are spent; a hit on a ship afloat may be shot again (in case it was welded).
+  const shotAs = (await cell.getAttribute('aria-label'))!;
+  await expect(cell).toHaveAttribute('aria-disabled', shotAs === 'e5, hit' ? 'false' : 'true');
 
   // Round 2: part of the salvo first (the rest stays owed), then a sonar buoy and shells for the rest.
   await expect(page.locator(`.chip[data-seat="${sprocket}"]`)).toHaveAttribute('data-ready', 'true', { timeout: 10_000 });

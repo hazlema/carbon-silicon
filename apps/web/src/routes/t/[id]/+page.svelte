@@ -25,7 +25,7 @@
   import { live } from '$lib/live.svelte';
   import { pollMatch } from '$lib/match-poll';
   import { pocket } from '$lib/pocket.svelte';
-  import { convLine, quietChannels, whisperLine, type ConvLookup, type PrivateLine } from '$lib/private-lines';
+  import { convLine, gameLine, quietChannels, whisperLine, type ConvLookup, type PrivateLine } from '$lib/private-lines';
   import { clock, colorOf, tableColors } from '$lib/seats';
 
   const REASONS: Record<string, string> = {
@@ -278,8 +278,9 @@
   });
 
   // ── Private lines: during a match your DMs and group lines (to or from you) also show inline in your home feed
-  // (the Table for players, the Rail for spectators), marked private; so do the Salvo whispers you won. Merged
-  // here only: the table's channel never hears them. The window opens at the match's start.
+  // (the Table for players, the Rail for spectators), marked private; so do the Salvo whispers you won, and Salvo's
+  // banners (warnings and tricks) as they go up, so a missed one is still there to read. Merged here only: the
+  // table's channel never hears them. The window opens at the match's start.
   const homeTab = $derived(isPlayer ? 'table' : 'rail');
   const privMatch = $derived(env?.match.id ?? null);
   const since = $derived(env ? Date.parse(env.match.startsAt) : null);
@@ -292,9 +293,15 @@
     const fresh = list.filter((m) => (dmParticipants(m.channel) || groupOf(m.channel)) && !have.has(m.id) && Date.parse(m.createdAt) >= from);
     if (fresh.length > 0) privMsgs = [...untrack(() => privMsgs), ...fresh].sort((a, b) => a.id - b.id);
   }
+  /** The game's banners this page has shown, as lines (a reload starts them afresh, as the banners do). */
+  let gameLines = $state<PrivateLine[]>([]);
+  const tellLine = (b: { tone: 'hot' | 'calm' | 'go'; text: string }) => {
+    gameLines = [...gameLines, gameLine(b.text, b.tone, gameLines.length, Date.now())];
+  };
   $effect(() => {
     void privMatch;
     privMsgs = [];
+    gameLines = [];
     whisperSeen.clear();
     if (!privMatch) return;
     return live.onConversation((m) => takePrivate([m]));
@@ -347,7 +354,7 @@
       return whisperLine(w, i, (seat) => env?.match.seats.find((s) => s.seat === seat)?.identity.handle ?? seat, whisperSeen.get(i)!);
     }),
   );
-  const privateLines: PrivateLine[] = $derived([...convLines, ...whisperLines]);
+  const privateLines: PrivateLine[] = $derived([...convLines, ...whisperLines, ...gameLines]);
   /** Residents (house bots) who spoke during the live match: inline only, off the tab row. */
   const matchOn = $derived(env?.match.status === 'live' || env?.match.status === 'countdown');
   const quiet = $derived(matchOn && since !== null ? quietChannels(live.dms, since, tab) : new Set<string>());
@@ -810,7 +817,7 @@
       {#if sv}
         <div class="stage sv">
           <div class="boardwrap">
-            <SalvoBoard view={sv} {colors} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} seats={match.seats} you={mySeat} fit={inPocket} bind:settling={svSettling} {secondsLeft} toMove={match.toMove} canAct={match.status === 'live' && !busy} />
+            <SalvoBoard view={sv} {colors} legal={env.legal} interactive={myTurn && !busy} onMove={moveCommand} seats={match.seats} you={mySeat} fit={inPocket} bind:settling={svSettling} {secondsLeft} toMove={match.toMove} canAct={match.status === 'live' && !busy} onTell={tellLine} />
             {#if countdown !== null}<div class="countdown" aria-hidden="true">{countdown || 'Go'}</div>{/if}
           </div>
         </div>

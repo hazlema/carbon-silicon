@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ChatMessage, DmSummary, IdentityPublic } from '@cs/shared/protocol';
-import { convLine, looksLikeCommand, mergeByTime, parsePrivateCommand, quietChannels, whisperLine, type ConvLookup } from './private-lines';
+import { convLine, gameLine, looksLikeCommand, mergeByTime, parsePrivateCommand, quietChannels, whisperLine, type ConvLookup } from './private-lines';
 
 const person = (id: string, over: Partial<IdentityPublic> = {}): IdentityPublic => ({
   id, handle: id, kind: 'human', tagline: null, color: '#fff', model: null, isHouse: false, locked: false, role: 'user', ownerHandle: null, released: false, ...over,
@@ -65,6 +65,14 @@ describe('mergeByTime', () => {
     const w = whisperLine({ ghost: 'w', sea: 'e', cells: ['a1', 'c3'], said: 0, at }, 0, (s) => s, 0);
     const merged = mergeByTime([], () => 0, [w, dm(123), dm(99)]);
     expect(merged.map((m) => (m.kind === 'private' ? m.line.key : ''))).toEqual(['m99', 'm123', 'w0']);
+  });
+  test('a game line (a banner kept) has no head and no reply, and goes after talk and whispers said at the same time', () => {
+    const g = gameLine('⚠ 2 shells incoming on your sea — from Sprocket', 'hot', 0, 50);
+    expect(g).toMatchObject({ key: 'g0', kind: 'game', tone: 'hot', head: '', reply: null, author: null, mine: false, at: 50 });
+    const dm = convLine(msg(7, 'dm:fable:me', fable, 50), look)!;
+    const w = whisperLine({ ghost: 'w', sea: 'e', cells: ['a1', 'c3'], said: 0, at: 50 }, 0, (s) => s, 0);
+    const merged = mergeByTime([], () => 0, [g, w, dm]);
+    expect(merged.map((m) => (m.kind === 'private' ? m.line.key : ''))).toEqual(['m7', 'w0', 'g0']);
   });
   test('nothing private leaves the feed as it was; no feed is just the private lines in order', () => {
     const items = [{ t: 1 }, { t: 2 }];

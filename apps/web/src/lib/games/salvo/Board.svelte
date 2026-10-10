@@ -20,6 +20,7 @@
     secondsLeft = null,
     toMove,
     canAct = false,
+    onTell,
   }: {
     view: SalvoView;
     /** Kept for the table page's call; Salvo draws people in their identity colours (orange carbon, cyan silicon). */
@@ -41,6 +42,8 @@
     toMove?: string[];
     /** The match is live and no move is in flight: optional commands (a bid, a tell) may go now, owed or not. */
     canAct?: boolean;
+    /** Each banner worth keeping (a warning, a trick), as it goes up: the page writes it into your table chat. */
+    onTell?: (line: { tone: 'hot' | 'calm' | 'go'; text: string }) => void;
   } = $props();
 
   /** The resting isometric view, and the flat one. */
@@ -134,7 +137,7 @@
   const ITEM_HINT: Record<ItemId, string> = {
     cluster: 'Cluster: five shells in a plus. Click the centre cell.',
     torpedo: 'Torpedo: runs a lane from your side to the first ship. Click any cell of the lane.',
-    repair: 'Repair: weld a hit back together. Click a hit on your fleet.',
+    repair: 'Repair: weld a hit back together; only you will know which. Click a hit on your fleet.',
     decoy: 'Decoy: a fake two-cell ship on your sea. Click to lay it; R turns it.',
   };
   let kind = $state<Kind>('shell');
@@ -600,7 +603,8 @@
       wonQueue = [];
       // After a volley, the round's own call ("Round 7 — fire!") goes first.
       const wait = view.lastVolley && taken === volleyRound && plan ? 1800 : 0;
-      lines.forEach((text, i) => announce({ tone: 'calm', text }, wait + i * TRICK_MS, TRICK_MS));
+      // Already in the chat as private 👻 lines: the banner only.
+      lines.forEach((text, i) => announce({ tone: 'calm', text }, wait + i * TRICK_MS, TRICK_MS, false));
     });
   });
 
@@ -745,10 +749,8 @@
   }
 
   const ownCells = $derived(view.mySea ? ownModel(view.mySea) : null);
-  /** Welding sparks (cells repaired and not shot since), by `sea cell`, on every sea you can see. */
-  const sparks = $derived(
-    new Set([...(me && view.mySea ? (view.mySea.repaired ?? []).map((c) => `${me} ${c}`) : []), ...view.targets.flatMap((t) => (t.repaired ?? []).map((c) => `${t.sea} ${c}`))]),
-  );
+  /** Your welding sparks (cells you repaired and nobody has shot since), by `sea cell`: a repair is its owner's secret. */
+  const sparks = $derived(new Set(me && view.mySea ? (view.mySea.repaired ?? []).map((c) => `${me} ${c}`) : []));
   const targetCells = $derived(target ? targetModel(target) : null);
   /** The shown sea's lifted rows: row → ship cells still afloat in it (a count, never where). */
   const liftedHere = $derived(new Map((deploying ? [] : (target?.lifted ?? [])).map((x) => [x.row, x.afloat])));
@@ -818,6 +820,7 @@
               : { tone: 'calm', text: 'Quiet waters: nothing aimed at you this round.' },
           0,
           warnFor,
+          !!what || buoys > 0,
         );
       }
       // The tricks, told as they play out (after the warning, one at a time): a mine as it goes off, a false splash as the volley opens.
@@ -953,33 +956,35 @@
     untrack(() => sound?.tick(secs === 1));
   });
 
-  // ── Banners: the warning before a volley, and the call to fire when a round opens ──
-  type Banner = { tone: 'hot' | 'calm' | 'go'; text: string };
+  // ── Banners: the warning before a volley, the tricks, and the call to fire when a round opens ──
+  /** `call`: the round's "fire!", gone as soon as anything newer goes up. */
+  type Banner = { tone: 'hot' | 'calm' | 'go'; text: string; call?: boolean };
   /** How long a trick's banner stays up (they're long lines). */
   const TRICK_MS = 3600;
-  let banner = $state<Banner | null>(null);
-  let bannerKey = $state(0);
+  /** Banners on show stack, newest last; past this many the oldest goes. */
+  const BANNERS_MAX = 3;
+  let banners = $state<(Banner & { key: number })[]>([]);
+  let bannerKey = 0;
   const bannerTimers: ReturnType<typeof setTimeout>[] = [];
-  function announce(b: Banner, afterMs: number, forMs: number) {
-    let mine = -1;
+  /** A banner from `afterMs` for `forMs`; `tell` also writes it into your table chat as it goes up (not the round's call). */
+  function announce(b: Banner, afterMs: number, forMs: number, tell = true) {
+    const key = (bannerKey += 1);
     bannerTimers.push(
       setTimeout(() => {
-        banner = b;
-        mine = bannerKey += 1;
+        banners = [...banners.filter((x) => !x.call), { ...b, key }].slice(-BANNERS_MAX);
         if (b.tone === 'hot') sound?.pop(-7);
+        if (tell) onTell?.({ tone: b.tone, text: b.text });
       }, afterMs),
-      // Only its own banner: a later one may have taken its place.
-      setTimeout(() => {
-        if (bannerKey === mine) banner = null;
-      }, afterMs + forMs),
+      setTimeout(() => dismiss(key), afterMs + forMs),
     );
   }
+  const dismiss = (key: number) => (banners = banners.filter((x) => x.key !== key));
   /** "Round 7 — fire!" once the volley has played out (if the match goes on and you're still afloat). */
   function openRound(afterMs: number) {
     bannerTimers.push(
       setTimeout(() => {
         if (view.phase !== 'fire') return;
-        announce({ tone: 'go', text: me && !out(me) ? `Round ${view.round} — fire!` : `Round ${view.round}` }, 0, 1600);
+        announce({ tone: 'go', text: me && !out(me) ? `Round ${view.round} — fire!` : `Round ${view.round}`, call: true }, 0, 1600, false);
       }, afterMs),
     );
   }
@@ -1008,7 +1013,7 @@
     const at = new Map<string, number>();
     for (const x of plan?.items ?? []) {
       if (x.item === 'decoy') for (const c of x.cells) at.set(`${x.sea} ${c}`, x.at);
-      else if (x.item === 'repair') at.set(`${x.from} ${x.cell}`, x.at);
+      else if (x.item === 'repair' && x.cell) at.set(`${x.from} ${x.cell}`, x.at);
     }
     return at;
   });
@@ -1617,7 +1622,7 @@
                 {/if}
               {/each}
               {#each plan.items.filter((x) => x.item === 'repair' && x.from === seat) as x, n (n)}
-                {#if x.item === 'repair'}
+                {#if x.item === 'repair' && x.cell}
                   {@const c = centre(x.cell, size, g)}
                   <i class="flash weld-fx" style:left="{c.x}px" style:top="{c.y}px" style:--d="{x.at}ms"></i>
                 {/if}
@@ -1670,11 +1675,11 @@
 
 <div class="salvo" class:fit class:deploying bind:this={rootEl}>
   <div class="banners" aria-live="polite">
-    {#if banner}
-      {#key bannerKey}
-        <p class="banner {banner.tone}" data-testid="banner">{banner.text}</p>
-      {/key}
-    {/if}
+    {#each banners as b (b.key)}
+      <p class="banner {b.tone}">
+        <span data-testid="banner">{b.text}</span><button type="button" class="banner-x" aria-label="Close this message" onclick={() => dismiss(b.key)}>✕</button>
+      </p>
+    {/each}
   </div>
 
   <div class="layout">
@@ -2261,14 +2266,19 @@
     left: 0;
     right: 0;
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
     pointer-events: none;
     z-index: 5;
   }
   .banner {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
     margin: 0 10px;
     max-width: 34rem;
-    padding: 0.55rem 1.1rem;
+    padding: 0.55rem 0.55rem 0.55rem 1.1rem;
     border-radius: 999px;
     border: 1px solid var(--lattice);
     background: rgba(13, 16, 32, 0.92);
@@ -2290,6 +2300,27 @@
     border-color: var(--ready);
     font-size: var(--step-1);
     letter-spacing: 0.04em;
+  }
+  /* The banner itself lets clicks through to the sea; only its ✕ takes one. */
+  .banner-x {
+    flex: none;
+    pointer-events: auto;
+    width: 1.6rem;
+    height: 1.6rem;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 0.8em;
+    line-height: 1;
+    opacity: 0.6;
+    cursor: pointer;
+  }
+  .banner-x:hover,
+  .banner-x:focus-visible {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
   }
 
   /* ── The ghost card: over the stage (and its banners), dark glass with a violet edge ── */
@@ -3621,7 +3652,7 @@
   .dstamp.land {
     animation: sv-stamp 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) var(--d) both;
   }
-  /* A welding spark: a repaired cell, public until it's shot again. */
+  /* A welding spark: a repaired cell, yours alone until it's shot again (the table still sees the hit). */
   .weld {
     position: absolute;
     right: 8%;

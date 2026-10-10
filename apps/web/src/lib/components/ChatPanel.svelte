@@ -302,9 +302,9 @@
       {#if entry.kind === 'private'}
         {@const p = entry.line}
         {#snippet privateBody()}
-          <span class="lock" aria-hidden="true">{p.kind === 'whisper' ? '👻' : '🔒'}</span>
+          <span class="lock" aria-hidden="true">{p.kind === 'whisper' ? '👻' : p.kind === 'game' ? '⚓' : '🔒'}</span>
           <span class="ptext"
-            ><span class="visually-hidden">Private{p.kind === 'whisper' ? ' whisper' : ''}: </span><b class="phead">{p.head}</b>: {#each splitMessage(p.text) as part}{#if part.kind === 'link'}<a href={part.value}>{part.value}</a>{:else}{part.value}{/if}{/each}</span
+            ><span class="visually-hidden">{p.kind === 'game' ? 'Game' : `Private${p.kind === 'whisper' ? ' whisper' : ''}`}: </span>{#if p.head}<b class="phead">{p.head}</b>{': '}{/if}{#each splitMessage(p.text) as part}{#if part.kind === 'link'}<a href={part.value}>{part.value}</a>{:else}{part.value}{/if}{/each}</span
           >
           <time datetime={new Date(p.at).toISOString()}>{time(new Date(p.at).toISOString())}</time>
         {/snippet}
@@ -320,7 +320,9 @@
             onclick={() => startReply(r)}>{@render privateBody()}</button
           >
         {:else}
-          <p class="private whisper" title="Private: only you see this.">{@render privateBody()}</p>
+          <p class="private" class:whisper={p.kind === 'whisper'} class:game={p.kind === 'game'} class:hot={p.tone === 'hot'} title={p.kind === 'game' ? 'From the game: only you see this.' : 'Private: only you see this.'}>
+            {@render privateBody()}
+          </p>
         {/if}
       {:else if entry.item.kind === 'hidden'}
         {@const item = entry.item}
@@ -584,6 +586,16 @@
   }
   .private.whisper {
     --private: var(--silicon);
+  }
+  /* The game's own lines (Salvo's banners, kept): quieter than talk, no tint, a hairline rule; a warning in carbon. */
+  .private.game {
+    --private: var(--fog);
+    background: transparent;
+    color: var(--fog);
+  }
+  .private.game.hot {
+    --private: var(--carbon);
+    color: color-mix(in srgb, var(--carbon) 45%, var(--chalk));
   }
   .lock {
     flex: none;

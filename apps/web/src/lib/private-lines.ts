@@ -3,29 +3,32 @@ import { dmParticipants, groupOf } from '@cs/shared/protocol';
 
 /**
  * Private lines in a table's chat feed: during a match, your own DMs and group lines (and, in Salvo, the
- * whispers you won) show inline in your home feed (Table for players, the Rail for spectators), marked
- * private. They're merged on this page only: the table's channel never hears them.
+ * whispers you won and the game's own banners: warnings and tricks) show inline in your home feed (Table for
+ * players, the Rail for spectators), marked private. They're merged on this page only: the table's channel
+ * never hears them.
  */
 
 /** Where a reply from the feed goes: a DM (by the other's handle) or a group (by its channel). */
 export type ReplyTarget = { kind: 'dm'; channel: string; handle: string } | { kind: 'group'; channel: string; title: string };
 
 export interface PrivateLine {
-  /** Unique across kinds: `m<message id>` or `w<n>`. */
+  /** Unique across kinds: `m<message id>`, `w<n>` or `g<n>`. */
   key: string;
-  /** The message id (a DM or group line) or the whisper's index: the tie-break between lines said at the same time. */
+  /** The message id (a DM or group line), the whisper's index or the game line's: the tie-break between lines said at the same time. */
   seq: number;
   /** Epoch ms, for its place among the table's lines. */
   at: number;
-  kind: 'dm' | 'group' | 'whisper';
+  kind: 'dm' | 'group' | 'whisper' | 'game';
+  /** A game line's tone, as its banner had it: 'hot' a warning or a trick on you, 'calm' news, 'go' good news. */
+  tone?: 'hot' | 'calm' | 'go';
   /** Your own line (a DM or group line you sent). */
   mine: boolean;
-  /** Who's talking to whom, before the colon: "@Fable → you", "you → @Fable", "#name · @Fable", "@GAME_OVER whispers to you". */
+  /** Who's talking to whom, before the colon: "@Fable → you", "you → @Fable", "#name · @Fable", "@GAME_OVER whispers to you"; empty for a game line. */
   head: string;
   text: string;
-  /** Clicking the line replies here; null for a whisper. */
+  /** Clicking the line replies here; null for a whisper or a game line. */
   reply: ReplyTarget | null;
-  /** The line's author, for its colour and kind (null for a whisper). */
+  /** The line's author, for its colour and kind (null for a whisper or a game line). */
   author: IdentityPublic | null;
 }
 
@@ -109,15 +112,20 @@ export function whisperLine(w: WhisperWon, n: number, handleOf: (seat: string) =
   };
 }
 
+/** A game's banner kept as a line of your feed (Salvo's warnings and tricks), told as it went up. */
+export function gameLine(text: string, tone: 'hot' | 'calm' | 'go', n: number, at: number): PrivateLine {
+  return { key: `g${n}`, seq: n, at, kind: 'game', tone, mine: false, head: '', text, reply: null, author: null };
+}
+
 export type Merged<T> = { kind: 'feed'; item: T } | { kind: 'private'; line: PrivateLine };
 
 /**
  * The feed's own items (already in order) with the private lines slotted in by time: each private line goes
  * before the first item said after it (ties stay after the table's line). Private lines are ordered by time, then
- * conversation lines before whispers, then by number (message id or whisper index).
+ * conversation lines, whispers, game lines, then by number (message id, whisper or game line index).
  */
 export function mergeByTime<T>(items: T[], timeOf: (item: T) => number, lines: PrivateLine[]): Merged<T>[] {
-  const whisper = (l: PrivateLine) => (l.kind === 'whisper' ? 1 : 0);
+  const whisper = (l: PrivateLine) => (l.kind === 'whisper' ? 1 : l.kind === 'game' ? 2 : 0);
   const priv = [...lines].sort((a, b) => a.at - b.at || whisper(a) - whisper(b) || a.seq - b.seq);
   const out: Merged<T>[] = [];
   let i = 0;
