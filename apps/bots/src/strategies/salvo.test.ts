@@ -6,7 +6,7 @@ import { chances, chooseBid, chooseCrate, chooseGhostTrick, chooseSalvoMove, cho
 const turn = salvoGame.turn;
 const CELLS = Array.from({ length: 64 }, (_, i) => cellName(i));
 
-const target = (sea: string, over: Partial<TargetView> = {}): TargetView => ({ sea, mine: [], hits: [], misses: [], sunk: [], decoys: [], repaired: [], lifted: [], sonar: [], afloat: 12, out: false, ...over });
+const target = (sea: string, over: Partial<TargetView> = {}): TargetView => ({ sea, mine: [], hits: [], misses: [], sunk: [], decoys: [], lifted: [], sonar: [], afloat: 12, out: false, ...over });
 const view = (targets: TargetView[], over: Partial<SalvoView> = {}): SalvoView => ({
   you: 'south',
   seats: ['north', 'east', 'south', 'west'],

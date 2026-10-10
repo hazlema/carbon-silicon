@@ -728,6 +728,12 @@ export function chooseSalvoMove(view: SalvoView, offered: SalvoCommand[], opts: 
   // An open crate is owed before the round can close: pick (or pass) first, so the item can fire this round.
   if (legal.some(isCrate)) return chooseCrate(view, legal, opts);
   const seas = bySea(legal.filter(notUnderCluster(view)), isShell);
+  // A hit may be shot again (in case it was welded, R-77): only once a sea has nothing else left to aim at.
+  for (const [sea, shells] of seas) {
+    const hits = new Set(view.targets.find((t) => t.sea === sea)?.hits ?? []);
+    const fresh = shells.filter((c) => !hits.has(c.cell));
+    if (fresh.length > 0) seas.set(sea, fresh);
+  }
   if (seas.size === 0) {
     const shells = bySea(legal, isShell);
     if (shells.size === 0) return pick(legal, opts.rng);

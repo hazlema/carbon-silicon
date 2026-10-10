@@ -819,7 +819,7 @@ describe('helpers', () => {
 });
 
 describe('Salvo whispers in the loop: one decision per auction, owing a move or not', () => {
-  const target = (sea: string) => ({ sea, mine: [], hits: [], misses: [], sunk: [], decoys: [], repaired: [], lifted: [], sonar: [], afloat: 12, out: false });
+  const target = (sea: string) => ({ sea, mine: [], hits: [], misses: [], sunk: [], decoys: [], lifted: [], sonar: [], afloat: 12, out: false });
   const auction = (ghost: string, sea: string, centre: string) => ({ ghost, sea, centre, cells: buoyCells(centre), closesAt: 30_000, bids: {} });
   const bids = (ghost: string, max: number): SalvoCommand[] => Array.from({ length: max + 1 }, (_, n) => ({ bid: n, ghost }));
   /** South has fired (owes nothing): its legal is only the bids the game lets it make. */

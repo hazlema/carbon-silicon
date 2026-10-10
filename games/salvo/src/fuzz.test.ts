@@ -186,7 +186,8 @@ const queuedItems = (s: SalvoState, seat: string) => s.pending[seat].filter((o) 
 /** The table's afloat count for a sea: 12 less every public hit (a live decoy's hits count, a revealed decoy's don't). */
 const publicAfloatOf = (s: SalvoState, sea: string) => {
   const drift = driftwoodOf(s, sea);
-  return 12 - Object.entries(s.shots[sea]).filter(([c, x]) => x.result === 'hit' && !drift.has(c)).length;
+  // A welded cell still counts as the hit the table saw (R-77).
+  return 12 - Object.entries(s.shots[sea]).filter(([c, x]) => x.result === 'hit' && !drift.has(c)).length - s.repairs[sea].length;
 };
 /** Unhit cells of a sea's live decoy. */
 const liveDecoyCells = (s: SalvoState, sea: string) => s.decoys[sea].filter((d) => !d.revealed).flatMap((d) => d.cells.filter((c) => !d.hits.includes(c)));
@@ -277,10 +278,11 @@ function assertNoLeaks(s: SalvoState, step: number, tally?: Tally): void {
     for (const t of v.targets) {
       check(t.sea !== seat, `${where}: my own sea is a target`);
       // Hits and misses are the real ones (a live decoy's hits among them, a revealed decoy's not), plus (for a fool)
-      // its own false splashes and nobody else's.
+      // its own false splashes and nobody else's, and the welded cells.
       const real = Object.entries(s.shots[t.sea]);
       const drift = driftwoodOf(s, t.sea);
-      const hits = [...new Set([...real.filter(([c, x]) => x.result === 'hit' && !drift.has(c)).map(([c]) => c), ...fakes.filter((x) => x.sea === t.sea).map((x) => x.cell)])].sort(byBoard);
+      // A welded cell still reads as the hit it was (R-77).
+      const hits = [...new Set([...real.filter(([c, x]) => x.result === 'hit' && !drift.has(c)).map(([c]) => c), ...s.repairs[t.sea].map((x) => x.cell), ...fakes.filter((x) => x.sea === t.sea).map((x) => x.cell)])].sort(byBoard);
       check(JSON.stringify(t.hits) === JSON.stringify(hits), `${where}: ${t.sea}'s hits are not the real ones and my own fakes`);
       const misses = real.filter(([, x]) => x.result === 'miss').map(([c]) => c).sort(byBoard);
       check(JSON.stringify(t.misses) === JSON.stringify(misses), `${where}: ${t.sea}'s misses are not the real ones`);
@@ -302,10 +304,14 @@ function assertNoLeaks(s: SalvoState, step: number, tally?: Tally): void {
       const hidden = hiddenCells(s, t.sea);
       // A buoy's cells are its 3×3, not ship positions; they are checked on their own below.
       // A fool's fake was aimed blind: if it happens to sit on a ship, that says nothing.
-      // A welding spark is public by design (a hit vanishing names the cell anyway): it sits on a ship cell, and says so.
-      const sparks = s.repairs[t.sea].map((x) => x.cell);
-      check(JSON.stringify(t.repaired) === JSON.stringify(sparks), `${where}: ${t.sea}'s sparks are not the live ones`);
-      for (const str of strings({ ...t, sonar: [], repaired: [] })) check(!hidden.has(str) || faked.has(`${t.sea} ${str}`), `${where}: hidden ship cell ${t.sea} ${str}`);
+      // A repair is its owner's secret (R-77): the table goes on seeing the hit that was there (so a welded cell may
+      // be named, as a hit, as it was before), never a spark, and the hit's shooters keep it in their record.
+      const welded = s.repairs[t.sea];
+      check(!('repaired' in t), `${where}: ${t.sea}'s sparks shown to another seat`);
+      for (const x of welded) check(t.hits.includes(x.cell), `${where}: ${t.sea}'s welded ${x.cell} no longer reads as a hit`);
+      if (seat !== null) for (const x of welded) if ((x.by ?? []).includes(seat)) check(t.mine.some((m) => m.cell === x.cell && m.result === 'hit'), `${where}: my welded hit on ${t.sea} ${x.cell} left my record`);
+      const weldedCells = new Set(welded.map((x) => x.cell));
+      for (const str of strings({ ...t, sonar: [] })) check(!hidden.has(str) || faked.has(`${t.sea} ${str}`) || weldedCells.has(str), `${where}: hidden ship cell ${t.sea} ${str}`);
       // The fog's counts are true counts (a fake splash does not change them: the accepted bluff).
       // Fog and sonar count real ship cells only: a live decoy under them is invisible.
       const decoyed = liveDecoyCells(s, t.sea);
@@ -358,6 +364,8 @@ function assertNoLeaks(s: SalvoState, step: number, tally?: Tally): void {
         ];
         for (const [sea, c] of named) check(s.shots[sea][c] !== undefined, `${where}: lastVolley names ${sea} ${c}, unshot`);
       }
+      // Where a repair welded is told to its owner alone while the match is live.
+      for (const x of v.lastVolley.items) if (x.item === 'repair') check(over || x.from === seat ? true : x.cell === undefined, `${where}: ${x.from}'s repair cell told to ${seat}`);
       for (const b of v.lastVolley.blasts) for (const c of b.cells) check(s.shots[b.sea][c] !== undefined, `${where}: unresolved blast cell`);
       for (const b of v.lastVolley.buoys) check(s.sonar[b.from].some((x) => x.sea === b.sea && x.cell === b.cell), `${where}: unresolved buoy`);
       check(!JSON.stringify(v.lastVolley.buoys).includes('afloat'), `${where}: a buoy's reading in the public volley`);
@@ -422,7 +430,7 @@ function assertSummarySafe(before: SalvoState, after: SalvoState): void {
   if (!ended) for (const line of lines) check(!/truth|told/i.test(line), `a whisper's truth told while live: ${line}`);
   const v = after.lastVolley;
   const told = v ? v.tricks.flatMap((t) => [t.cell, ...(t.kind === 'mine' && t.result === 'boomerang' ? t.hits.map((h) => h.cell) : [])]) : [];
-  const used = v ? (v.items ?? []).flatMap((x) => (x.item === 'cluster' ? [x.cell, ...x.cells] : x.item === 'torpedo' ? x.path : x.item === 'repair' ? [x.cell] : x.item === 'decoy-laid' ? [] : x.cells)) : [];
+  const used = v ? (v.items ?? []).flatMap((x) => (x.item === 'cluster' ? [x.cell, ...x.cells] : x.item === 'torpedo' ? x.path : x.item === 'repair' ? [] : x.item === 'decoy-laid' ? [] : x.cells)) : [];
   // A whisper's area is told when it's listed (this volley) and when the truth comes out (the end).
   const listed = after.auctions.slice(before.auctions.length).flatMap((a) => a.cells);
   const truths = after.phase === 'over' ? after.auctions.filter((a) => a.state === 'sold').flatMap((a) => a.cells) : [];
@@ -943,7 +951,16 @@ function playthrough(g: number, tally: Tally, leaks: boolean): void {
       if (s.phase === 'fire' && !ghostsOf(s).includes(seat)) {
         // A living seat cannot play a trick.
         check(codeOf(() => turn.apply(s, seat, randomTrick(s, rng))) === 'NOT_A_GHOST', `game ${g}: a living seat played a trick`);
-        const spent = mine.targets.filter((t) => !t.out).flatMap((t) => t.mine.map((m) => ({ fire: 'shell', at: t.sea, cell: m.cell })));
+        // Spent: my water, my sunk cells and driftwood. A hit on a ship afloat may be shot again (R-77), and legal
+        // offers every one of mine that isn't aimed this round, welded or not: legal can't tell them apart.
+        const spent = mine.targets.filter((t) => !t.out).flatMap((t) => t.mine.filter((m) => m.result !== 'hit').map((m) => ({ fire: 'shell', at: t.sea, cell: m.cell })));
+        if (!mine.myOrders.length) {
+          for (const t of mine.targets.filter((x) => !x.out)) {
+            for (const m of t.mine.filter((x) => x.result === 'hit')) {
+              check((legal as { fire?: string; at?: string; cell?: string }[]).some((c) => c.fire === 'shell' && c.at === t.sea && c.cell === m.cell) || (mine.guns[seat] ?? 0) === 0 || legal.some((c) => 'crate' in (c as object)), `game ${g}: legal refuses my hit ${t.sea} ${m.cell}`);
+            }
+          }
+        }
         if (spent.length > 0) check(codeOf(() => turn.apply(s, seat, rng.pick(spent))) === 'ALREADY_FIRED', `game ${g}: a spent cell was accepted`);
         // A cell already in this salvo, or a second buoy, is refused, and legal never offers either.
         // (Shots queued at a sea that has since gone out are tested against a living sea instead.)

@@ -47,7 +47,6 @@ function publicSea(t: TargetView, mines: string[] = []) {
   for (const cell of t.hits) marks.set(cell, 'X');
   for (const cell of t.sunk.flatMap((x) => x.cells)) marks.set(cell, '*');
   for (const cell of t.decoys.flat()) marks.set(cell, '~');
-  for (const cell of t.repaired) marks.set(cell, 'r');
   return (cell: string): string => marks.get(cell) ?? '.';
 }
 
@@ -140,6 +139,6 @@ export function renderAscii(view: Omit<SalvoView, 'ascii'>): string {
   if (view.myTricks || view.targets.some((t) => (t.mines ?? []).length > 0)) lines.push('M = a mine (your own; every live mine once it is over)');
   if (view.mySea?.decoy) lines.push('d = your decoy (x where it is hit)');
   if (view.targets.some((t) => t.decoys.length > 0) || ownDriftwood(view)) lines.push('~ = a decoy, found: driftwood');
-  if (view.targets.some((t) => t.repaired.length > 0) || (view.mySea?.repaired.length ?? 0) > 0) lines.push('r = a repaired cell (a welding spark, until it is shot again)');
+  if ((view.mySea?.repaired.length ?? 0) > 0) lines.push('r = a cell you repaired (the table still sees a hit there, until it is shot again)');
   return lines.join('\n');
 }

@@ -398,8 +398,8 @@ describe('fire', () => {
     // a lone shell hits one cell only (every filler went at west's or south's sea)
     expect(s.shots.east.e5).toEqual({ result: 'miss', by: ['west'] });
     expect(Object.keys(s.shots.east)).toHaveLength(10);
-    // blast cells leave the shooters' legal, as do their three fillers each
-    expect(shellsOf(s, 'north')).toHaveLength(192 - 9 - 3);
+    // blast cells leave the shooters' legal, as do their three fillers each; a hit on a ship afloat stays (a1 b1 c1)
+    expect(shellsOf(s, 'north')).toHaveLength(192 - 9 - 3 + 3);
     expect(shellsOf(s, 'west')).toHaveLength(192 - 1 - 3);
   });
   test('a sinking shared by two lone shells credits both', () => {
@@ -1620,13 +1620,13 @@ describe('cluster and torpedo', () => {
     expect(codeOf(() => use(s, 'north', { fire: 'cluster', at: 'east', cell: 'z9' }))).toBe('BAD_CELL');
     expect(codeOf(() => use(s, 'north', { fire: 'torpedo', at: 'east' }))).toBe('BAD_COMMAND');
     const shot = holding('north', ['cluster', 'torpedo']);
-    preHit(shot, 'east', ['b3'], 'north');
-    expect(codeOf(() => use(shot, 'north', { fire: 'cluster', at: 'east', cell: 'b3' }))).toBe('ALREADY_FIRED');
+    preHit(shot, 'east', ['f3'], 'north');
+    expect(codeOf(() => use(shot, 'north', { fire: 'cluster', at: 'east', cell: 'f3' }))).toBe('ALREADY_FIRED');
     preHit(shot, 'east', ['e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7', 'e8'], 'north');
     expect(codeOf(() => use(shot, 'north', { fire: 'torpedo', at: 'east', lane: 'e' }))).toBe('LANE_SPENT');
     expect(itemsOf(shot, 'north')).not.toContainEqual({ fire: 'torpedo', at: 'east', lane: 'e' });
     expect(itemsOf(shot, 'north')).toContainEqual({ fire: 'torpedo', at: 'south', lane: 'e' });
-    expect(itemsOf(shot, 'north')).not.toContainEqual({ fire: 'cluster', at: 'east', cell: 'b3' });
+    expect(itemsOf(shot, 'north')).not.toContainEqual({ fire: 'cluster', at: 'east', cell: 'f3' });
     expect(shot.arsenal.north).toEqual(['cluster', 'torpedo']); // a refused item stays in hand
     // Two of your own guns on one cell: a cluster centre on your queued shell, a shell on your queued cluster centre.
     let aimed = fire(holding('north', ['cluster']), 'north', 'east', 'b3');
@@ -1840,37 +1840,54 @@ describe('repair and decoy', () => {
     expect(s.scrap.north - scrap).toBe(1);
     expect(s.lastVolley!.items).toEqual([{ item: 'repair', from: 'east', cell: 'd1' }]);
     expect(s.repairs.east).toEqual([]); // shot again at once: no spark
-    expect(targetOf(s, 'south', 'east').repaired).toEqual([]);
+    expect(viewOf(s, 'east').lastVolley!.items).toEqual([{ item: 'repair', from: 'east', cell: 'd1' }]);
+    expect(viewOf(s, 'south').lastVolley!.items).toEqual([{ item: 'repair', from: 'east' }]); // where is east's secret
     const lines = roundSummary(before, s);
-    expect(lines).toContain('{east} welds the hit at d1 back together.');
+    expect(lines).toContain('{east} welds a hit back together.');
     expect(lines[0]).toContain('{north} hits {east} at d1');
   });
 
-  test('a repair: the cell is unhit and unshot, afloat rises, the spark shows to everyone until the cell is shot again', () => {
+  test('a repair is its owner’s secret: the table still sees the old hit, and nothing it may do tells them apart', () => {
     let s = holding('east', ['repair']);
     preHit(s, 'east', ['b1', 'c1'], 'west');
+    preHit(s, 'north', ['b5'], 'west'); // a standing hit of west's elsewhere, to compare with
     expect(targetOf(s, 'north', 'east').afloat).toBe(10);
+    const shownBefore = { north: targetOf(s, 'north', 'east'), west: targetOf(s, 'west', 'east'), spectator: targetOf(s, null, 'east') };
     s = volley(repair(s, 'east', 'c1'), {});
     expect(s.shots.east.c1).toBeUndefined();
     expect(s.fleets.east.find((x) => x.id === 'cruiser')!.hits).toEqual(['b1']);
-    expect(s.repairs.east).toEqual([{ cell: 'c1', round: 1 }]);
-    for (const viewer of ['north', 'south', 'west', null]) {
-      const t = targetOf(s, viewer, 'east');
-      expect(t.repaired).toEqual(['c1']);
-      expect(t.hits).toEqual(['b1']);
-      expect(t.afloat).toBe(11);
-    }
+    expect(s.repairs.east).toEqual([{ cell: 'c1', round: 1, by: ['west'] }]);
+    // Every other seat (and a spectator) sees the sea exactly as before: c1 a hit, west's own record keeps it.
+    expect(targetOf(s, 'north', 'east')).toEqual(shownBefore.north);
+    expect(targetOf(s, 'west', 'east')).toEqual(shownBefore.west);
+    expect(targetOf(s, null, 'east')).toEqual(shownBefore.spectator);
     expect(viewOf(s, 'east').mySea!.repaired).toEqual(['c1']);
     expect(viewOf(s, 'east').mySea!.shots.c1).toBeUndefined();
-    expect(targetOf(s, 'west', 'east').mine.map((x) => x.cell)).toEqual(['b1']); // west's hit is gone
-    expect(shellsOf(s, 'west')).toContainEqual({ fire: 'shell', at: 'east', cell: 'c1' }); // anyone may shoot it again
-    expect(viewOf(s, 'north').ascii).toContain('r = a repaired cell');
-    expect(viewOf(s, 'north').ascii.split('\n')).toContain('1 . X r . . . . .');
+    expect(viewOf(s, 'north').ascii).not.toContain('repaired');
+    expect(viewOf(s, 'north').ascii.split('\n')).toContain('1 . X X . . . . .');
     expect(viewOf(s, 'east').ascii.split('\n')).toContain('1 C X r C . . . .');
+    // A hit may be shot again, welded or not: west may aim at c1 and at its standing hit on north alike.
+    expect(shellsOf(s, 'west')).toContainEqual({ fire: 'shell', at: 'east', cell: 'c1' });
+    expect(shellsOf(s, 'west')).toContainEqual({ fire: 'shell', at: 'north', cell: 'b5' });
+    expect(shellsOf(s, 'west')).toContainEqual({ fire: 'shell', at: 'east', cell: 'b1' });
+    // A ghost's tricks treat it as shot, like any hit.
     s = volley(s, { west: ['east', 'c1'] });
     expect(s.repairs.east).toEqual([]);
-    expect(targetOf(s, 'north', 'east').repaired).toEqual([]);
     expect(targetOf(s, 'north', 'east').hits).toEqual(['b1', 'c1']);
+    expect(s.fleets.east.find((x) => x.id === 'cruiser')!.hits).toEqual(['b1', 'c1']);
+  });
+
+  test('a shell on a standing hit is spent: no hit, no scrap; water already shot stays refused', () => {
+    let s = holding('east', ['repair']);
+    preHit(s, 'north', ['b5', 'e5'], 'west'); // b5 the frigate, e5 water
+    expect(shellsOf(s, 'west')).not.toContainEqual({ fire: 'shell', at: 'north', cell: 'e5' });
+    expect(codeOf(() => use(s, 'west', { fire: 'shell', at: 'north', cell: 'e5' }))).toBe('ALREADY_FIRED');
+    const scrap = s.scrap.west;
+    s = volley(s, { west: ['north', 'b5'] });
+    expect(s.scrap.west).toBe(scrap);
+    expect(s.hitsLanded.west).toBe(0);
+    expect(s.shots.north.b5).toEqual({ result: 'hit', by: ['west'] });
+    expect(s.fleets.north.find((x) => x.id === 'frigate')!.hits).toEqual(['b5']);
   });
 
   test('decoy: legal placements on your own sea; refusals carry precise codes', () => {

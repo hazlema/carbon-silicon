@@ -100,7 +100,7 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 - **R-53.** A cluster is never a Time on Target and never sets off mines; you can't stack your own shell on its centre.
 - **R-54.** A torpedo runs away from the shooter and stops at the first unhit ship or live decoy, after the round's repairs and decoys land. It reveals the water it passes and never sets off mines.
 - **R-55.** Repairs and decoys land before the shells.
-- **R-56.** A repair's spark is public, because hits are public.
+- **R-56.** A repair's spark is public, because hits are public. *Superseded by R-77.*
 - **R-57.** Revealing a decoy pays scrap but gives no crate and no sinking scrap. Sonar and fog don't see decoys.
 - **R-58.** A mine on a live decoy backfires it. Laying a decoy is told, but never where. A living fleet's afloat never reads below 1.
 - **R-59.** The turn clock is a ring of seconds by the salvo and on the crate card while you owe the round: calm, amber at 20, red and pulsing at 10, a tick for each of the last 5. It shows ✓ once you're locked in.
@@ -140,3 +140,4 @@ The Foreman's Claude Design mock `docs/mock/Salvo Redesign.html`, option 6a, rep
 
 - Switching the target sea mid-volley replays that sea's shells from the start of the animation (cosmetic; every cell shown is still from `lastVolley`).
 - The leak fuzz checks hidden fleets by cell name, pending shells by view equality, and (since the fix wave) that a shell names a ship only when it sank it; a stronger twin of the pending check (relocate an unhit ship consistent with the public record and assert the other views are byte-identical) would catch count-shaped leaks too.
+- **R-77.** (2026-10-10, the Foreman's playtest: a one-hit repair made the ship vanish for anyone who wasn't watching) A repair is its owner's secret. The table goes on seeing the old hit (`hits`, the shooter's `mine`, `afloat` all unchanged; no `repaired` on other seas); the volley tells everyone `{item:"repair", from}` and only the owner its `cell`; the summary says "welds a hit back together". So that no rule can tell a welded hit from a standing one, **a hit on a ship afloat may always be shot again** by anyone (a wasted shell on a standing hit, a hit again on a welded one); `ALREADY_FIRED` / `LANE_SPENT` / `legal` exclude only your water, sunk ships' cells and driftwood. Tricks treat a welded cell as shot. `mine` is in board order now (append order would have moved a welded hit to the end).

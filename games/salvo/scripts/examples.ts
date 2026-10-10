@@ -422,7 +422,7 @@ export function examples(): Example[] {
   add('cluster-items', json(viewOf(a[4], 'north').lastVolley!.items));
   add('decoy-own-sea', beside(sea(viewOf(a[4], 'south'), 'south'), sea(viewOf(a[5], 'south'), 'south')));
   add('decoy-my-sea', json(viewOf(a[4], 'south').mySea!.decoy));
-  add('repair-sea', beside(sea(viewOf(a[4], 'north'), 'east'), sea(viewOf(a[5], 'north'), 'east')));
+  add('repair-sea', beside(sea(viewOf(a[5], 'north'), 'east'), sea(viewOf(a[5], 'east'), 'east')));
   add('repair-summary', told(5));
   add('decoy-fooled', beside(sea(viewOf(a[4], 'west'), 'south'), sea(viewOf(a[5], 'west'), 'south')));
   add('decoy-revealed', sea(viewOf(a[6], 'west'), 'south'));
