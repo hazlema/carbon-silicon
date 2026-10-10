@@ -477,7 +477,7 @@
   let fusing = $state<string[]>([]);
   /** A revealed trick, told as the round summary tells it (handles for seats). */
   function trickText(t: Trick): string {
-    if (t.kind === 'splash') return `Dirty trick! The hit ${handleOf(t.fool)} saw on ${handleOf(t.sea)} ${t.cell} was ${handleOf(t.ghost)}'s false splash.`;
+    if (t.kind === 'splash') return `Dirty trick! The hit ${t.fool === me ? 'you' : handleOf(t.fool)} saw on ${handleOf(t.sea)} ${t.cell} was ${handleOf(t.ghost)}'s false splash.`;
     const shell = `${names(t.shooters.map(handleOf))}'s ${t.shooters.length === 1 ? 'shell' : 'shells'}`;
     if (t.result === 'backfire' && t.ship === 'decoy') {
       return `Backfire! ${handleOf(t.ghost)}'s mine was sitting on ${handleOf(t.sea)}'s DECOY. ${shell} ${t.shooters.length === 1 ? 'blows' : 'blow'} it out of the water.`;
