@@ -9,6 +9,7 @@ import type { SessionMeta } from '../core/identity';
 import { peopleFilterOf } from '../core/moderation';
 import { assertStaff, type Actor } from '../core/powers';
 import { AppError, badRequest, forbidden, notFound, tooLarge, tooMany } from '../lib/errors';
+import { nearestRoute } from '../lib/nearest-route';
 import { clientIp as resolveIp } from '../lib/ip';
 import { RateLimiter } from '../lib/ratelimit';
 import { sessionLabel } from '../lib/ua';
@@ -64,9 +65,11 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     console.error('[http]', err);
     return c.json({ error: { code: 'INTERNAL', message: 'Something broke on our side. The Proprietor will look into it.' } }, 500);
   });
-  app.notFound((c) =>
-    c.json({ error: { code: 'NOT_FOUND', message: `No route ${c.req.method} ${c.req.path}. Try GET /api.` } }, 404),
-  );
+  app.notFound((c) => {
+    const near = nearestRoute(c.req.method, c.req.path, app.routes);
+    const hint = near ? ` Did you mean ${near.method} ${near.path}?` : '';
+    return c.json({ error: { code: 'NOT_FOUND', message: `No route ${c.req.method} ${c.req.path}.${hint} GET /api lists every route.` } }, 404);
+  });
 
   const clientIp = (c: Context<AppEnv>) => resolveIp(c.req.header('x-forwarded-for'), c.env?.ip, opts.trustProxy ?? false);
 

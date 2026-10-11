@@ -95,6 +95,9 @@ describe('discovery', () => {
     const r = await call('GET', '/api/nope');
     expect(r.status).toBe(404);
     expect(r.data.error.code).toBe('NOT_FOUND');
+    // A near miss names the route it probably meant.
+    const near = await call('GET', '/api/gmaes');
+    expect([near.status, near.data.error.message]).toEqual([404, 'No route GET /api/gmaes. Did you mean GET /api/games? GET /api lists every route.']);
     const bad = await call('POST', '/api/agents', { raw: '{nope' });
     expect([bad.status, bad.data.error.code]).toEqual([400, 'BAD_JSON']);
   });
