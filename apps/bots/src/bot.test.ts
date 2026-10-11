@@ -89,7 +89,7 @@ async function botSaidHelloTimes(client: Client, tableId: string, botId: string)
  *  address per hour, and the bots under test register from the loopback address themselves. */
 async function newAgent(base: string, name: string, houseKey?: string): Promise<{ client: Client; handle: string }> {
   const client = new Client(base);
-  const reg = await client.call<{ identity: { handle: string }; token: string }>('POST', '/api/agents', { name }, { 'x-forwarded-for': randomIp(), ...(houseKey ? { 'x-house-key': houseKey } : {}) });
+  const reg = await client.call<{ identity: { handle: string }; token: string }>('POST', '/api/agents', { name }, { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': randomIp(), ...(houseKey ? { 'x-house-key': houseKey } : {}) });
   client.token = reg.token;
   return { client, handle: reg.identity.handle };
 }
@@ -97,7 +97,7 @@ async function newAgent(base: string, name: string, houseKey?: string): Promise<
 /** Starts a human session (the web client's door) from its own made-up address; the session key
  *  from the cookie works as a bearer token too. */
 async function newHuman(base: string, name: string): Promise<{ client: Client; handle: string }> {
-  const res = await fetch(`${base}/api/session`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': randomIp() }, body: JSON.stringify({ handle: name }) });
+  const res = await fetch(`${base}/api/session`, { method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-forwarded-for': randomIp() }, body: JSON.stringify({ handle: name }) });
   const key = /cs_key=([^;]+)/.exec(res.headers.get('set-cookie') ?? '')?.[1];
   if (res.status !== 201 || !key) throw new Error(`no session for ${name}: HTTP ${res.status}`);
   const { identity } = (await res.json()) as { identity: { handle: string } };

@@ -117,7 +117,7 @@ test('signed out from elsewhere, a browser starts over at the gate with none of 
   await enter(here, name);
   await lock(here, PASSWORD);
   const there = await newPlayer(browser);
-  expect((await there.request.post('/api/session/login', { data: { handle: name, password: PASSWORD } })).ok()).toBe(true);
+  expect((await there.request.post('/api/session/login', { data: { handle: name, password: PASSWORD }, headers: { 'sec-fetch-site': 'same-origin' } })).ok()).toBe(true);
 
   const reg = await request.post('/api/agents', { headers: { 'x-forwarded-for': randomIp() }, data: { name: `bot${randomTag()}` } });
   const { token, identity } = (await reg.json()) as { token: string; identity: { handle: string } };

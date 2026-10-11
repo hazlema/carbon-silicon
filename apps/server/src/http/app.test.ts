@@ -14,8 +14,13 @@ const app = createApp(core, { apiDocs: '# API reference', llmsTxt: 'llms quickst
 afterAll(() => core.close());
 
 let ipCounter = 0;
-async function call(method: string, path: string, opts: { token?: string; cookie?: string; body?: unknown; ip?: string; raw?: string } = {}) {
-  const headers: Record<string, string> = { 'x-forwarded-for': opts.ip ?? `10.0.0.${++ipCounter % 250}` };
+async function call(method: string, path: string, opts: { token?: string; cookie?: string; body?: unknown; ip?: string; raw?: string; headers?: Record<string, string | null> } = {}) {
+  const headers: Record<string, string> = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': opts.ip ?? `10.0.0.${++ipCounter % 250}` };
+  // A test may stand in for another client: a header set to null is left off (a program sends no Sec-Fetch-Site).
+  for (const [k, v] of Object.entries(opts.headers ?? {})) {
+    if (v === null) delete headers[k];
+    else headers[k] = v;
+  }
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   if (opts.cookie) headers.cookie = opts.cookie;
   if (opts.body !== undefined || opts.raw !== undefined) headers['content-type'] = 'application/json';
@@ -90,6 +95,23 @@ describe('discovery', () => {
       expect((await call('GET', `/api/games/critical-mass/files/${bad}`)).status).toBe(404);
     }
     expect((await call('GET', '/api/games/chess/files/hero.jpg')).status).toBe(404);
+  });
+  test('humans come in through the website: a program asking for a human name, a sign-in or a recovery is sent to the agent door', async () => {
+    const program = { 'sec-fetch-site': null };
+    for (const [path, body] of [
+      ['/api/session', { handle: `prog${randomTag()}` }],
+      ['/api/session/login', { handle: 'someone', password: 'whatever pw' }],
+      ['/api/session/recover', { handle: 'someone', code: 'x', password: 'whatever pw' }],
+    ] as const) {
+      const r = await call('POST', path, { body, headers: program });
+      expect([r.status, r.data.error.code]).toEqual([403, 'USE_AN_AGENT']);
+      expect(r.data.error.message).toContain('POST /api/agents');
+    }
+    // Another site's page is turned away too; an older browser's same-site Origin is let in.
+    const cross = await call('POST', '/api/session', { body: { handle: `x${randomTag()}` }, headers: { 'sec-fetch-site': 'cross-site' } });
+    expect([cross.status, cross.data.error.code]).toEqual([403, 'USE_AN_AGENT']);
+    const old = await call('POST', '/api/session', { body: { handle: `old${randomTag()}` }, headers: { 'sec-fetch-site': null, origin: 'http://localhost', host: 'localhost' } });
+    expect(old.status).toBe(201);
   });
   test('unknown routes and bad JSON get the standard error body', async () => {
     const r = await call('GET', '/api/nope');
@@ -187,7 +209,7 @@ describe('human auto-AFK', () => {
       clock.advance(9 * 60_000);
       const post = await afkApp.request('/api/chat/lobby', {
         method: 'POST',
-        headers: { cookie: `cs_key=${active.key}`, 'x-forwarded-for': '10.1.0.2', 'content-type': 'application/json' },
+        headers: { cookie: `cs_key=${active.key}`, 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '10.1.0.2', 'content-type': 'application/json' },
         body: JSON.stringify({ text: 'still here' }),
       });
       expect(post.status).toBe(201);
@@ -437,7 +459,7 @@ describe('client IPs', () => {
     for (let i = 0; i < 6; i++) {
       const res = await strict.request('/api/agents', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-forwarded-for': `172.16.0.${i + 1}` },
+        headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-forwarded-for': `172.16.0.${i + 1}` },
         body: JSON.stringify({ name: `forge${tag()}` }),
       });
       statuses.push(res.status);

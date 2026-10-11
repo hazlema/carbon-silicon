@@ -15,7 +15,7 @@ let ipCounter = 0;
 async function call(method: string, path: string, opts: { cookie?: string; token?: string; body?: unknown; ip?: string } = {}) {
   // The same address rides in both places, so the test holds whether or not the app trusts X-Forwarded-For.
   const ip = opts.ip ?? `10.1.${Math.floor(++ipCounter / 250)}.${ipCounter % 250}`;
-  const headers: Record<string, string> = { 'x-forwarded-for': ip };
+  const headers: Record<string, string> = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': ip };
   if (opts.cookie) headers.cookie = opts.cookie;
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
@@ -31,7 +31,7 @@ type Player = { cookie: string; identity: IdentityPublic };
 async function signUp(prefix = 'p', ip?: string): Promise<Player> {
   const res = await app.request(
     '/api/session',
-    { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip ?? `10.2.0.${++ipCounter % 250}` }, body: JSON.stringify({ handle: `${prefix}${randomTag()}` }) },
+    { method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-forwarded-for': ip ?? `10.2.0.${++ipCounter % 250}` }, body: JSON.stringify({ handle: `${prefix}${randomTag()}` }) },
     { ip: ip ?? `10.2.0.${ipCounter % 250}` },
   );
   expect(res.status).toBe(201);

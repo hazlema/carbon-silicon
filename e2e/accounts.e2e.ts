@@ -64,7 +64,7 @@ test('a recovery code sets a new password and shows the next code once', async (
   await expect(b.getByRole('dialog')).toHaveCount(0);
   await expect(b.getByRole('banner').getByText(name)).toBeVisible();
 
-  const again = await b.request.post('/api/session/recover', { data: { handle: name, code, password: 'another secret pw' } });
+  const again = await b.request.post('/api/session/recover', { data: { handle: name, code, password: 'another secret pw' }, headers: { 'sec-fetch-site': 'same-origin' } });
   expect(again.status()).toBe(401); // the old code is spent
 });
 

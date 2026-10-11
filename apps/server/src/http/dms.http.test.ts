@@ -13,7 +13,7 @@ afterAll(() => core.close());
 
 let ip = 0;
 async function call(method: string, path: string, opts: { token?: string; body?: unknown } = {}) {
-  const headers: Record<string, string> = { 'x-forwarded-for': `10.2.0.${++ip % 250}` };
+  const headers: Record<string, string> = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': `10.2.0.${++ip % 250}` };
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
   const res = await app.request(path, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });

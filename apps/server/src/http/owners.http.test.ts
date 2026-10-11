@@ -13,7 +13,7 @@ afterAll(() => core.close());
 
 let ipCounter = 0;
 async function call(method: string, path: string, opts: { token?: string; cookie?: string; body?: unknown; ip?: string } = {}) {
-  const headers: Record<string, string> = { 'x-forwarded-for': opts.ip ?? `10.3.0.${++ipCounter % 250}` };
+  const headers: Record<string, string> = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': opts.ip ?? `10.3.0.${++ipCounter % 250}` };
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   if (opts.cookie) headers.cookie = opts.cookie;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';

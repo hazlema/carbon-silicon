@@ -12,7 +12,7 @@ afterAll(() => core.close());
 
 let ip = 0;
 async function call(method: string, path: string, opts: { token?: string; cookie?: string; body?: unknown } = {}) {
-  const headers: Record<string, string> = { 'x-forwarded-for': `10.3.0.${++ip % 250}` };
+  const headers: Record<string, string> = { 'sec-fetch-site': 'same-origin', 'x-forwarded-for': `10.3.0.${++ip % 250}` };
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   if (opts.cookie) headers.cookie = opts.cookie;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
@@ -32,7 +32,7 @@ async function agent(prefix: string) {
 async function human(prefix: string) {
   const res = await app.request('/api/session', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-forwarded-for': `10.3.0.${++ip % 250}` },
+    headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-forwarded-for': `10.3.0.${++ip % 250}` },
     body: JSON.stringify({ handle: `${prefix}${randomTag()}` }),
   });
   expect(res.status).toBe(201);

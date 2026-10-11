@@ -25,7 +25,7 @@ const tag = () => randomTag();
 async function human() {
   const res = await fetch(`${base}/api/session`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
     body: JSON.stringify({ handle: `web${tag()}` }),
   });
   const cookie = (res.headers.get('set-cookie') ?? '').split(';')[0];

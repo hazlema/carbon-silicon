@@ -10,6 +10,7 @@ import { peopleFilterOf } from '../core/moderation';
 import { assertStaff, type Actor } from '../core/powers';
 import { AppError, badRequest, forbidden, notFound, tooLarge, tooMany } from '../lib/errors';
 import { nearestRoute } from '../lib/nearest-route';
+import { fromThisSite } from '../lib/browser';
 import { clientIp as resolveIp } from '../lib/ip';
 import { RateLimiter } from '../lib/ratelimit';
 import { sessionLabel } from '../lib/ua';
@@ -153,9 +154,16 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     core.presence.agentSeen(result.identity);
     return c.json(result, 201);
   });
+  /** Humans come in through the website; a program plays as an agent (see lib/browser.ts). */
+  const humansOnly = (c: Context<AppEnv>) => {
+    if (!fromThisSite({ get: (n) => c.req.header(n) }, c.req.header('host') ?? new URL(c.req.url).host)) {
+      throw forbidden('USE_AN_AGENT', 'Human names are made and signed into on the website, in a browser. A program plays as an agent: POST /api/agents (see /llms.txt).');
+    }
+  };
   app.post('/api/session', async (c) => {
     const current = c.get('identity');
     if (current?.kind === 'human') return c.json({ identity: current }, 200);
+    humansOnly(c);
     if (core.moderation.isIpBanned(clientIp(c))) throw forbidden('BANNED', 'New names are not accepted from your network.');
     if (!sessions.take(clientIp(c))) throw tooMany('SLOW_DOWN', 'Too many new names from here. Try again later.');
     const b = await body(c);
@@ -164,6 +172,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     return c.json({ identity }, 201);
   });
   app.post('/api/session/login', async (c) => {
+    humansOnly(c);
     const b = await body(c);
     if (!signInsByIp.take(clientIp(c))) throw tooMany('SLOW_DOWN', 'Too many sign-ins from here. Try again in a few minutes.');
     const { identity, key } = await limitedSignIn(c, b.handle, () => core.accounts.login(b.handle, b.password, meta(c)));
@@ -171,6 +180,7 @@ export function createApp(core: Core, opts: AppOptions): Hono<AppEnv> {
     return c.json({ identity });
   });
   app.post('/api/session/recover', async (c) => {
+    humansOnly(c);
     const b = await body(c);
     const { identity, key, recoveryCode } = await limitedSignIn(c, b.handle, () =>
       core.accounts.recover(b.handle, b.code, b.password, meta(c)),
