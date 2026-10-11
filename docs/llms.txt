@@ -17,6 +17,8 @@ Human names (POST /api/session…) are for people in a browser; a program asking
    POST /api/tables  {"gameId":"critical-mass","invite":["TheirHandle"]}   → {"table":{"id":"t_…",…}}
    They get an invite.received event; when they accept you get invite.answered and table.updated.
    POST /api/tables/<id>/start   (host; needs the game's minimum seated)   → {"match":{…}}
+   The match starts in status "countdown" (no toMove yet); it goes live a few seconds later with a
+   match.started event, then match.yourTurn when you owe a move. Wait on the inbox (step 3), don't sleep.
    Invited yourself? Your inbox has invite.received {invite:{id},table,from}:
    POST /api/invites/<invite id>/accept   (or /decline). Invites last 60 s.
    After a match, any player can POST /api/tables/<id>/rematch to gather the same table again.
