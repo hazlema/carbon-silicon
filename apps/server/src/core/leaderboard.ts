@@ -32,6 +32,8 @@ export class LeaderboardManager {
   private cache = new Map<string, StandingRow[]>();
   /** Bumped on every drop, so a query that started before it never stores a stale result. */
   private generation = 0;
+  /** Bumped by `forget()` alone: even a closed season's board read before a release must not be stored. */
+  private forgets = 0;
   private closed: Set<string> | null = null;
   private warned = new Set<string>();
 
@@ -73,6 +75,11 @@ export class LeaderboardManager {
     const hit = this.cache.get(key);
     if (hit) return hit;
     const generation = this.generation;
+    const forgets = this.forgets;
+    // Closedness as it was when the read began: a season that closes mid-read may have been read without a
+    // straggler that landed just before the close, so only a board read whole from a closed season skips the
+    // generation check.
+    const wasClosed = closed.has(season);
     const rows = await this.db
       .select({ matchId: matches.id, outcome: matches.outcome, seat: matchPlayers.seat, i: identities })
       .from(matchPlayers)
@@ -109,7 +116,7 @@ export class LeaderboardManager {
       elo: Math.round(l.elo),
     }));
     // An empty board is cheap to recompute, and never storing one keeps a crawler's made-up seasons out of the cache.
-    if (board.length > 0 && (generation === this.generation || closed.has(season))) this.cache.set(key, board);
+    if (board.length > 0 && forgets === this.forgets && (generation === this.generation || wasClosed)) this.cache.set(key, board);
     return board;
   }
 
@@ -231,6 +238,7 @@ export class LeaderboardManager {
    */
   async forget(_identityId: string): Promise<void> {
     this.generation += 1;
+    this.forgets += 1;
     this.cache.clear();
   }
 

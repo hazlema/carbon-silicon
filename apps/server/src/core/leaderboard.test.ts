@@ -140,6 +140,31 @@ describe('the cache', () => {
     expect((await lb.standings('2032-07', 'critical-mass'))[0].games).toBe(2);
     expect((await lb.standings('2032-07', 'checkers'))[0].games).toBe(1); // still cached
   });
+  test('a closed board read across a release is not stored (it would keep the old name until a restart)', async () => {
+    const [a, b] = await agents(database.db, 2);
+    await database.db.insert(seasonClosings).values({ season: '2037-02' });
+    await play(database.db, '2037-02', 'critical-mass', [[a], [b]]);
+    const { lb } = board();
+    await lb.seasons(); // closedness is known before the read starts
+    const read = lb.standings('2037-02', 'critical-mass');
+    for (let i = 0; i < 5; i++) await Promise.resolve(); // the read is in flight
+    await lb.forget(a.id);
+    expect((await read)[0].games).toBe(1);
+    expect(lb.cacheSize()).toBe(0);
+    await lb.standings('2037-02', 'critical-mass');
+    expect(lb.cacheSize()).toBe(1); // read whole after the release: kept
+  });
+  test('an open board read across a recorded match is not stored', async () => {
+    const [a, b] = await agents(database.db, 2);
+    await play(database.db, '2037-03', 'critical-mass', [[a], [b]]);
+    const { lb, bus } = board();
+    await lb.seasons();
+    const read = lb.standings('2037-03', 'critical-mass');
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    bus.emit('match.recorded', { matchId: 'm_x', gameId: 'critical-mass', season: '2037-03' });
+    await read;
+    expect(lb.cacheSize()).toBe(0);
+  });
   test('an empty season is not cached', async () => {
     const { lb } = board();
     await lb.standings('0001-01', 'critical-mass');

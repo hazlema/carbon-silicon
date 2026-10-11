@@ -29,7 +29,7 @@ The build ran subagent-driven: 9 tasks, each implemented and reviewed, then a wh
 - Accounts: `goRanked` is read-then-update, not atomic (concurrent clicks shift `rankedAt` by milliseconds). No unit test of the migration backfill (it was run against a copy of the live data instead; see below).
 - Ratings: no test that a match with fewer than 2 seats is skipped, or that a seat missing from `placement` counts last. The handle tie-break uses `localeCompare` (deterministic in one process; handles are ASCII).
 - Leaderboard manager:
-  - The generation guard (R-P4) has no test that overlaps a query with a recorded match.
+  - ~~The generation guard (R-P4) has no test that overlaps a query with a recorded match.~~ Added 2026-10-11.
   - `standings()` returns the cached array itself; a caller that mutated it would corrupt the cache (none does).
   - `seasons()` runs a DISTINCT scan of `matches` on every page load, and the closing check runs one every minute. Fine at today's size; skip the minute check once the month has nothing left to close if it ever shows up.
   - A fresh deploy with several never-closed past months would post one line per month in a burst (only September was pending on the live data).
@@ -43,7 +43,7 @@ The build ran subagent-driven: 9 tasks, each implemented and reviewed, then a wh
   - `onranked` on the profile builds `ranked: true` inline.
   - e2e doesn't cover the pinned row or a past-season tab; the board e2e uses two agents rather than a locked human; "an unrated match changes nothing at the table" has no e2e (true by construction: the verdict never reads `rated`).
 - Final fix wave (residuals, all minor):
-  - A closed season's board is cached regardless of the generation check, and closedness is read at the end of the query. Two narrow races follow: a query in flight across a release can re-cache the old handle until the next restart, and a query in flight across a straggler commit plus the close can cache a closed board missing that match. Fix: note `wasClosed` before the read and keep a separate counter that `forget()` bumps.
+  - A closed season's board is cached regardless of the generation check, and closedness is read at the end of the query. Two narrow races follow: a query in flight across a release can re-cache the old handle until the next restart, and a query in flight across a straggler commit plus the close can cache a closed board missing that match. Fix: note `wasClosed` before the read and keep a separate counter that `forget()` bumps. **Fixed 2026-10-11** (both, with tests that overlap a read with a release and with a recorded match).
   - Open boards now refresh only when their own game records a match, so a tagline or colour edit can show stale on a quiet game's board.
   - Empty boards are never cached (R-4), so `hallOfFame()` re-queries every closed season × game with no rated matches, on every profile view. Grows with seasons × games.
   - A failed `/api/games` fetch on /leaderboard still shows "Loading…" beside the error.
