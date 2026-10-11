@@ -54,7 +54,7 @@ Fixed on 2026-10-04, also checked on the Pixel 7:
 - Lightline upright: the arena keeps its own shape at the top, the ledger sits right under it, and the toasts rise in the band left below (tappable, three at a time); after the match the verdict takes that band and the ledger stays visible; after-match toasts keep the compact style at the top. Sideways is unchanged.
 
 Deferred from that pass:
-- Held sideways (short and wide), the lobby still scrolls as a page with the 75dvh chat inside it, so the trap can still happen there; there is no room for a one-screen lobby.
+- ~~Held sideways (short and wide), the lobby still scrolls as a page with the 75dvh chat inside it, so the trap can still happen there; there is no room for a one-screen lobby.~~ Fixed 2026-10-11: held sideways (600–960 px wide, 520 px tall or less) the lobby is one screen in two columns, the chat beside Play, Current games and Here now; each column scrolls on its own and the page never does.
 - The newest Lightline toast's rise animation starts 0.5rem low, so its bottom edge is clipped by the band for 180 ms.
 - The countdown's box in the band layout uses the arena's 64 × 40 shape as a constant (as the desktop max-width already does).
 

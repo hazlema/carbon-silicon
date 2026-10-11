@@ -27,7 +27,9 @@
   let chatTabBtn: HTMLButtonElement | undefined = $state();
   /** The one-column layout, where `tab` decides between the chat and Here now; wider, the chat is always on screen. */
   const narrow = new MediaQuery('max-width: 960px');
-  const chatSeen = $derived(tab === 'chat' || !narrow.current);
+  /** A phone held sideways: two columns again (the chat and the rest), so the chat is always on screen there too. */
+  const sideways = new MediaQuery('(min-width: 600px) and (max-width: 960px) and (max-height: 520px)');
+  const chatSeen = $derived(tab === 'chat' || !narrow.current || sideways.current);
   let focusKey = $state(0);
   /** The conversation on screen, when the chat shows a DM. */
   const dm = $derived(dmParticipants(channel) ? (live.dms.find((d) => d.channel === channel) ?? null) : null);
@@ -256,6 +258,50 @@
       min-height: 12rem;
     }
   }
+  /* A phone held sideways (short and wide): one screen again, in two columns. The chat on the left and
+     everything else on the right each scroll on their own; the page never does, so nothing traps the thumb. */
+  @media (min-width: 600px) and (max-width: 960px) and (max-height: 520px) {
+    :global(body .shell:has(.lobby)) {
+      height: 100dvh;
+      min-height: 0;
+    }
+    :global(body .shell:has(.lobby) > main) {
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 0.5rem;
+    }
+    .lobby {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 17rem;
+      grid-template-areas: 'center right';
+      gap: 0.75rem;
+      flex: 1;
+      height: auto;
+      min-height: 0;
+    }
+    .tabs {
+      display: none;
+    }
+    .center,
+    .center.hide {
+      display: block;
+      height: auto;
+      min-height: 0;
+    }
+    .right {
+      display: flex;
+      gap: 0.75rem;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-bottom: 0;
+    }
+    /* Here now grows in the right column, which is its one scroller. */
+    .whowrap,
+    .whowrap.hide {
+      display: flex;
+      flex: none;
+    }
+  }
   /* The keyboard is up (the page shrinks above it): only the conversation, so it keeps its room. */
   @media (max-width: 960px) and (max-height: 520px) {
     :global(body .shell:has(.lobby textarea:focus)) {
@@ -281,6 +327,9 @@
       flex: 1;
       height: auto;
       min-height: 0;
+    }
+    .lobby:has(:global(textarea:focus)) {
+      grid-template-columns: minmax(0, 1fr);
     }
   }
 </style>

@@ -139,3 +139,22 @@ test('on a phone the lobby fits the screen, so the chat log is the only thing th
   await expect(page.getByRole('button', { name: 'Random match' })).toBeInViewport();
   await context.close();
 });
+
+test('held sideways the lobby is one screen in two columns: the chat beside Play and Here now, the page never scrolls', async ({ browser }) => {
+  const context = await browser.newContext({ ...devices['Pixel 7 landscape'], viewport: { width: 915, height: 412 }, extraHTTPHeaders: { 'x-forwarded-for': randomIp() } });
+  const page = await context.newPage();
+  await enter(page, `sw${randomTag()}`);
+  const pageScrolls = () => page.evaluate(() => {
+      const g = globalThis as any;
+      return (g.document.documentElement.scrollHeight as number) > (g.innerHeight as number) + 1;
+    });
+  expect(await pageScrolls()).toBe(false);
+  // No Chat / Here now tabs: both are on screen at once.
+  await expect(page.getByRole('tablist', { name: 'Lobby' })).toBeHidden();
+  await expect(page.getByLabel('Message #lobby')).toBeInViewport();
+  await expect(page.getByRole('button', { name: 'Random match' })).toBeInViewport();
+  const chat = await page.getByLabel('Message #lobby').boundingBox();
+  const play = await page.getByRole('button', { name: 'Random match' }).boundingBox();
+  expect(play!.x).toBeGreaterThan(chat!.x + chat!.width);
+  await context.close();
+});
