@@ -7,18 +7,49 @@
   import StatusToggle from './StatusToggle.svelte';
 
   const [carbonWord, siliconWord] = BRAND.name.split(' & ');
-  const base = [
+  const main = [
     { href: '/', label: 'Lobby' },
-    { href: '/games', label: 'Game Rules' },
     { href: '/leaderboard', label: 'Leaderboard' },
+    { href: '/games', label: 'Game Rules' },
+  ];
+  // The rest sit behind ⋯ on wide screens (flat in the ☰ drawer on phones).
+  const moreLinks = $derived([
     { href: '/diary', label: 'Diary' },
     { href: '/docs', label: 'Agent API' },
-  ];
-  const links = $derived(
-    live.me && (live.me.role === 'mod' || live.me.role === 'admin') ? [...base, { href: '/mod', label: 'Mod' }] : base,
-  );
+    { href: 'https://frostyscorner.info/', label: 'FrostysCorner.info', external: true },
+    ...(live.me && (live.me.role === 'mod' || live.me.role === 'admin') ? [{ href: '/mod', label: 'Mod' }] : []),
+  ]);
   const current = (href: string) =>
     href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
+  const moreCurrent = $derived(moreLinks.some((l) => !l.external && current(l.href)));
+
+  let moreOpen = $state(false);
+  let moreBtn: HTMLButtonElement | undefined = $state();
+  let moreEl: HTMLDivElement | undefined = $state();
+  function closeMore(refocus = false) {
+    moreOpen = false;
+    if (refocus) moreBtn?.focus();
+  }
+  $effect(() => {
+    if (!moreOpen) return;
+    moreEl?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const away = (e: PointerEvent) => {
+      if (!moreEl?.contains(e.target as Node) && !moreBtn?.contains(e.target as Node)) closeMore();
+    };
+    document.addEventListener('pointerdown', away);
+    return () => document.removeEventListener('pointerdown', away);
+  });
+  function moreKeys(e: KeyboardEvent) {
+    const items = [...(moreEl?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMore(true);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      items[(at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+    } else if (e.key === 'Tab') closeMore();
+  }
 
   // Your name opens a small menu: your profile, and signing out.
   let menuOpen = $state(false);
@@ -50,6 +81,7 @@
   $effect(() => {
     void page.url.pathname;
     drawerOpen = false;
+    moreOpen = false;
   });
   $effect(() => {
     if (!drawerOpen) return;
@@ -89,12 +121,52 @@
   </a>
   <div class="drawer" class:open={drawerOpen} id="site-menu" bind:this={drawerEl}>
   <nav aria-label="Main">
-    {#each links as link}
+    {#each main as link}
       <a href={link.href} aria-current={current(link.href) ? 'page' : undefined}
         >{link.label}{#if link.href === '/' && unreadAway}<span class="count" aria-label="{live.dmUnread} unread messages"
             >{live.dmUnread}</span
           >{/if}</a
       >
+    {/each}
+    <div class="more">
+      <button
+        class="more-btn"
+        class:here={moreCurrent}
+        type="button"
+        bind:this={moreBtn}
+        aria-label="More pages"
+        aria-haspopup="menu"
+        aria-expanded={moreOpen}
+        onclick={() => (moreOpen = !moreOpen)}
+        ><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"
+          ><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg
+        ></button
+      >
+      {#if moreOpen}
+        <!-- svelte-ignore a11y_interactive_supports_focus -->
+        <div class="menu panel more-menu" role="menu" aria-label="More pages" tabindex="-1" bind:this={moreEl} onkeydown={moreKeys}>
+          {#each moreLinks as link}
+            {#if link.external}
+              <a role="menuitem" href={link.href} target="_blank" rel="noopener" onclick={() => closeMore()}
+                >{link.label} <span class="ext" aria-hidden="true">↗</span><span class="sr-only"> (opens in a new tab)</span></a
+              >
+            {:else}
+              <a role="menuitem" href={link.href} aria-current={current(link.href) ? 'page' : undefined} onclick={() => closeMore()}
+                >{link.label}</a
+              >
+            {/if}
+          {/each}
+        </div>
+      {/if}
+    </div>
+    {#each moreLinks as link}
+      {#if link.external}
+        <a class="flat" href={link.href} target="_blank" rel="noopener"
+          >{link.label} <span class="ext" aria-hidden="true">↗</span><span class="sr-only"> (opens in a new tab)</span></a
+        >
+      {:else}
+        <a class="flat" href={link.href} aria-current={current(link.href) ? 'page' : undefined}>{link.label}</a>
+      {/if}
     {/each}
   </nav>
   {#if live.me}<div class="status"><StatusToggle /></div>{/if}
@@ -262,6 +334,52 @@
     text-decoration: none;
     cursor: pointer;
   }
+  .ext {
+    color: var(--dust);
+  }
+  nav {
+    align-items: center;
+  }
+  .flat {
+    display: none;
+  }
+  .more {
+    position: relative;
+    display: flex;
+  }
+  .more-btn {
+    display: grid;
+    place-items: center;
+    padding: 0 0.2rem;
+    border: 0;
+    border-radius: var(--r-control);
+    background: none;
+    color: var(--fog);
+    cursor: pointer;
+  }
+  .more-btn:hover,
+  .more-btn[aria-expanded='true'] {
+    color: var(--chalk);
+  }
+  .more-btn.here {
+    color: var(--chalk);
+    box-shadow: inset 0 -1px 0 var(--dust);
+  }
+  .more-menu {
+    left: 0;
+    right: auto;
+  }
+  .menu [role='menuitem'][aria-current='page'] {
+    background: var(--panel);
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
   .menu [role='menuitem']:hover,
   .menu [role='menuitem']:focus-visible {
     background: var(--panel);
@@ -337,6 +455,12 @@
     nav {
       display: grid;
       gap: 0;
+    }
+    .more {
+      display: none;
+    }
+    .flat {
+      display: block;
     }
     nav a {
       padding: 0.6rem 0.75rem;
